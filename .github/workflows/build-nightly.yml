@@ -72,8 +72,9 @@ on:
         default: false
         type: boolean
   workflow_call:
-  pull_request:
-    types: [ assigned ]
+  # pull_request: [assigned] removed on custom branch -- self-assigned PRs were
+  # accidentally triggering the full 11-device build matrix. Re-enable upstream
+  # by reverting this hunk.
 
 jobs:
   set-envs:
@@ -126,13 +127,14 @@ jobs:
           SELECTED_MATRIX=""
           ALL_DEVICES='[{"device":"RK3326","project":"ROCKNIX"},{"device":"RK3399","project":"ROCKNIX"},{"device":"RK3566","project":"ROCKNIX"},{"device":"RK3576","project":"ROCKNIX"},{"device":"RK3588","project":"ROCKNIX"},{"device":"S922X","project":"ROCKNIX"},{"device":"H700","project":"ROCKNIX"},{"device":"SM8250","project":"ROCKNIX"},{"device":"SM8550","project":"ROCKNIX"},{"device":"SM8650","project":"ROCKNIX"},{"device":"SM8750","project":"ROCKNIX"},{"device":"SM6115","project":"ROCKNIX"}]'
 
+          # SCHEDULE_DEVICES is the canonical "what does this fork build" knob.
+          # It applies to every trigger, not just schedule. When unset, the custom
+          # branch defaults to SM8550 only instead of the full 11-device matrix.
+          DEFAULT_DEVICES="${{ vars.SCHEDULE_DEVICES }}"
+          DEFAULT_DEVICES="${DEFAULT_DEVICES:-SM8550}"
+
           if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            SCHEDULE_VAR="${{ vars.SCHEDULE_DEVICES }}"
-            if [[ -z "$SCHEDULE_VAR" ]]; then
-              echo "matrix=$ALL_DEVICES" >> $GITHUB_OUTPUT
-              exit 0
-            fi
-            IFS=',' read -ra DEVICES <<< "$SCHEDULE_VAR"
+            IFS=',' read -ra DEVICES <<< "$DEFAULT_DEVICES"
             for D in "${DEVICES[@]}"; do
               D="${D// /}"
               [[ -z "$D" ]] && continue
@@ -148,9 +150,18 @@ jobs:
               fi
             done
           fi
-          
+
           if [[ -z "$SELECTED_MATRIX" ]]; then
-            MATRIX="$ALL_DEVICES"
+            # workflow_dispatch with no device boxes ticked: honor DEFAULT_DEVICES
+            # rather than rebuilding everything. Set inputs.<DEVICE>=true to override.
+            IFS=',' read -ra DEVICES <<< "$DEFAULT_DEVICES"
+            for D in "${DEVICES[@]}"; do
+              D="${D// /}"
+              [[ -z "$D" ]] && continue
+              [[ -n "$SELECTED_MATRIX" ]] && SELECTED_MATRIX="$SELECTED_MATRIX,"
+              SELECTED_MATRIX="$SELECTED_MATRIX{\"device\":\"$D\",\"project\":\"ROCKNIX\"}"
+            done
+            MATRIX="[$SELECTED_MATRIX]"
           else
             MATRIX="[$SELECTED_MATRIX]"
           fi
