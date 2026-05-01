@@ -38,7 +38,7 @@
     ADDITIONAL_PACKAGES=""
 
   # Experimental storage-only Nix integration tooling (yes / no)
-    NIX_INTEGRATION_SUPPORT="${NIX_INTEGRATION_SUPPORT:-no}"
+    NIX_INTEGRATION_SUPPORT="${NIX_INTEGRATION_SUPPORT:-yes}"
 
   # Satisfy legacy build dependencies
     SWAP_SUPPORT="yes"
