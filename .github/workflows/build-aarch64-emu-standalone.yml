@@ -42,28 +42,39 @@ jobs:
 
       - name: Retrieve ccache
         run: |
-          BASE="https://github.com/${{ github.repository_owner }}/${{ vars.CACHE_REPO || 'distribution-cache' }}/releases/download/ccache"
+          OWNER="${{ github.repository_owner }}"
+          FORK_REPO="${{ vars.CACHE_REPO || 'distribution-cache' }}"
           PREFIX="ccache-aarch64-${{ inputs.DEVICE }}-emu-standalone.tar.part-"
-          found_any=0
-          for suffix in $(printf "%s\n" {a..z}{a..z}); do
-            FILE="${PREFIX}${suffix}"
-            URL="${BASE}/${FILE}"
-          
-            echo "Trying $URL"
-            if curl -L --fail --silent --show-error -o "$FILE" "$URL"; then
-              echo "Downloaded $FILE"
-              found_any=1
-            else
-              echo "No more parts found at $URL"
-              break
-            fi
-          done
-          if [ "$found_any" -eq 0 ]; then
-            echo "No cache found, skipping."
+          PRIMARY_BASE="https://github.com/${OWNER}/${FORK_REPO}/releases/download/ccache"
+          FALLBACK_BASE="https://github.com/ROCKNIX/distribution-cache/releases/download/ccache"
+
+          download_parts() {
+            local base="$1"
+            local found=0
+            for suffix in $(printf "%s\n" {a..z}{a..z}); do
+              local file="${PREFIX}${suffix}"
+              local url="${base}/${file}"
+              if curl -L --fail --silent --show-error -o "$file" "$url"; then
+                echo "Downloaded $file"
+                found=1
+              else
+                break
+              fi
+            done
+            if [ "$found" -eq 1 ]; then return 0; else return 1; fi
+          }
+
+          if download_parts "$PRIMARY_BASE"; then
+            echo "ccache: warm hit on ${OWNER}/${FORK_REPO}"
+          elif [ "$OWNER" != "ROCKNIX" ] && download_parts "$FALLBACK_BASE"; then
+            echo "ccache: warm-started from upstream ROCKNIX/distribution-cache"
+          else
+            echo "ccache: cold start (no archive found)"
+            rm -f ${PREFIX}*
             exit 0
           fi
           cat ${PREFIX}* > ccache.tar
-          tar -xf ccache.tar || { echo "Extract failed"; exit 0; }
+          tar -xf ccache.tar || { echo "Extract failed"; rm -f ${PREFIX}* ccache.tar; exit 0; }
           rm -f ${PREFIX}* ccache.tar
 
       - name: Download aarch64 (${{ inputs.DEVICE }})
