@@ -78,8 +78,6 @@ on:
 jobs:
   set-envs:
     if: (github.event_name != 'schedule') || (github.repository == 'ROCKNIX/distribution' && github.ref_name == 'next')
-    environment:
-      name: ${{ github.event_name == 'pull_request' && 'pr-approval' || 'auto' }}
     runs-on: ubuntu-24.04
     outputs:
       NIGHTLY: ${{ steps.set-release-type.outputs.NIGHTLY }}
