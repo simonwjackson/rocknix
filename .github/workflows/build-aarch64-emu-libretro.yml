@@ -53,8 +53,24 @@ jobs:
 
       - name: Retrieve ccache
         run: |
-          URL="https://github.com/${{ github.repository_owner }}/${{ vars.CACHE_REPO || 'distribution-cache' }}/releases/download/ccache/ccache-aarch64-${{ inputs.DEVICE }}-emu-libretro.tar"
-          curl -L --fail --silent --show-error "$URL" | tar -xvf - || echo "Cache archive not found, skipping."  
+          fetch_ccache() {
+            curl -L --fail --silent --show-error -o cache.tar "$1" \
+              && tar -xf cache.tar \
+              && rm -f cache.tar
+          }
+          OWNER="${{ github.repository_owner }}"
+          FORK_REPO="${{ vars.CACHE_REPO || 'distribution-cache' }}"
+          FILENAME="ccache-aarch64-${{ inputs.DEVICE }}-emu-libretro.tar"
+          PRIMARY="https://github.com/${OWNER}/${FORK_REPO}/releases/download/ccache/${FILENAME}"
+          FALLBACK="https://github.com/ROCKNIX/distribution-cache/releases/download/ccache/${FILENAME}"
+          if fetch_ccache "$PRIMARY"; then
+            echo "ccache: warm hit on ${OWNER}/${FORK_REPO}"
+          elif [ "$OWNER" != "ROCKNIX" ] && fetch_ccache "$FALLBACK"; then
+            echo "ccache: warm-started from upstream ROCKNIX/distribution-cache"
+          else
+            echo "ccache: cold start (no archive found)"
+            rm -f cache.tar
+          fi
 
       - name: Download aarch64 (${{ inputs.DEVICE }})
         uses: actions/download-artifact@v8
