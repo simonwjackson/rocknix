@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+PKG_NAME="nix-integration"
+PKG_VERSION="0"
+PKG_LICENSE="GPL-2.0"
+PKG_SITE="https://github.com/ROCKNIX/distribution"
+PKG_URL=""
+PKG_DEPENDS_TARGET="toolchain"
+PKG_LONGDESC="nix-integration: Experimental storage-only Nix tooling for ROCKNIX"
+PKG_TOOLCHAIN="manual"
+
+post_install() {
+  mkdir -p ${INSTALL}/nix
+  chmod 0755 ${INSTALL}/nix
+
+  mkdir -p ${INSTALL}/usr/bin
+  cp ${PKG_DIR}/scripts/nix-portable-install ${INSTALL}/usr/bin
+  cp ${PKG_DIR}/scripts/nix-portable-run ${INSTALL}/usr/bin
+  cp ${PKG_DIR}/scripts/nix-doctor ${INSTALL}/usr/bin
+  chmod 0755 \
+    ${INSTALL}/usr/bin/nix-portable-install \
+    ${INSTALL}/usr/bin/nix-portable-run \
+    ${INSTALL}/usr/bin/nix-doctor
+
+  enable_service nix-storage-setup.service
+  enable_service nix.mount
+}

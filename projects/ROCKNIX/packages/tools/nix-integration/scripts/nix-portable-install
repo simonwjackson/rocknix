@@ -1,0 +1,265 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+set -eu
+
+NIX_PORTABLE_VERSION="${NIX_PORTABLE_VERSION:-v012}"
+NIX_PORTABLE_ASSET="${NIX_PORTABLE_ASSET:-nix-portable-aarch64}"
+NIX_PORTABLE_URL="${NIX_PORTABLE_URL:-https://github.com/DavHau/nix-portable/releases/download/${NIX_PORTABLE_VERSION}/${NIX_PORTABLE_ASSET}}"
+NIX_PORTABLE_SHA256="${NIX_PORTABLE_SHA256:-af41d8defdb9fa17ee361220ee05a0c758d3e6231384a3f969a314f9133744ea}"
+NIX_PORTABLE_DIR="${NIX_PORTABLE_DIR:-/storage/apps/nix-portable}"
+NIX_PORTABLE_BIN="${NIX_PORTABLE_BIN:-${NIX_PORTABLE_DIR}/nix-portable}"
+NIX_PORTABLE_RUNNER="${NIX_PORTABLE_RUNNER:-${NIX_PORTABLE_DIR}/bin/nix-portable-run}"
+NIX_DOCTOR="${NIX_DOCTOR:-${NIX_PORTABLE_DIR}/bin/nix-doctor}"
+NIX_WRAPPER_DIR="${NIX_WRAPPER_DIR:-/storage/bin}"
+NIX_PORTABLE_REQUIRED_MB="${NIX_PORTABLE_REQUIRED_MB:-512}"
+NP_LOCATION="${NP_LOCATION:-/storage}"
+
+usage() {
+  cat <<EOF
+Usage: ${0##*/} [install|repair|remove|status]
+
+Installs a storage-only nix-portable toolbox for ROCKNIX.
+
+Environment overrides:
+  NIX_PORTABLE_DIR       Default: ${NIX_PORTABLE_DIR}
+  NIX_WRAPPER_DIR        Default: ${NIX_WRAPPER_DIR}
+  NP_LOCATION            Default: ${NP_LOCATION}
+  NIX_PORTABLE_URL       Default: ${NIX_PORTABLE_URL}
+  NIX_PORTABLE_SHA256    Expected sha256 for the downloaded artifact
+EOF
+}
+
+fail() {
+  echo "${0##*/}: $*" >&2
+  exit 1
+}
+
+info() {
+  echo "==> $*"
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+sha256_file() {
+  if have sha256sum; then
+    sha256sum "$1" | awk '{print $1}'
+  elif have openssl; then
+    openssl dgst -sha256 "$1" | awk '{print $NF}'
+  else
+    fail "sha256sum or openssl is required to verify nix-portable"
+  fi
+}
+
+check_arch() {
+  if [ "${NIX_PORTABLE_SKIP_ARCH_CHECK:-0}" = "1" ]; then
+    return 0
+  fi
+
+  arch=$(uname -m 2>/dev/null || echo unknown)
+  case "${arch}" in
+    aarch64|arm64)
+      ;;
+    *)
+      fail "this installer is pinned for aarch64 ROCKNIX, but this system reports '${arch}'"
+      ;;
+  esac
+}
+
+check_storage() {
+  [ -d "${NP_LOCATION}" ] || fail "storage location does not exist: ${NP_LOCATION}"
+  [ -w "${NP_LOCATION}" ] || fail "storage location is not writable: ${NP_LOCATION}"
+
+  available_mb=$(df -m "${NP_LOCATION}" | awk 'NR==2 {print $4}')
+  case "${available_mb}" in
+    ''|*[!0-9]*)
+      fail "could not determine free space for ${NP_LOCATION}"
+      ;;
+  esac
+
+  if [ "${available_mb}" -lt "${NIX_PORTABLE_REQUIRED_MB}" ]; then
+    fail "not enough free space on ${NP_LOCATION}: ${available_mb}MB available, ${NIX_PORTABLE_REQUIRED_MB}MB required"
+  fi
+}
+
+download() {
+  url=$1
+  dest=$2
+
+  case "${url}" in
+    file://*)
+      src=${url#file://}
+      [ -f "${src}" ] || fail "local artifact does not exist: ${src}"
+      cp "${src}" "${dest}"
+      ;;
+    /*|./*|../*)
+      [ -f "${url}" ] || fail "local artifact does not exist: ${url}"
+      cp "${url}" "${dest}"
+      ;;
+    http://*|https://*)
+      if have curl; then
+        curl -fL --retry 3 --connect-timeout 20 --progress-bar "${url}" -o "${dest}"
+      elif have wget; then
+        wget -O "${dest}" "${url}"
+      else
+        fail "curl or wget is required to download nix-portable"
+      fi
+      ;;
+    *)
+      fail "unsupported NIX_PORTABLE_URL: ${url}"
+      ;;
+  esac
+}
+
+verify_artifact() {
+  file=$1
+  actual=$(sha256_file "${file}")
+  if [ "${actual}" != "${NIX_PORTABLE_SHA256}" ]; then
+    rm -f "${file}"
+    fail "checksum mismatch for nix-portable: expected ${NIX_PORTABLE_SHA256}, got ${actual}"
+  fi
+}
+
+install_runner() {
+  runner_src=$(dirname "$0")/nix-portable-run
+  mkdir -p "$(dirname "${NIX_PORTABLE_RUNNER}")"
+
+  if [ -f "${runner_src}" ]; then
+    cp "${runner_src}" "${NIX_PORTABLE_RUNNER}"
+  else
+    cat >"${NIX_PORTABLE_RUNNER}" <<'EOF'
+#!/bin/sh
+set -eu
+NIX_PORTABLE_DIR="${NIX_PORTABLE_DIR:-/storage/apps/nix-portable}"
+NIX_PORTABLE_BIN="${NIX_PORTABLE_BIN:-${NIX_PORTABLE_DIR}/nix-portable}"
+NP_LOCATION="${NP_LOCATION:-/storage}"
+NP_RUNTIME="${NP_RUNTIME:-proot}"
+[ -x "${NIX_PORTABLE_BIN}" ] || { echo "nix-portable missing at ${NIX_PORTABLE_BIN}" >&2; exit 1; }
+export NP_RUNTIME NP_LOCATION
+case "${1:-}" in
+  nix) shift; exec "${NIX_PORTABLE_BIN}" nix "$@" ;;
+  nix-shell) shift; exec "${NIX_PORTABLE_BIN}" nix-shell "$@" ;;
+  nix-run) shift; exec "${NIX_PORTABLE_BIN}" nix run "$@" ;;
+  dev-shell) shift; exec "${NIX_PORTABLE_BIN}" nix shell "$@" ;;
+  raw) shift; exec "${NIX_PORTABLE_BIN}" "$@" ;;
+  *) echo "Usage: ${0##*/} <nix|nix-shell|nix-run|dev-shell|raw> [args...]" >&2; exit 1 ;;
+esac
+EOF
+  fi
+
+  chmod 0755 "${NIX_PORTABLE_RUNNER}"
+}
+
+install_doctor() {
+  doctor_src=$(dirname "$0")/nix-doctor
+  if [ -f "${doctor_src}" ]; then
+    cp "${doctor_src}" "${NIX_DOCTOR}"
+    chmod 0755 "${NIX_DOCTOR}"
+  fi
+}
+
+write_runner_wrapper() {
+  name=$1
+  command=$2
+  path="${NIX_WRAPPER_DIR}/${name}"
+  mkdir -p "${NIX_WRAPPER_DIR}"
+  cat >"${path}" <<EOF
+#!/bin/sh
+# Generated by nix-portable-install. Re-run installer to repair.
+exec "${NIX_PORTABLE_RUNNER}" ${command} "\$@"
+EOF
+  chmod 0755 "${path}"
+}
+
+write_doctor_wrapper() {
+  path="${NIX_WRAPPER_DIR}/nix-doctor"
+  mkdir -p "${NIX_WRAPPER_DIR}"
+  cat >"${path}" <<EOF
+#!/bin/sh
+# Generated by nix-portable-install. Re-run installer to repair.
+exec "${NIX_DOCTOR}" "\$@"
+EOF
+  chmod 0755 "${path}"
+}
+
+install_toolbox() {
+  check_arch
+  check_storage
+
+  mkdir -p "${NIX_PORTABLE_DIR}" "${NIX_WRAPPER_DIR}"
+  tmp="${NIX_PORTABLE_DIR}/.${NIX_PORTABLE_ASSET}.tmp.$$"
+  trap 'rm -f "${tmp}"' EXIT INT TERM
+
+  info "Downloading ${NIX_PORTABLE_URL}"
+  download "${NIX_PORTABLE_URL}" "${tmp}"
+
+  info "Verifying nix-portable sha256"
+  verify_artifact "${tmp}"
+
+  mv "${tmp}" "${NIX_PORTABLE_BIN}"
+  chmod 0755 "${NIX_PORTABLE_BIN}"
+  printf '%s\n' "${NIX_PORTABLE_SHA256}" >"${NIX_PORTABLE_BIN}.sha256"
+  printf '%s\n' "${NIX_PORTABLE_VERSION}" >"${NIX_PORTABLE_DIR}/version"
+  printf '%s\n' "${NIX_PORTABLE_URL}" >"${NIX_PORTABLE_DIR}/url"
+
+  install_runner
+  install_doctor
+  write_runner_wrapper nix nix
+  write_runner_wrapper nix-shell nix-shell
+  write_runner_wrapper nix-run nix-run
+  write_runner_wrapper nix-dev-shell dev-shell
+  if [ -x "${NIX_DOCTOR}" ]; then
+    write_doctor_wrapper
+  fi
+
+  info "Installed nix-portable to ${NIX_PORTABLE_DIR}"
+  info "Wrappers installed to ${NIX_WRAPPER_DIR}"
+  info "Try: ${NIX_WRAPPER_DIR}/nix --version"
+}
+
+remove_toolbox() {
+  rm -f "${NIX_WRAPPER_DIR}/nix" "${NIX_WRAPPER_DIR}/nix-shell" "${NIX_WRAPPER_DIR}/nix-run" "${NIX_WRAPPER_DIR}/nix-dev-shell" "${NIX_WRAPPER_DIR}/nix-doctor"
+  rm -rf "${NIX_PORTABLE_DIR}"
+  info "Removed nix-portable toolbox from ${NIX_PORTABLE_DIR} and ${NIX_WRAPPER_DIR}"
+}
+
+status_toolbox() {
+  if [ -x "${NIX_PORTABLE_BIN}" ]; then
+    echo "nix-portable: installed at ${NIX_PORTABLE_BIN}"
+  else
+    echo "nix-portable: not installed at ${NIX_PORTABLE_BIN}"
+  fi
+
+  for wrapper in nix nix-shell nix-run nix-dev-shell nix-doctor; do
+    if [ -x "${NIX_WRAPPER_DIR}/${wrapper}" ]; then
+      echo "wrapper: ${NIX_WRAPPER_DIR}/${wrapper}"
+    else
+      echo "wrapper missing: ${NIX_WRAPPER_DIR}/${wrapper}"
+    fi
+  done
+}
+
+case "${1:-install}" in
+  install)
+    install_toolbox
+    ;;
+  repair)
+    install_toolbox
+    ;;
+  remove)
+    remove_toolbox
+    ;;
+  status)
+    status_toolbox
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 1
+    ;;
+esac

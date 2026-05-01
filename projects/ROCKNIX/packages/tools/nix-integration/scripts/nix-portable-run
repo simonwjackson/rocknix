@@ -1,0 +1,68 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+set -eu
+
+NIX_PORTABLE_DIR="${NIX_PORTABLE_DIR:-/storage/apps/nix-portable}"
+NIX_PORTABLE_BIN="${NIX_PORTABLE_BIN:-${NIX_PORTABLE_DIR}/nix-portable}"
+NP_LOCATION="${NP_LOCATION:-/storage}"
+NP_RUNTIME="${NP_RUNTIME:-proot}"
+
+usage() {
+  cat <<EOF
+Usage: ${0##*/} <nix|nix-shell|nix-run|dev-shell|raw> [args...]
+
+Runs nix-portable with ROCKNIX-safe defaults:
+  NP_RUNTIME=proot
+  NP_LOCATION=${NP_LOCATION}
+
+Examples:
+  ${0##*/} nix --version
+  ${0##*/} nix run nixpkgs#hello
+  ${0##*/} nix-shell -p jq
+  ${0##*/} nix-run nixpkgs#hello
+  ${0##*/} dev-shell nixpkgs#jq --command jq --version
+EOF
+}
+
+fail() {
+  echo "${0##*/}: $*" >&2
+  exit 1
+}
+
+if [ "${1:-}" = "" ] || [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+  usage
+  exit 0
+fi
+
+[ -x "${NIX_PORTABLE_BIN}" ] || fail "nix-portable is missing or not executable at ${NIX_PORTABLE_BIN}. Run nix-portable-install first."
+[ -d "${NP_LOCATION}" ] || fail "NP_LOCATION does not exist: ${NP_LOCATION}"
+
+export NP_RUNTIME NP_LOCATION
+
+case "$1" in
+  nix)
+    shift
+    exec "${NIX_PORTABLE_BIN}" nix "$@"
+    ;;
+  nix-shell)
+    shift
+    exec "${NIX_PORTABLE_BIN}" nix-shell "$@"
+    ;;
+  nix-run)
+    shift
+    exec "${NIX_PORTABLE_BIN}" nix run "$@"
+    ;;
+  dev-shell)
+    shift
+    exec "${NIX_PORTABLE_BIN}" nix shell "$@"
+    ;;
+  raw)
+    shift
+    exec "${NIX_PORTABLE_BIN}" "$@"
+    ;;
+  *)
+    fail "unknown command '$1'"
+    ;;
+esac
