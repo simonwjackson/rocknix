@@ -1,12 +1,17 @@
 name: Fail on upstream packages changes
 
+# Disabled on the custom branch: this fork intentionally modifies upstream
+# packages (e.g. patching systemd to retain systemd-nspawn for the planned
+# Layer 9 NixOS-in-nspawn experiment). Leaving the auto pull_request trigger
+# in place would block our own PRs. Switched to manual-only so the workflow
+# definition is preserved for upstream merges.
+
 on:
-  pull_request:
-    paths:
-      - 'packages/**'
+  workflow_dispatch:
 
 jobs:
   check-upstream-packages:
+    if: github.repository == 'ROCKNIX/distribution'
     runs-on: ubuntu-latest
     steps:
       - name: Fail if upstream packages changed
