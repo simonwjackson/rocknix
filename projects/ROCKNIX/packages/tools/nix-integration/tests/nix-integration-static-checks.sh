@@ -23,6 +23,7 @@ check_script() {
 check_script "${PKG_DIR}/scripts/nix-portable-install"
 check_script "${PKG_DIR}/scripts/nix-portable-run"
 check_script "${PKG_DIR}/scripts/nix-doctor"
+check_script "${PKG_DIR}/scripts/nixctl"
 
 [ -f "${PKG_DIR}/package.mk" ] || fail "missing package.mk"
 sh -n "${PKG_DIR}/package.mk" || fail "package.mk syntax failed"
@@ -30,6 +31,7 @@ grep -q 'PKG_NAME="nix-integration"' "${PKG_DIR}/package.mk" || fail "package.mk
 grep -q 'PKG_TOOLCHAIN="manual"' "${PKG_DIR}/package.mk" || fail "package.mk should use manual toolchain"
 grep -q 'nix-portable-install' "${PKG_DIR}/package.mk" || fail "package.mk does not install nix-portable-install"
 grep -q 'nix-doctor' "${PKG_DIR}/package.mk" || fail "package.mk does not install nix-doctor"
+grep -q 'nixctl' "${PKG_DIR}/package.mk" || fail "package.mk does not install nixctl (Layer 4 front door)"
 grep -q 'mkdir -p ${INSTALL}/nix' "${PKG_DIR}/package.mk" || fail "package.mk does not create /nix mountpoint"
 grep -q 'enable_service nix-storage-setup.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable nix-storage-setup.service"
 grep -q 'enable_service nix.mount' "${PKG_DIR}/package.mk" || fail "package.mk does not enable nix.mount"
@@ -37,6 +39,18 @@ grep -q 'enable_service nix.mount' "${PKG_DIR}/package.mk" || fail "package.mk d
 [ -f "${PKG_DIR}/profile.d/085-nix-integration.conf" ] || fail "missing profile integration"
 sh -n "${PKG_DIR}/profile.d/085-nix-integration.conf" || fail "profile integration syntax failed"
 grep -q 'NP_RUNTIME="proot"' "${PKG_DIR}/profile.d/085-nix-integration.conf" || fail "profile does not default NP_RUNTIME to proot"
+grep -q '/nix/var/nix/profiles/default/bin' "${PKG_DIR}/profile.d/085-nix-integration.conf" || fail "profile.d missing Layer 4 PATH prefix (/nix/var/nix/profiles/default/bin)"
+grep -q '\.nix-profile/bin' "${PKG_DIR}/profile.d/085-nix-integration.conf" || fail "profile.d missing Layer 5 PATH prefix (~/.nix-profile/bin)"
+
+# Verify nixctl declares the canonical subcommands and pinned-version constants.
+grep -q 'NIX_VERSION_PINNED=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing NIX_VERSION_PINNED constant"
+grep -q 'NIX_TARBALL_SHA256_PINNED=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing NIX_TARBALL_SHA256_PINNED constant"
+for sub in status install upgrade uninstall doctor; do
+  # Subcommand can appear as 'sub)' (alone), 'sub|other)' (left of alt),
+  # or '...|sub)' (right of alt). Match by requiring sub to be preceded by
+  # start-of-line, whitespace, or '|' and followed by ')' or '|'.
+  grep -qE "(^|[[:space:]]|\|)${sub}[|)]" "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing dispatch for subcommand: ${sub}"
+done
 
 [ -f "${PKG_DIR}/system.d/nix-storage-setup.service" ] || fail "missing nix-storage-setup.service"
 [ -f "${PKG_DIR}/system.d/nix.mount" ] || fail "missing nix.mount"
