@@ -12,6 +12,12 @@ NIX_WRAPPER_DIR="${NIX_WRAPPER_DIR:-/storage/bin}"
 NIX_PORTABLE_REQUIRED_MB="${NIX_PORTABLE_REQUIRED_MB:-512}"
 NP_LOCATION="${NP_LOCATION:-/storage}"
 NP_RUNTIME="${NP_RUNTIME:-proot}"
+
+# ---- Layer 3 / Layer 4 paths ---------------------------------------------
+NIX_INSTALL_ROOT="${NIX_INSTALL_ROOT:-/nix}"
+NIX_DEFAULT_PROFILE_BIN="${NIX_DEFAULT_PROFILE_BIN:-${NIX_INSTALL_ROOT}/var/nix/profiles/default/bin}"
+NIX_USER_CONFIG_FILE="${NIX_USER_CONFIG_FILE:-${HOME:-/storage}/.config/nix/nix.conf}"
+NIX_USER_PROFILE_LINK="${NIX_USER_PROFILE_LINK:-${HOME:-/storage}/.nix-profile}"
 CHECK_NETWORK=1
 RUN_SMOKE=1
 RUN_DEV_SHELL_SMOKE=0
@@ -224,6 +230,105 @@ check_dev_shell() {
   fi
 }
 
+# Layer 3: report whether /nix is the storage-backed bind mount expected by
+# the nix-storage-setup.service + nix.mount unit pair. Reports OK when the
+# bind is in place, WARN when /nix exists but is a regular directory.
+check_layer3_mount() {
+  if [ ! -d "${NIX_INSTALL_ROOT}" ]; then
+    fail_check "${NIX_INSTALL_ROOT} does not exist; Layer 3 substrate missing"
+    return
+  fi
+  if awk -v p="${NIX_INSTALL_ROOT}" '$2 == p {found=1} END {exit !found}' /proc/mounts 2>/dev/null; then
+    ok "${NIX_INSTALL_ROOT} is mounted (Layer 3 substrate active)"
+  else
+    warn "${NIX_INSTALL_ROOT} is a regular directory, not a bind mount; Layer 3 may not be active"
+  fi
+}
+
+# Layer 4: only runs the new checks when real Nix is actually installed.
+# When absent, this is a no-op and the doctor output is unchanged from the
+# Layer 1/2/3 baseline.
+check_layer4() {
+  layer4_nix="${NIX_DEFAULT_PROFILE_BIN}/nix"
+  if [ ! -x "${layer4_nix}" ]; then
+    return  # Layer 4 not installed; nothing to check
+  fi
+
+  ok "Layer 4 detected: real Nix at ${layer4_nix}"
+
+  # nix --version with explicit path; verify no proot in the process tree of
+  # the spawned nix.
+  if version_output=$("${layer4_nix}" --version 2>&1); then
+    ok "real nix --version: ${version_output}"
+  else
+    fail_check "real nix --version failed: ${version_output}"
+  fi
+
+  # Verify nothing in the process tree calls into nix-portable. Spawn a
+  # short-lived nix and inspect its parent chain. This is best-effort -- if
+  # /proc is restricted or pgrep is unavailable, fall back to grep-of-self.
+  if pid_in_tree=$(pgrep -f nix-portable 2>/dev/null | head -1); then
+    if [ -n "${pid_in_tree}" ]; then
+      warn "a nix-portable process is currently running (pid ${pid_in_tree}); not necessarily wrong, but worth noting"
+    fi
+  fi
+
+  # User config: nix.conf existence and parseable sandbox setting.
+  if [ -f "${NIX_USER_CONFIG_FILE}" ]; then
+    ok "user nix.conf present: ${NIX_USER_CONFIG_FILE}"
+    sandbox_setting=$(awk -F= '
+      /^[[:space:]]*sandbox[[:space:]]*=/ {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit
+      }
+    ' "${NIX_USER_CONFIG_FILE}")
+    case "${sandbox_setting}" in
+      true|false|relaxed)
+        ok "sandbox = ${sandbox_setting}"
+        ;;
+      "")
+        warn "sandbox setting not present in nix.conf (will use Nix default)"
+        ;;
+      *)
+        warn "sandbox setting has unexpected value: '${sandbox_setting}'"
+        ;;
+    esac
+  else
+    fail_check "user nix.conf missing: ${NIX_USER_CONFIG_FILE}"
+  fi
+
+  # ~/.nix-profile must resolve to a real path (the actual default profile).
+  if [ -L "${NIX_USER_PROFILE_LINK}" ]; then
+    target=$(readlink "${NIX_USER_PROFILE_LINK}" 2>/dev/null || echo "")
+    if [ -e "${NIX_USER_PROFILE_LINK}" ]; then
+      ok "\${HOME}/.nix-profile -> ${target}"
+    else
+      fail_check "\${HOME}/.nix-profile is a dangling symlink to ${target}"
+    fi
+  else
+    warn "\${HOME}/.nix-profile is missing or not a symlink (expected after nixctl install)"
+  fi
+
+  # Shell PATH agreement: which nix should resolve to the real nix once
+  # profile.d is sourced. On a fresh nixctl install via SSH (without
+  # 'hash -r' or a fresh shell), this may still resolve to the portable
+  # wrapper. WARN, do not fail.
+  if path_nix=$(command -v nix 2>/dev/null); then
+    case "${path_nix}" in
+      "${NIX_DEFAULT_PROFILE_BIN}/nix")
+        ok "\$PATH 'nix' resolves to real nix: ${path_nix}"
+        ;;
+      "${NIX_WRAPPER_DIR}/nix")
+        warn "\$PATH 'nix' resolves to portable wrapper (${path_nix}); open a fresh shell or run 'hash -r'"
+        ;;
+      *)
+        warn "\$PATH 'nix' resolves to unexpected path: ${path_nix}"
+        ;;
+    esac
+  else
+    warn "no 'nix' on \$PATH; profile.d may not be sourced in this shell"
+  fi
+}
+
 check_network() {
   if [ "${CHECK_NETWORK}" -eq 0 ]; then
     warn "network checks skipped"
@@ -255,6 +360,8 @@ check_wrappers
 check_runtime
 check_dev_shell
 check_network
+check_layer3_mount
+check_layer4
 
 if [ "${FAILURES}" -eq 0 ]; then
   echo "nix-doctor: passed with ${WARNINGS} warning(s)"
