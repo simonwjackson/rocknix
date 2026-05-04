@@ -215,6 +215,122 @@ Stop at Layer 1, 2, or 3 if any of these are true:
 - the storage-backed nix-portable state interferes with SSH, Sway, EmulationStation, Steam/FEX, or the existing Chromium launcher.
 - storage usage becomes unacceptable and cannot be recovered with normal Nix garbage collection or removal.
 
+## Layer 4: standard single-user Nix on real `/nix`
+
+Layer 4 installs real, root-owned, single-user Nix directly into `/nix` (the storage-backed bind mount established by Layer 3). After install, `nix run`, `nix-shell`, and `nix build` execute against the real `/nix/store` without `nix-portable` or `proot` in the loop. The portable wrappers under `/storage/bin/` remain available for explicit fallback.
+
+### Prerequisites
+
+- Layer 3 active: `/nix` bind-mounted from `/storage/.nix-root` (verify with `mount | grep ' /nix '`)
+- Network reachability to `releases.nixos.org` and `cache.nixos.org`
+- At least 1 GB free on `/storage`
+
+### Install
+
+```sh
+nixctl install
+```
+
+This downloads the pinned Nix tarball (Nix 2.34.7 by default), verifies its sha256, runs the upstream installer in single-user mode with overrides for ROCKNIX's read-only `/etc` and busybox `cp`, writes `~/.config/nix/nix.conf` (which on this device is `/storage/.config/nix/nix.conf` since `HOME=/storage`), and probes whether the kernel sandbox works. Both `sandbox = true` and `sandbox = false` are valid outcomes; the installer records which was selected.
+
+First run: ~30-60 seconds depending on cache state. Subsequent re-runs at the same pinned version are no-ops.
+
+### Validate
+
+```sh
+nixctl status
+nix-doctor --offline
+```
+
+Expected from `status`: `installed: yes`, version line, sandbox setting, and a `Layer 3 mount: mounted` line. From `nix-doctor`: a block of `OK` lines including `Layer 4 detected`, `real nix --version`, sandbox parsing, and `${HOME}/.nix-profile -> ...`.
+
+A happy-path smoke:
+
+```sh
+hash -r  # so $PATH picks up the new nix binary in this shell
+nix --version
+nix run nixpkgs#hello
+```
+
+The first `nix run nixpkgs#hello` against a cold cache fetches a small closure from `cache.nixos.org` (~10 seconds depending on link speed). Subsequent runs are sub-second.
+
+A dev-shell happy-path:
+
+```sh
+nix shell nixpkgs#jq --command jq --version
+```
+
+### Upgrade
+
+To bump within the pinned version (rare; usually a no-op):
+
+```sh
+NIX_FORCE=1 nixctl install
+```
+
+To install a different version, you must export the matching sha256:
+
+```sh
+NIX_TARBALL_SHA256=<sha-of-target-version> nixctl upgrade --version 2.35.0
+```
+
+The tarball's sha256 can be computed from a download:
+
+```sh
+curl -fL https://releases.nixos.org/nix/nix-2.35.0/nix-2.35.0-aarch64-linux.tar.xz \
+  | sha256sum
+```
+
+### Uninstall
+
+```sh
+nixctl uninstall          # interactive (prompts y/N)
+nixctl uninstall --yes    # non-interactive
+```
+
+Uninstall removes:
+
+- `/nix/store/*`, `/nix/var/*` (recreates empty Layer 3 substrate)
+- `~/.config/nix/`
+- `~/.nix-defexpr`, `~/.nix-profile`, `~/.nix-channels`
+
+It does **not** touch:
+
+- the Layer 3 bind mount itself (still active)
+- `/storage/apps/nix-portable/` or `/storage/bin/nix*` (Layer 1/2 wrappers)
+- ROCKNIX system files, configs, or unrelated `/storage` data
+
+### Sandbox notes
+
+If the install probe fails, `nix.conf` will have `sandbox = false`. This is documented in the install output. Some derivations may behave differently under `sandbox = false` (less reproducibility, more access to host filesystem). To retry the probe later (e.g., after a kernel/config change):
+
+```sh
+echo 'sandbox = true' >> ~/.config/nix/nix.conf  # try the toggle manually
+nix build --expr 'derivation { name = "probe"; system = "aarch64-linux"; builder = "/bin/sh"; args = ["-c" "echo > $out"]; }' --no-link --print-out-paths
+```
+
+If the build succeeds, sandbox works; you can leave the setting at `true`. If it fails, revert.
+
+### Troubleshooting
+
+**`which nix` resolves to `/storage/bin/nix` (portable) instead of real nix.** The PATH change in profile.d/085-nix-integration.conf only takes effect on a fresh login shell. Run `hash -r` in your current shell, or open a new SSH session.
+
+**`nix run` complains about missing `nixpkgs`.** You did not register a nixpkgs channel (intentional — Layer 4 install skips channel registration). Use flake URIs (`nixpkgs#hello`) or add a channel manually with `nix-channel --add https://channels.nixos.org/nixpkgs-unstable nixpkgs && nix-channel --update`.
+
+**Real nix install partially failed and left state on disk.** Run `nixctl uninstall --yes` to clear it. If even uninstall fails, the nuclear option is `rm -rf /storage/.nix-root && reboot` (the next boot recreates the empty bind mount via Layer 3's services). Both options are documented as recovery paths in `docs/solutions/developer-experience/custom-fork-update-sm8550-rocknix-2026-05-04.md`.
+
+**Layer 1/2 wrappers stop working after Layer 4 install.** This should not happen — Layer 4 does not modify `/storage/bin/`. If `/storage/bin/nix` is broken, run `nix-portable-install repair` to rewrite the wrappers.
+
+### Stopping rule for Layer 4
+
+Stop at Layer 4 (do not pursue Layer 5+) if any of these hold:
+
+- The install path cannot complete cleanly on a fresh device after a reasonable number of retries.
+- `nix --version` does not consistently resolve to real Nix (PATH ordering broken).
+- Real Nix cannot fetch a small package from `cache.nixos.org` reliably.
+- The install or uninstall cycle leaves orphaned state under `/storage` that reboot does not clear.
+- A workflow that previously worked under Layer 1/2 (portable) regresses under Layer 4 with no clear path to fix.
+
 ## Next layer
 
-Layer 4 validates standard single-user/root Nix directly on the real `/nix` store, without nix-portable virtualization. Do not attempt daemon mode until standard single-user Nix has a clear pass/fail result.
+Layer 5 validates persistent Nix profiles for CLI tools. With Layer 4 in place, `nix profile install <pkg>` deposits binaries into `~/.nix-profile/bin`, which is already on `$PATH` thanks to the profile.d work shipped in Layer 4. Layer 5 is mostly a convention + documentation step rather than new infrastructure.
