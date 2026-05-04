@@ -1,0 +1,246 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# nixctl: front door for ROCKNIX Nix Layer 4 (standard single-user Nix on
+# real /nix). This skeleton lands the read-only `status` subcommand. The
+# `install`, `upgrade`, `uninstall`, and `doctor` subcommands are stubbed
+# until later units (Unit 3, 4, 5) of the Layer 4 plan land.
+#
+# Plan: docs/plans/2026-05-04-001-feat-nix-layer-4-real-store-plan.md
+
+set -eu
+
+# ---- Versioning ------------------------------------------------------------
+# NIX_VERSION and NIX_TARBALL_SHA256 are placeholders until Unit 3 finalizes
+# them against a verified upstream Nix release. Override via environment for
+# experimentation.
+NIX_VERSION="${NIX_VERSION:-2.24.10}"
+NIX_TARBALL_ARCH="${NIX_TARBALL_ARCH:-aarch64-linux}"
+NIX_TARBALL_URL="${NIX_TARBALL_URL:-https://releases.nixos.org/nix/nix-${NIX_VERSION}/nix-${NIX_VERSION}-${NIX_TARBALL_ARCH}.tar.xz}"
+NIX_TARBALL_SHA256="${NIX_TARBALL_SHA256:-}"  # set by Unit 3
+
+# ---- Filesystem layout -----------------------------------------------------
+NIX_INSTALL_ROOT="${NIX_INSTALL_ROOT:-/nix}"
+NIX_DEFAULT_PROFILE_BIN="${NIX_DEFAULT_PROFILE_BIN:-${NIX_INSTALL_ROOT}/var/nix/profiles/default/bin}"
+NIX_USER_CONFIG_DIR="${NIX_USER_CONFIG_DIR:-${HOME:-/storage}/.config/nix}"
+NIX_USER_CONFIG_FILE="${NIX_USER_CONFIG_FILE:-${NIX_USER_CONFIG_DIR}/nix.conf}"
+NIX_CACHE_DIR="${NIX_CACHE_DIR:-/storage/.cache/nix-install}"
+
+# ---- Disk budget -----------------------------------------------------------
+# Conservative estimate: tarball download (~50 MB) + extracted store closure
+# (~400 MB) + working room. Refine in Unit 3 once the actual closure size is
+# observed.
+NIX_INSTALL_REQUIRED_MB="${NIX_INSTALL_REQUIRED_MB:-1024}"
+
+usage() {
+  cat <<EOF
+Usage: ${0##*/} <subcommand> [args]
+
+Front door for ROCKNIX Nix Layer 4 (standard single-user Nix on real /nix).
+
+Subcommands:
+  status                 Report installed-or-not, version, sandbox setting,
+                         and /nix mount status. Read-only.
+  install                Install real Nix into ${NIX_INSTALL_ROOT}.
+  upgrade [--version V]  Upgrade to a newer Nix version (default: pinned).
+  uninstall [--yes]      Remove real Nix and per-user config; restores the
+                         system to the Layer 3 substrate.
+  doctor                 Run health checks for Layer 4 and below.
+  help, -h, --help       This message.
+
+Environment overrides (defaults shown):
+  NIX_VERSION            ${NIX_VERSION}
+  NIX_INSTALL_ROOT       ${NIX_INSTALL_ROOT}
+  NIX_USER_CONFIG_DIR    ${NIX_USER_CONFIG_DIR}
+  NIX_CACHE_DIR          ${NIX_CACHE_DIR}
+  NIX_TARBALL_URL        ${NIX_TARBALL_URL}
+  NIX_TARBALL_SHA256     (must be set when implementing install)
+
+After install, profile.d puts ${NIX_DEFAULT_PROFILE_BIN} on \$PATH ahead of
+/storage/bin, so 'nix' resolves to real Nix in any login shell. The
+nix-portable wrappers under /storage/bin remain available; invoke them
+explicitly via /storage/bin/nix-portable when needed.
+
+Recovery: if real Nix breaks, 'nixctl uninstall' removes it cleanly. As a
+last resort, 'rm -rf /storage/.nix-root && reboot' restores the Layer 3
+substrate; reflashing the image is also under five minutes.
+EOF
+}
+
+# ---- Helpers ---------------------------------------------------------------
+fail() {
+  echo "${0##*/}: $*" >&2
+  exit 1
+}
+
+info() {
+  echo "==> $*"
+}
+
+note() {
+  echo "    $*"
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+# Detect whether real Nix is installed and runnable. Sets NIX_BIN on success.
+detect_real_nix() {
+  if [ -x "${NIX_DEFAULT_PROFILE_BIN}/nix" ]; then
+    NIX_BIN="${NIX_DEFAULT_PROFILE_BIN}/nix"
+    return 0
+  fi
+  return 1
+}
+
+# Read the sandbox setting from nix.conf without invoking nix. Returns the
+# value (true|false|relaxed|<unset>) on stdout, or "(no nix.conf)" if the
+# file is missing.
+read_sandbox_setting() {
+  if [ ! -f "${NIX_USER_CONFIG_FILE}" ]; then
+    echo "(no nix.conf)"
+    return
+  fi
+  setting=$(awk -F= '
+    /^[[:space:]]*sandbox[[:space:]]*=/ {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+      print $2
+      found=1
+      exit
+    }
+    END {
+      if (!found) print "(default)"
+    }
+  ' "${NIX_USER_CONFIG_FILE}")
+  echo "${setting}"
+}
+
+# Print one line describing /nix mount state. Uses /proc/mounts because
+# findmnt is not on ROCKNIX.
+report_nix_mount() {
+  if [ ! -d "${NIX_INSTALL_ROOT}" ]; then
+    echo "missing: ${NIX_INSTALL_ROOT} directory does not exist"
+    return
+  fi
+  line=$(awk -v p="${NIX_INSTALL_ROOT}" '$2 == p {print; exit}' /proc/mounts 2>/dev/null || true)
+  if [ -z "${line}" ]; then
+    echo "not mounted: ${NIX_INSTALL_ROOT} is a regular directory (Layer 3 not active)"
+    return
+  fi
+  echo "mounted: ${line}"
+}
+
+# Report which 'nix' the user's $PATH currently resolves to. This is a
+# diagnostic for the profile.d ordering, not authoritative for what's
+# installed.
+report_path_resolution() {
+  if have nix; then
+    nix_path=$(command -v nix 2>/dev/null || true)
+    case "${nix_path}" in
+      ${NIX_DEFAULT_PROFILE_BIN}/nix)
+        echo "real nix (${nix_path})"
+        ;;
+      /storage/bin/nix)
+        echo "portable wrapper (${nix_path})"
+        ;;
+      *)
+        echo "other: ${nix_path}"
+        ;;
+    esac
+  else
+    echo "no 'nix' on \$PATH"
+  fi
+}
+
+# ---- Subcommands -----------------------------------------------------------
+
+cmd_status() {
+  echo "Layer 4 (real Nix) status"
+  echo "------------------------"
+  if detect_real_nix; then
+    version_line=$("${NIX_BIN}" --version 2>&1 | head -1 || echo "(failed to query)")
+    echo "  installed: yes"
+    echo "  binary:    ${NIX_BIN}"
+    echo "  version:   ${version_line}"
+    echo "  config:    ${NIX_USER_CONFIG_FILE}"
+    echo "  sandbox:   $(read_sandbox_setting)"
+  else
+    echo "  installed: no"
+    echo "  expected:  ${NIX_DEFAULT_PROFILE_BIN}/nix"
+    echo "  hint:      run '${0##*/} install' to bootstrap real Nix"
+  fi
+  echo ""
+  echo "Layer 3 (storage-backed /nix) status"
+  echo "------------------------------------"
+  echo "  $(report_nix_mount)"
+  echo ""
+  echo "Shell PATH resolution"
+  echo "---------------------"
+  echo "  which nix -> $(report_path_resolution)"
+  echo ""
+  if [ -x /storage/apps/nix-portable/nix-portable ]; then
+    echo "Layer 1/2 (nix-portable) status"
+    echo "-------------------------------"
+    echo "  installed: /storage/apps/nix-portable/nix-portable"
+    echo "  invoke explicitly via /storage/bin/nix-portable"
+  fi
+}
+
+cmd_install() {
+  fail "install: not yet implemented (Unit 3 of the Layer 4 plan). Use nix-portable-install for Layer 1/2 in the meantime."
+}
+
+cmd_upgrade() {
+  fail "upgrade: not yet implemented (Unit 4 of the Layer 4 plan)."
+}
+
+cmd_uninstall() {
+  fail "uninstall: not yet implemented (Unit 4 of the Layer 4 plan)."
+}
+
+cmd_doctor() {
+  if have nix-doctor; then
+    info "Delegating to nix-doctor for Layer 1/2/3 checks."
+    info "Layer 4 doctor extensions land in Unit 5 of the plan."
+    exec nix-doctor "$@"
+  fi
+  fail "doctor: nix-doctor not found on \$PATH (expected /usr/bin/nix-doctor)"
+}
+
+# ---- Dispatch --------------------------------------------------------------
+
+if [ $# -eq 0 ]; then
+  usage >&2
+  exit 1
+fi
+
+cmd=$1
+shift
+
+case "${cmd}" in
+  status)
+    cmd_status "$@"
+    ;;
+  install)
+    cmd_install "$@"
+    ;;
+  upgrade)
+    cmd_upgrade "$@"
+    ;;
+  uninstall|remove)
+    cmd_uninstall "$@"
+    ;;
+  doctor)
+    cmd_doctor "$@"
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    echo "${0##*/}: unknown subcommand: ${cmd}" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
