@@ -12,13 +12,12 @@
 set -eu
 
 # ---- Versioning ------------------------------------------------------------
-# NIX_VERSION and NIX_TARBALL_SHA256 are placeholders until Unit 3 finalizes
-# them against a verified upstream Nix release. Override via environment for
-# experimentation.
-NIX_VERSION="${NIX_VERSION:-2.24.10}"
+# Pinned to the version that nixos.org/nix/install ships as canonical stable.
+# Bump together with NIX_TARBALL_SHA256 for reproducibility.
+NIX_VERSION="${NIX_VERSION:-2.34.7}"
 NIX_TARBALL_ARCH="${NIX_TARBALL_ARCH:-aarch64-linux}"
 NIX_TARBALL_URL="${NIX_TARBALL_URL:-https://releases.nixos.org/nix/nix-${NIX_VERSION}/nix-${NIX_VERSION}-${NIX_TARBALL_ARCH}.tar.xz}"
-NIX_TARBALL_SHA256="${NIX_TARBALL_SHA256:-}"  # set by Unit 3
+NIX_TARBALL_SHA256="${NIX_TARBALL_SHA256:-f1cee64ae7a02330c6421924c28f597c41813f2214ff108622087d8056378b08}"
 
 # ---- Filesystem layout -----------------------------------------------------
 NIX_INSTALL_ROOT="${NIX_INSTALL_ROOT:-/nix}"
@@ -27,11 +26,19 @@ NIX_USER_CONFIG_DIR="${NIX_USER_CONFIG_DIR:-${HOME:-/storage}/.config/nix}"
 NIX_USER_CONFIG_FILE="${NIX_USER_CONFIG_FILE:-${NIX_USER_CONFIG_DIR}/nix.conf}"
 NIX_CACHE_DIR="${NIX_CACHE_DIR:-/storage/.cache/nix-install}"
 
+# ---- SSL ------------------------------------------------------------------
+# Pre-set for the upstream installer so it skips its cacert derivation install
+# (the system's CA bundle is fine for talking to cache.nixos.org).
+NIX_SSL_CERT_FILE_DEFAULT="${NIX_SSL_CERT_FILE_DEFAULT:-/etc/ssl/certs/ca-certificates.crt}"
+
 # ---- Disk budget -----------------------------------------------------------
-# Conservative estimate: tarball download (~50 MB) + extracted store closure
-# (~400 MB) + working room. Refine in Unit 3 once the actual closure size is
-# observed.
+# Tarball ~23 MB, embedded store ~700 MB after extraction, +cache for store
+# copy. 1 GB is a comfortable floor.
 NIX_INSTALL_REQUIRED_MB="${NIX_INSTALL_REQUIRED_MB:-1024}"
+
+# ---- Substituter ----------------------------------------------------------
+NIX_SUBSTITUTER="${NIX_SUBSTITUTER:-https://cache.nixos.org/}"
+NIX_TRUSTED_PUBLIC_KEY="${NIX_TRUSTED_PUBLIC_KEY:-cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=}"
 
 usage() {
   cat <<EOF
@@ -55,7 +62,8 @@ Environment overrides (defaults shown):
   NIX_USER_CONFIG_DIR    ${NIX_USER_CONFIG_DIR}
   NIX_CACHE_DIR          ${NIX_CACHE_DIR}
   NIX_TARBALL_URL        ${NIX_TARBALL_URL}
-  NIX_TARBALL_SHA256     (must be set when implementing install)
+  NIX_TARBALL_SHA256     ${NIX_TARBALL_SHA256}
+  NIX_FORCE              Set to 1 to override safety checks (rare)
 
 After install, profile.d puts ${NIX_DEFAULT_PROFILE_BIN} on \$PATH ahead of
 /storage/bin, so 'nix' resolves to real Nix in any login shell. The
@@ -84,6 +92,107 @@ note() {
 
 have() {
   command -v "$1" >/dev/null 2>&1
+}
+
+sha256_of() {
+  if have sha256sum; then
+    sha256sum "$1" | awk '{print $1}'
+  elif have openssl; then
+    openssl dgst -sha256 "$1" | awk '{print $NF}'
+  else
+    fail "sha256sum or openssl is required to verify the Nix tarball"
+  fi
+}
+
+check_arch() {
+  if [ "${NIX_SKIP_ARCH_CHECK:-0}" = "1" ]; then
+    return 0
+  fi
+  arch=$(uname -m 2>/dev/null || echo unknown)
+  case "${arch}" in
+    aarch64|arm64) ;;
+    *) fail "this installer expects aarch64 ROCKNIX, but uname -m reports '${arch}' (set NIX_SKIP_ARCH_CHECK=1 to override for testing)" ;;
+  esac
+}
+
+check_storage() {
+  storage_root="/storage"
+  [ -d "${storage_root}" ] || fail "storage root missing: ${storage_root}"
+  [ -w "${storage_root}" ] || fail "storage root not writable: ${storage_root}"
+
+  available_mb=$(df -m "${storage_root}" | awk 'NR==2 {print $4}')
+  case "${available_mb}" in
+    ''|*[!0-9]*) fail "could not determine free space for ${storage_root}" ;;
+  esac
+  if [ "${available_mb}" -lt "${NIX_INSTALL_REQUIRED_MB}" ]; then
+    fail "not enough free space on ${storage_root}: ${available_mb}MB available, ${NIX_INSTALL_REQUIRED_MB}MB required"
+  fi
+}
+
+check_nix_mount() {
+  [ -d "${NIX_INSTALL_ROOT}" ] || fail "${NIX_INSTALL_ROOT} does not exist; Layer 3 (nix-storage-setup.service + nix.mount) is a prerequisite"
+  if ! awk -v p="${NIX_INSTALL_ROOT}" '$2 == p {found=1} END {exit !found}' /proc/mounts 2>/dev/null; then
+    note "${NIX_INSTALL_ROOT} is a regular directory, not a bind mount"
+    note "Layer 3 may not be active; install will populate ${NIX_INSTALL_ROOT} on the squashfs root"
+    note "This will not survive a reboot. Recommended: enable Layer 3 first."
+    if [ "${NIX_FORCE:-}" != "1" ]; then
+      fail "refusing to install on non-bind-mounted ${NIX_INSTALL_ROOT}; set NIX_FORCE=1 to override"
+    fi
+  fi
+}
+
+download_tarball() {
+  url=$1
+  dest=$2
+  if have curl; then
+    curl -fL --retry 3 --connect-timeout 20 --progress-bar "${url}" -o "${dest}"
+  elif have wget; then
+    wget -O "${dest}" "${url}"
+  else
+    fail "curl or wget is required to download Nix"
+  fi
+}
+
+verify_tarball() {
+  file=$1
+  actual=$(sha256_of "${file}")
+  if [ "${actual}" != "${NIX_TARBALL_SHA256}" ]; then
+    rm -f "${file}"
+    fail "checksum mismatch for Nix tarball: expected ${NIX_TARBALL_SHA256}, got ${actual}"
+  fi
+}
+
+write_nix_conf() {
+  sandbox_setting=$1  # "true" or "false"
+  mkdir -p "${NIX_USER_CONFIG_DIR}"
+  chmod 0755 "${NIX_USER_CONFIG_DIR}"
+  cat >"${NIX_USER_CONFIG_FILE}" <<EOF
+# Generated by nixctl on $(date -u +%Y-%m-%dT%H:%M:%SZ)
+# ROCKNIX Nix Layer 4 single-user (root) configuration.
+# Re-run nixctl install or edit by hand to adjust.
+
+experimental-features = nix-command flakes
+substituters = ${NIX_SUBSTITUTER}
+trusted-public-keys = ${NIX_TRUSTED_PUBLIC_KEY}
+sandbox = ${sandbox_setting}
+build-users-group =
+EOF
+  chmod 0644 "${NIX_USER_CONFIG_FILE}"
+}
+
+probe_sandbox() {
+  # Run a small no-op derivation that exercises the sandbox. Returns 0 if the
+  # build succeeds with sandbox=true, non-zero otherwise. Output is logged.
+  #
+  # The system is hardcoded rather than computed via builtins.currentSystem
+  # because pure-eval (the default for nix-command + flakes in Nix 2.30+)
+  # rejects impure builtins in --expr context. We are an aarch64-linux
+  # installer; the system is known.
+  probe_log=$1
+  "${NIX_BIN}" --extra-experimental-features 'nix-command flakes' \
+    build --no-link --print-out-paths --offline \
+    --expr 'derivation { name = "sandbox-probe"; system = "aarch64-linux"; builder = "/bin/sh"; args = [ "-c" "echo ok > $out" ]; }' \
+    >"${probe_log}" 2>&1
 }
 
 # Detect whether real Nix is installed and runnable. Sets NIX_BIN on success.
@@ -189,7 +298,101 @@ cmd_status() {
 }
 
 cmd_install() {
-  fail "install: not yet implemented (Unit 3 of the Layer 4 plan). Use nix-portable-install for Layer 1/2 in the meantime."
+  # Idempotency: skip if already at the pinned version.
+  if detect_real_nix; then
+    current=$("${NIX_BIN}" --version 2>/dev/null | awk '{print $NF}' | head -1 || true)
+    if [ "${current}" = "${NIX_VERSION}" ]; then
+      info "Nix ${NIX_VERSION} is already installed at ${NIX_BIN}"
+      info "Re-run with NIX_FORCE=1 to reinstall, or use 'nixctl upgrade --version <X.Y.Z>' to switch versions"
+      if [ "${NIX_FORCE:-}" != "1" ]; then
+        return 0
+      fi
+    else
+      info "Nix ${current} is already installed; replacing with ${NIX_VERSION}"
+    fi
+  fi
+
+  check_arch
+  check_storage
+  check_nix_mount
+
+  mkdir -p "${NIX_CACHE_DIR}"
+  tarball="${NIX_CACHE_DIR}/nix-${NIX_VERSION}-${NIX_TARBALL_ARCH}.tar.xz"
+  extract_dir="${NIX_CACHE_DIR}/nix-${NIX_VERSION}-${NIX_TARBALL_ARCH}"
+
+  # Reuse a previously-downloaded tarball if it matches.
+  if [ -f "${tarball}" ]; then
+    if [ "$(sha256_of "${tarball}")" = "${NIX_TARBALL_SHA256}" ]; then
+      info "Reusing cached tarball ${tarball}"
+    else
+      info "Cached tarball checksum mismatch; re-downloading"
+      rm -f "${tarball}"
+    fi
+  fi
+
+  if [ ! -f "${tarball}" ]; then
+    info "Downloading ${NIX_TARBALL_URL}"
+    download_tarball "${NIX_TARBALL_URL}" "${tarball}"
+    info "Verifying tarball sha256"
+    verify_tarball "${tarball}"
+  fi
+
+  rm -rf "${extract_dir}"
+  info "Extracting to ${NIX_CACHE_DIR}"
+  tar -xJf "${tarball}" -C "${NIX_CACHE_DIR}"
+  [ -x "${extract_dir}/install" ] || fail "installer missing in tarball: ${extract_dir}/install"
+
+  # Patch the upstream installer for busybox cp compatibility. ROCKNIX ships
+  # busybox coreutils, which do not support GNU's --preserve=ownership,
+  # timestamps. The -RPp shorthand preserves the same attributes via the
+  # legacy -p flag and works on both GNU and busybox cp. The chmod a-w that
+  # follows enforces store invariants regardless.
+  sed -i 's|cp -RP --preserve=ownership,timestamps|cp -RPp|g' "${extract_dir}/install"
+
+  # Clean any partial /nix/store state from a previous failed install attempt.
+  if [ -d "${NIX_INSTALL_ROOT}/store" ]; then
+    find "${NIX_INSTALL_ROOT}/store" -maxdepth 1 -name '*.tmp.*' -exec rm -rf {} + 2>/dev/null || true
+  fi
+
+  # Write nix.conf BEFORE running the installer. The installer's last step is
+  # `nix-env -i $nix` to seed the default profile, which reads the user
+  # nix.conf. Without our build-users-group= override, it would try to use
+  # the default 'nixbld' group, which ROCKNIX does not have (no useradd/
+  # groupadd available -- single-user-as-root is structural).
+  info "Writing initial ${NIX_USER_CONFIG_FILE} (sandbox=true; will probe after install)"
+  write_nix_conf true
+
+  # Run the official upstream installer in single-user mode with overrides
+  # that suppress its assumptions about writable /etc and shell rc files.
+  # Resulting layout under /nix matches what the script ships, which keeps us
+  # aligned with upstream's evolving conventions.
+  info "Running upstream installer (single-user, no profile/channel mods)"
+  USER="${USER:-root}" \
+  HOME="${HOME:-/storage}" \
+  NIX_INSTALLER_NO_MODIFY_PROFILE=1 \
+  NIX_INSTALLER_NO_CHANNEL_ADD=1 \
+  NIX_INSTALLER_YES=1 \
+  NIX_SSL_CERT_FILE="${NIX_SSL_CERT_FILE:-${NIX_SSL_CERT_FILE_DEFAULT}}" \
+  "${extract_dir}/install" --no-daemon
+
+  detect_real_nix || fail "upstream installer completed but ${NIX_DEFAULT_PROFILE_BIN}/nix is missing"
+
+  info "Probing sandbox support"
+  probe_log="${NIX_CACHE_DIR}/sandbox-probe.log"
+  if probe_sandbox "${probe_log}"; then
+    info "Sandbox probe succeeded; nix.conf keeps sandbox = true"
+  else
+    info "Sandbox probe failed; falling back to sandbox = false"
+    note "See ${probe_log} for the upstream error"
+    write_nix_conf false
+  fi
+
+  info "Final smoke: ${NIX_BIN} --version"
+  "${NIX_BIN}" --version || fail "final smoke failed"
+
+  info "Layer 4 install complete"
+  note "Open a fresh shell or run 'hash -r' so \$PATH picks up the new nix binary"
+  note "Try: nix run nixpkgs#hello"
 }
 
 cmd_upgrade() {
