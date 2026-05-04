@@ -13,11 +13,14 @@ set -eu
 
 # ---- Versioning ------------------------------------------------------------
 # Pinned to the version that nixos.org/nix/install ships as canonical stable.
-# Bump together with NIX_TARBALL_SHA256 for reproducibility.
-NIX_VERSION="${NIX_VERSION:-2.34.7}"
+# Bump NIX_VERSION_PINNED together with NIX_TARBALL_SHA256_PINNED.
+NIX_VERSION_PINNED="2.34.7"
+NIX_TARBALL_SHA256_PINNED="f1cee64ae7a02330c6421924c28f597c41813f2214ff108622087d8056378b08"
+
+NIX_VERSION="${NIX_VERSION:-${NIX_VERSION_PINNED}}"
 NIX_TARBALL_ARCH="${NIX_TARBALL_ARCH:-aarch64-linux}"
 NIX_TARBALL_URL="${NIX_TARBALL_URL:-https://releases.nixos.org/nix/nix-${NIX_VERSION}/nix-${NIX_VERSION}-${NIX_TARBALL_ARCH}.tar.xz}"
-NIX_TARBALL_SHA256="${NIX_TARBALL_SHA256:-f1cee64ae7a02330c6421924c28f597c41813f2214ff108622087d8056378b08}"
+NIX_TARBALL_SHA256="${NIX_TARBALL_SHA256:-${NIX_TARBALL_SHA256_PINNED}}"
 
 # ---- Filesystem layout -----------------------------------------------------
 NIX_INSTALL_ROOT="${NIX_INSTALL_ROOT:-/nix}"
@@ -145,12 +148,15 @@ download_tarball() {
   url=$1
   dest=$2
   if have curl; then
-    curl -fL --retry 3 --connect-timeout 20 --progress-bar "${url}" -o "${dest}"
+    curl -fL --retry 3 --connect-timeout 20 --progress-bar "${url}" -o "${dest}" \
+      || fail "download failed: curl exit non-zero for ${url}"
   elif have wget; then
-    wget -O "${dest}" "${url}"
+    wget -O "${dest}" "${url}" \
+      || fail "download failed: wget exit non-zero for ${url}"
   else
     fail "curl or wget is required to download Nix"
   fi
+  [ -s "${dest}" ] || fail "download produced empty/missing file: ${dest}"
 }
 
 verify_tarball() {
@@ -396,11 +402,147 @@ cmd_install() {
 }
 
 cmd_upgrade() {
-  fail "upgrade: not yet implemented (Unit 4 of the Layer 4 plan)."
+  # Parse --version <X.Y.Z> if provided. Otherwise upgrade to the pinned
+  # NIX_VERSION (which is what install also targets). Idempotency in
+  # cmd_install handles the 'already at target' case.
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --version)
+        [ $# -ge 2 ] || fail "upgrade: --version requires an argument"
+        # When --version is provided, NIX_TARBALL_SHA256 must be different
+        # from the pinned default. If the user did not export an explicit
+        # sha, our top-level defaulting filled in the pinned value, which is
+        # almost certainly wrong for a different version. The download's
+        # sha-check is still the authoritative gate; this is the early-fail
+        # nudge.
+        if [ "${NIX_TARBALL_SHA256}" = "${NIX_TARBALL_SHA256_PINNED}" ] && [ "$2" != "${NIX_VERSION_PINNED}" ]; then
+          fail "upgrade --version ${2} requires NIX_TARBALL_SHA256 to be exported with the sha256 of nix-${2}-${NIX_TARBALL_ARCH}.tar.xz"
+        fi
+        NIX_VERSION=$2
+        NIX_TARBALL_URL="https://releases.nixos.org/nix/nix-${NIX_VERSION}/nix-${NIX_VERSION}-${NIX_TARBALL_ARCH}.tar.xz"
+        shift 2
+        ;;
+      -h|--help)
+        cat <<EOF
+Usage: ${0##*/} upgrade [--version <X.Y.Z>]
+
+Upgrades real Nix to the pinned version (default) or to a specified version.
+When --version is provided, NIX_TARBALL_SHA256 must be set to the matching
+sha256 of the upstream tarball.
+
+Examples:
+  ${0##*/} upgrade
+  NIX_TARBALL_SHA256=<hex> ${0##*/} upgrade --version 2.35.0
+EOF
+        return 0
+        ;;
+      *)
+        fail "upgrade: unknown argument: $1"
+        ;;
+    esac
+  done
+
+  # Delegate to install. Its idempotency check handles the 'already at
+  # version' case (reports cleanly, exits 0). To force reinstall at the same
+  # version, set NIX_FORCE=1 in the environment.
+  cmd_install
 }
 
 cmd_uninstall() {
-  fail "uninstall: not yet implemented (Unit 4 of the Layer 4 plan)."
+  # Parse --yes for non-interactive use.
+  assume_yes=0
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --yes|-y) assume_yes=1; shift ;;
+      -h|--help)
+        cat <<EOF
+Usage: ${0##*/} uninstall [--yes]
+
+Removes real Nix and per-user config, restoring the system to the Layer 3
+substrate. Removes:
+
+  ${NIX_INSTALL_ROOT}/store/*
+  ${NIX_INSTALL_ROOT}/var/*
+  ${NIX_USER_CONFIG_DIR}
+  \${HOME}/.nix-defexpr
+  \${HOME}/.nix-profile (symlink)
+  \${HOME}/.nix-channels
+
+Leaves the Layer 3 bind mount itself intact. The nix-portable wrappers
+under /storage/bin (Layers 1/2) are untouched.
+
+For non-interactive use (scripts, smoke tests), pass --yes.
+EOF
+        return 0
+        ;;
+      *)
+        fail "uninstall: unknown argument: $1"
+        ;;
+    esac
+  done
+
+  # Idempotency: detect what's actually present. The bare mountpoints
+  # /nix/store and /nix/var/nix are also created by Layer 3's
+  # nix-storage-setup.service and by uninstall itself, so we look for actual
+  # content (store entries, profile dirs, user config) rather than directory
+  # existence.
+  found_anything=0
+  if [ -d "${NIX_INSTALL_ROOT}/store" ] && [ -n "$(ls -A "${NIX_INSTALL_ROOT}/store" 2>/dev/null || true)" ]; then
+    found_anything=1
+  fi
+  if [ -d "${NIX_INSTALL_ROOT}/var/nix/profiles" ] || [ -d "${NIX_INSTALL_ROOT}/var/nix/gcroots" ]; then
+    found_anything=1
+  fi
+  for path in \
+    "${NIX_USER_CONFIG_DIR}" \
+    "${HOME:-/storage}/.nix-defexpr" \
+    "${HOME:-/storage}/.nix-profile" \
+    "${HOME:-/storage}/.nix-channels"; do
+    if [ -e "${path}" ] || [ -L "${path}" ]; then
+      found_anything=1
+      break
+    fi
+  done
+
+  if [ "${found_anything}" -eq 0 ]; then
+    info "Nothing to uninstall: real Nix is not present"
+    return 0
+  fi
+
+  # Confirmation gate.
+  if [ "${assume_yes}" -ne 1 ]; then
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+      fail "uninstall: refusing to run non-interactively without --yes"
+    fi
+    printf 'About to remove real Nix from %s and per-user state from %s.\nContinue? [y/N] ' \
+      "${NIX_INSTALL_ROOT}" "${HOME:-/storage}"
+    read -r answer
+    case "${answer}" in
+      y|Y|yes|YES) ;;
+      *) info "Aborted."; return 1 ;;
+    esac
+  fi
+
+  info "Removing /nix/store and /nix/var"
+  # /nix is a bind mount; remove its contents but not the mount point.
+  rm -rf "${NIX_INSTALL_ROOT}/store" "${NIX_INSTALL_ROOT}/var" 2>&1 || true
+  # Recreate empty store mountpoint so subsequent installs find a writable
+  # parent. The Layer 3 nix-storage-setup.service does this on boot, but we
+  # may not reboot between uninstall and install.
+  mkdir -p "${NIX_INSTALL_ROOT}/store" "${NIX_INSTALL_ROOT}/var/nix"
+
+  info "Removing per-user Nix state"
+  rm -rf "${NIX_USER_CONFIG_DIR}" 2>&1 || true
+  rm -rf "${HOME:-/storage}/.nix-defexpr" 2>&1 || true
+  rm -f "${HOME:-/storage}/.nix-profile" 2>&1 || true
+  rm -f "${HOME:-/storage}/.nix-channels" 2>&1 || true
+
+  # Layer 3 substrate (bind mount) is intact; Layer 1/2 (nix-portable) is
+  # untouched.
+  info "Layer 4 uninstall complete"
+  note "Layer 3 bind mount remains active: ${NIX_INSTALL_ROOT}"
+  note "Layer 1/2 portable wrappers remain at /storage/bin/nix-portable*"
+  note "To reinstall Layer 4, run: ${0##*/} install"
 }
 
 cmd_doctor() {
