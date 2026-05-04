@@ -91,7 +91,7 @@ Carried forward from the origin document. Stable IDs match the requirements doc.
 
 ## Key Technical Decisions
 
-- **Manual install, not the official tarball's `install` script.** The tarball's `install` script tries to write `/etc/nix/nix.conf`, modifies shell rc files, and uses `sudo` for root-owned operations. None of these work cleanly on ROCKNIX (`/etc` is read-only squashfs; profile.d is owned by the package, not the install path; we are already root). Doing the equivalent steps manually — extract the embedded store, register the closure database, set up profiles and gcroots, write `nix.conf` to `~/.config/nix/` — is more code under our control and avoids fighting the script's assumptions.
+- **Use the official upstream installer with env overrides, not a manual reimplementation.** *(Deviation from the original plan; resolved during Unit 3 implementation.)* The plan originally favored a manual install on the assumption that the upstream `install` script would fight ROCKNIX's read-only `/etc`, missing sudo, and root-only model. Investigation during Unit 3 showed the script can be coerced into clean compliance with three env vars (`NIX_INSTALLER_NO_MODIFY_PROFILE=1`, `NIX_INSTALLER_NO_CHANNEL_ADD=1`, `NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`) plus two ROCKNIX-specific patches applied at install time: a sed replacing `cp -RP --preserve=ownership,timestamps` with `cp -RPp` (busybox cp compatibility), and writing `nix.conf` with `build-users-group=` empty *before* running the installer (so its final `nix-env -i $nix` step does not try to use the missing `nixbld` group). This is significantly less code than reimplementing the installer's logic and stays aligned with upstream's evolving conventions.
 
 - **Pin the Nix version in source, defaultable via env var.** Mirrors the Layer 1/2 approach for `nix-portable v012`. Specific version selected during this plan's implementation (latest stable at the time, e.g., `2.24.10`) and recorded as `NIX_VERSION` constant in `nixctl`. Provides reproducibility, sha256-verifiable downloads, and a deliberate upgrade ritual via `nixctl upgrade`.
 
@@ -148,7 +148,7 @@ profile.d/085-nix-integration.conf  (built into image, always present):
 
 ## Implementation Units
 
-- [ ] **Unit 1: Build-time profile.d and package.mk wiring**
+- [x] **Unit 1: Build-time profile.d and package.mk wiring**
 
 **Goal:** Bake the `$PATH` ordering and ship the `nixctl` script via the existing `nix-integration` package. After this unit, image rebuilds carry the prefix even on devices with no Layer 4 installed; the empty-bin fall-through is harmless.
 
@@ -180,7 +180,7 @@ profile.d/085-nix-integration.conf  (built into image, always present):
 
 ---
 
-- [ ] **Unit 2: `nixctl` script skeleton + `status` subcommand**
+- [x] **Unit 2: `nixctl` script skeleton + `status` subcommand**
 
 **Goal:** Land the read-only entry point first. `nixctl status` reports whether real Nix is installed, what version, where its store is, what the sandbox setting is, and what `/nix` is bound to. Easy first land — exercises the file layout, environment variable overrides, and usage strings without any destructive operations.
 
@@ -212,7 +212,7 @@ profile.d/085-nix-integration.conf  (built into image, always present):
 
 ---
 
-- [ ] **Unit 3: `nixctl install` with sandbox probe**
+- [x] **Unit 3: `nixctl install` with sandbox probe**
 
 **Goal:** Implement the manual install path: download Nix binary tarball, verify, extract, populate `/nix/store/`, register the closure DB, set up profiles and `~/.nix-profile` symlink, write `nix.conf`, probe sandbox, finalize. Idempotent — re-running is a no-op when the target version already matches.
 
@@ -255,7 +255,7 @@ profile.d/085-nix-integration.conf  (built into image, always present):
 
 ---
 
-- [ ] **Unit 4: `nixctl uninstall` and `nixctl upgrade`**
+- [x] **Unit 4: `nixctl uninstall` and `nixctl upgrade`**
 
 **Goal:** Complete the lifecycle. Uninstall returns the system to the Layer 3 substrate; upgrade is a thin wrapper around install with a different version.
 
@@ -289,7 +289,7 @@ profile.d/085-nix-integration.conf  (built into image, always present):
 
 ---
 
-- [ ] **Unit 5: `nix-doctor` Layer 4 extensions**
+- [x] **Unit 5: `nix-doctor` Layer 4 extensions**
 
 **Goal:** Extend the existing `nix-doctor` script to report Layer 4 readiness when real nix is detected on disk. Layer 1/2 checks remain unchanged.
 
@@ -327,7 +327,7 @@ profile.d/085-nix-integration.conf  (built into image, always present):
 
 ---
 
-- [ ] **Unit 6: Tests — static checks and runtime smoke**
+- [x] **Unit 6: Tests — static checks and runtime smoke**
 
 **Goal:** Extend existing test scaffolding to cover the new `nixctl` script and the Layer 4 happy path. Static checks run in CI; runtime smoke runs on the device.
 
@@ -367,7 +367,7 @@ profile.d/085-nix-integration.conf  (built into image, always present):
 
 ---
 
-- [ ] **Unit 7: Documentation**
+- [x] **Unit 7: Documentation**
 
 **Goal:** Update the device-specific Nix experiment doc with Layer 4 usage. New users picking up the device should be able to install real nix from the doc alone.
 
