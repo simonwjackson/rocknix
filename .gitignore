@@ -28,6 +28,9 @@ mkpkg-temp
 # ccache
 /.ccache/
 
+# direnv
+/.direnv/
+
 # backup files
 *.orig
 
