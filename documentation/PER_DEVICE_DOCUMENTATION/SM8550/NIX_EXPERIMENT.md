@@ -523,6 +523,91 @@ Stop at Layer 6 (do not pursue Layer 7+) if any of these hold:
 - Active Layer 6 files survive a Layer 4 reset in a broken state.
 - Managed profile snippets or wrappers regress SSH, EmulationStation/Sway, game runtime, or existing `/storage/bin` recovery scripts.
 
+## Layer 7: Nix-managed apps and UI experiments
+
+Layer 7 uses the Layer 4/5 real Nix profile and Layer 6 activation engine to validate manually launched apps or UI dependencies under ROCKNIX Sway. It does not replace EmulationStation, add autostart/systemd integration, or manage broad app state.
+
+Initial contract:
+
+- package install remains standard `nix profile install <package>`
+- persistent launchers/snippets are activated through Layer 6 only
+- allowed surfaces remain `/storage/bin/<launcher>` and `/storage/.config/profile.d/<snippet>`
+- app experiment state/config/cache must live under `/storage/.local/share/nix-apps/layer7/<app>`, `/storage/.config/nix-apps/layer7/<app>`, or `/storage/.cache/nix-apps/layer7/<app>`
+- launchers must prove their selected app binary resolves from the Nix profile/store, not `/usr`, `/bin`, or an unrelated `/storage/bin` script
+
+The first fixture is a browser-like launcher bundle:
+
+```text
+projects/ROCKNIX/packages/tools/nix-integration/tests/fixtures/layer7-apps/browser/
+```
+
+It installs these Layer 6-managed files when activated:
+
+```text
+/storage/bin/rocknix-layer7-browser
+/storage/.config/profile.d/999-rocknix-layer7-browser
+```
+
+The default expected app binary is `chromium`, installed through the user Nix profile. The browser launcher includes Chromium's `--no-sandbox` flag because ROCKNIX Nix experiments run as root, and sets `CHROME_CONFIG_HOME` plus `XDG_CONFIG_HOME`/`XDG_CACHE_HOME` to Layer 7 experiment roots so helpers such as Crashpad do not write to the default browser config path. Override during tests or future app experiments with:
+
+```sh
+NIX_LAYER7_APP_BIN=<binary> nixctl status
+NIX_LAYER7_APP_BIN=<binary> nix-doctor --offline
+ROCKNIX_LAYER7_BROWSER_APP=<binary> rocknix-layer7-browser --check
+```
+
+### Validate Layer 7
+
+Default static/runtime checks exercise Layer 7 against temporary directories. They do not launch graphical apps:
+
+```sh
+projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-static-checks.sh
+projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
+```
+
+Hardware validation is opt-in because it writes to real storage surfaces and depends on a profile-installed graphical app:
+
+```sh
+nix profile install nixpkgs#chromium
+LAYER7_SMOKE=1 projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
+```
+
+Optional reboot persistence:
+
+```sh
+LAYER7_SMOKE=1 LAYER7_REBOOT_VERIFY=prepare projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
+reboot
+LAYER7_SMOKE=1 LAYER7_REBOOT_VERIFY=verify projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
+```
+
+The hardware smoke validates launcher activation, Nix-backed binary readiness, `nixctl status`, and `nix-doctor`. Actual visual confirmation remains operator-observed: launch the browser from the active Sway session, verify a visible window, input, exit behavior, and recovery, then document package-specific findings separately from base Nix layer health.
+
+Validated on `thor` with `nixpkgs#chromium`:
+
+```text
+LAYER7_SMOKE=1 -> passed
+manual Sway launch -> visible "about:blank - Chromium" window, app_id=chromium-browser
+binary origin -> /storage/.nix-profile/bin/chromium -> /nix/store/.../bin/chromium
+state -> /storage/.local/share/nix-apps/layer7/browser
+config/crashpad -> /storage/.config/nix-apps/layer7/browser/chromium/Crash Reports
+cache -> /storage/.cache/nix-apps/layer7/browser
+LAYER7_REBOOT_VERIFY=verify -> passed
+cleanup -> Layer 6 inactive, managed files 0
+```
+
+The profile-installed Chromium package remains managed by standard `nix profile`; the Layer 7 smoke only activates/deactivates the storage-local launcher files.
+
+### Stopping rule for Layer 7
+
+Stop at Layer 7 or switch candidates if any of these hold:
+
+- The app requires mutating `/usr`, `/flash`, `/boot`, firmware, kernel modules, ROCKNIX services, ROMs, saves, Steam/FEX state, or existing browser profiles.
+- The launcher cannot prove a Nix profile/store-backed binary origin.
+- Graphical launch strands SSH, Sway, EmulationStation, Steam/FEX, or recovery.
+- App state grows without a clear cleanup path.
+- Layer 6 cannot deactivate the launcher cleanly.
+- Package-specific Wayland/GPU/audio/input failures dominate and no useful candidate remains.
+
 ## Next layer
 
-Layer 7 can use Layer 6 to install launch wrappers/config for Nix-managed apps and UI experiments. Do not start Layer 7 until Layer 6 activation, conflict refusal, deactivation, doctor/status reporting, and reboot persistence are boring.
+Layer 8 remains experimental daemon mode. Do not start it unless single-user/root Nix, persistent profiles, managed activation, and app/UI experiments produce a clear reason to accept daemon complexity.

@@ -154,6 +154,80 @@ NIX_LAYER6_PROFILE_D_DIR="${L6_TMP}/profile.d" \
 [ ! -e "${L6_TMP}/bin/rocknix-layer6-smoke" ]
 [ ! -e "${L6_TMP}/profile.d/999-rocknix-layer6-smoke" ]
 
+# Layer 7 app experiment smoke against temp surfaces (safe for default CI).
+L7_TMP="${TMP_DIR}/layer7"
+L7_HOME="${L7_TMP}/home"
+L7_BUNDLE="${PKG_DIR}/tests/fixtures/layer7-apps/browser"
+mkdir -p "${L7_TMP}/state" "${L7_TMP}/bin" "${L7_TMP}/profile.d" "${L7_HOME}/.nix-profile/bin"
+printf '#!/bin/sh\necho fake chromium\n' >"${L7_HOME}/.nix-profile/bin/chromium"
+chmod 0755 "${L7_HOME}/.nix-profile/bin/chromium"
+NIX_LAYER6_STATE_DIR="${L7_TMP}/state" \
+NIX_LAYER6_BIN_DIR="${L7_TMP}/bin" \
+NIX_LAYER6_PROFILE_D_DIR="${L7_TMP}/profile.d" \
+  "${PKG_DIR}/scripts/nix-layer-activate" activate "${L7_BUNDLE}" >/tmp/nix-layer7-activate-smoke.log
+[ -x "${L7_TMP}/bin/rocknix-layer7-browser" ]
+HOME="${L7_HOME}" \
+ROCKNIX_LAYER7_BROWSER_STATE_DIR="${L7_HOME}/.local/share/nix-apps/layer7/browser" \
+  "${L7_TMP}/bin/rocknix-layer7-browser" --check >/tmp/nix-layer7-launcher-check.log
+grep -q 'rocknix-layer7-browser:ready' /tmp/nix-layer7-launcher-check.log
+grep -q '.nix-profile/bin/chromium' /tmp/nix-layer7-launcher-check.log
+if HOME="${L7_HOME}" \
+  ROCKNIX_LAYER7_BROWSER_APP="missing-layer7-browser" \
+  "${L7_TMP}/bin/rocknix-layer7-browser" --check >/tmp/nix-layer7-missing-check.log 2>&1; then
+  echo 'expected Layer 7 missing app check to fail' >&2
+  exit 1
+fi
+grep -q "Layer 7 app binary 'missing-layer7-browser' not found" /tmp/nix-layer7-missing-check.log
+mkdir -p "${L7_TMP}/unsafe-bin"
+printf '#!/bin/sh\necho unsafe chromium\n' >"${L7_TMP}/unsafe-bin/chromium"
+chmod 0755 "${L7_TMP}/unsafe-bin/chromium"
+if HOME="${L7_HOME}" \
+  ROCKNIX_LAYER7_BROWSER_BIN_PATH="${L7_TMP}/unsafe-bin/chromium" \
+  "${L7_TMP}/bin/rocknix-layer7-browser" --check >/tmp/nix-layer7-unsafe-bin.log 2>&1; then
+  echo 'expected Layer 7 unsafe binary check to fail' >&2
+  exit 1
+fi
+grep -q 'not Nix-backed' /tmp/nix-layer7-unsafe-bin.log
+HOME="${L7_HOME}" \
+NIX_LAYER6_STATE_DIR="${L7_TMP}/state" \
+NIX_LAYER6_BIN_DIR="${L7_TMP}/bin" \
+NIX_LAYER6_PROFILE_D_DIR="${L7_TMP}/profile.d" \
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+  "${PKG_DIR}/scripts/nixctl" status >/tmp/nix-layer7-nixctl-status.log
+grep -q 'Layer 7 (app/UI experiment) status' /tmp/nix-layer7-nixctl-status.log
+grep -q 'origin:   Nix profile/store' /tmp/nix-layer7-nixctl-status.log
+HOME="${L7_HOME}" \
+NIX_LAYER6_STATE_DIR="${L7_TMP}/state" \
+NIX_LAYER6_BIN_DIR="${L7_TMP}/bin" \
+NIX_LAYER6_PROFILE_D_DIR="${L7_TMP}/profile.d" \
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+NIX_PORTABLE_DIR="${NIX_PORTABLE_DIR}" \
+NIX_WRAPPER_DIR="${NIX_WRAPPER_DIR}" \
+NP_LOCATION="${NP_LOCATION}" \
+NIX_PORTABLE_REQUIRED_MB=1 \
+  "${PKG_DIR}/scripts/nix-doctor" --offline --no-smoke >/tmp/nix-layer7-doctor-smoke.log || true
+grep -q 'Layer 7 ready: launcher active with Nix-backed app binary' /tmp/nix-layer7-doctor-smoke.log
+if HOME="${L7_HOME}" \
+  NIX_LAYER6_STATE_DIR="${L7_TMP}/state" \
+  NIX_LAYER6_BIN_DIR="${L7_TMP}/bin" \
+  NIX_LAYER6_PROFILE_D_DIR="${L7_TMP}/profile.d" \
+  NIX_LAYER7_APP_STATE_DIR="/storage/games-internal/roms/steam" \
+  NIX_PORTABLE_DIR="${NIX_PORTABLE_DIR}" \
+  NIX_WRAPPER_DIR="${NIX_WRAPPER_DIR}" \
+  NP_LOCATION="${NP_LOCATION}" \
+  NIX_PORTABLE_REQUIRED_MB=1 \
+  "${PKG_DIR}/scripts/nix-doctor" --offline --no-smoke >/tmp/nix-layer7-unsafe-state.log 2>&1; then
+  echo 'expected Layer 7 unsafe state path doctor check to fail' >&2
+  exit 1
+fi
+grep -q 'Layer 7 app state path outside allowed experiment roots' /tmp/nix-layer7-unsafe-state.log
+NIX_LAYER6_STATE_DIR="${L7_TMP}/state" \
+NIX_LAYER6_BIN_DIR="${L7_TMP}/bin" \
+NIX_LAYER6_PROFILE_D_DIR="${L7_TMP}/profile.d" \
+  "${PKG_DIR}/scripts/nix-layer-activate" deactivate >/tmp/nix-layer7-deactivate-smoke.log
+[ ! -e "${L7_TMP}/bin/rocknix-layer7-browser" ]
+[ ! -e "${L7_TMP}/profile.d/999-rocknix-layer7-browser" ]
+
 printf 'nix-integration runtime smoke passed\n'
 
 # ---- Layer 4 device-side smoke (opt-in) ------------------------------------
@@ -164,10 +238,11 @@ printf 'nix-integration runtime smoke passed\n'
 #   - network reachability to releases.nixos.org and cache.nixos.org
 #   - >= 1 GB free on /storage
 # Not run in default CI; intended for manual validation on hardware.
-if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ]; then
+if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ]; then
   printf 'nix-integration Layer 4 smoke: skipped (set LAYER4_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 5 smoke: skipped (set LAYER5_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 6 smoke: skipped (set LAYER6_SMOKE=1 to enable)\n'
+  printf 'nix-integration Layer 7 smoke: skipped (set LAYER7_SMOKE=1 to enable)\n'
   exit 0
 fi
 
@@ -249,7 +324,7 @@ fi
 # hardware. Requires Layer 4 real Nix to already be installed. The default
 # package is nixpkgs#hello because it is small and low-conflict.
 if [ "${LAYER5_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER6_SMOKE:-0}" != "1" ]; then
+  if [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ]; then
     exit 0
   fi
 else
@@ -334,8 +409,10 @@ fi
 # Set LAYER6_SMOKE=1 to validate managed storage-local user-environment
 # activation on hardware. Requires Layer 4/5 shell integration to be healthy.
 if [ "${LAYER6_SMOKE:-0}" != "1" ]; then
-  exit 0
-fi
+  if [ "${LAYER7_SMOKE:-0}" != "1" ]; then
+    exit 0
+  fi
+else
 
 L6_LOG=/tmp/nix-integration-layer6-smoke.log
 L6_CACHE=/storage/.cache/nix-layer6-smoke-bundle
@@ -433,3 +510,102 @@ log6 'cleanup: deactivate Layer 6 smoke bundle'
 
 printf 'nix-integration Layer 6 smoke passed\n'
 printf 'log: %s\n' "${L6_LOG}"
+fi
+
+# ---- Layer 7 device-side smoke (opt-in) ------------------------------------
+# Set LAYER7_SMOKE=1 to validate the first Nix-managed app launcher on
+# hardware. This smoke intentionally checks readiness and activation; actual
+# visual confirmation remains operator-observed because CI cannot inspect the
+# handheld screen.
+if [ "${LAYER7_SMOKE:-0}" != "1" ]; then
+  exit 0
+fi
+
+L7_LOG=/tmp/nix-integration-layer7-smoke.log
+L7_CACHE=/storage/.cache/nix-layer7-browser-bundle
+L7_BUNDLE="${L7_CACHE}/browser"
+L7_BIN="${LAYER7_SMOKE_BIN:-chromium}"
+L7_LAUNCHER=/storage/bin/rocknix-layer7-browser
+rm -f "${L7_LOG}"
+mkdir -p "${L7_CACHE}"
+rm -rf "${L7_BUNDLE}"
+cp -R "${PKG_DIR}/tests/fixtures/layer7-apps/browser" "${L7_BUNDLE}"
+
+log7() {
+  printf '[layer7-smoke] %s\n' "$*"
+  printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" >>"${L7_LOG}"
+}
+
+[ -d "${HOME:-/storage}/.nix-profile/bin" ] || { echo 'FAIL: Layer 7 smoke requires Layer 5 profile bin' >&2; exit 1; }
+[ -x "${HOME:-/storage}/.nix-profile/bin/${L7_BIN}" ] || { echo "FAIL: Layer 7 smoke requires ${L7_BIN} in the Nix user profile" >&2; exit 1; }
+[ -w /storage ] || { echo 'FAIL: /storage is not writable' >&2; exit 1; }
+
+if [ "${LAYER7_REBOOT_VERIFY:-}" != "verify" ] && [ "${LAYER7_ALLOW_ACTIVE_LAYER6:-0}" != "1" ]; then
+  existing_state=$(${NIX_LAYER6_ACTIVATE} status 2>/dev/null | awk '/state:/ {print $2; exit}' || echo absent)
+  if [ "${existing_state}" = "active" ]; then
+    echo 'FAIL: Layer 7 smoke requires no pre-existing active Layer 6 bundle; deactivate it first or set LAYER7_ALLOW_ACTIVE_LAYER6=1' >&2
+    exit 1
+  fi
+fi
+
+if [ "${LAYER7_REBOOT_VERIFY:-}" = "verify" ]; then
+  log7 'reboot verify: checking existing Layer 7 launcher after reboot'
+  . /etc/profile
+  [ -x "${L7_LAUNCHER}" ] || { echo 'FAIL: Layer 7 launcher missing after reboot' >&2; exit 1; }
+  ROCKNIX_LAYER7_BROWSER_APP="${L7_BIN}" "${L7_LAUNCHER}" --check >>"${L7_LOG}" 2>&1 \
+    || { echo 'FAIL: Layer 7 launcher readiness failed after reboot' >&2; exit 1; }
+  "${NIXCTL}" status >>"${L7_LOG}" 2>&1 \
+    || { echo 'FAIL: nixctl status failed during Layer 7 reboot verify' >&2; exit 1; }
+  "${DOCTOR}" --offline >>"${L7_LOG}" 2>&1 \
+    || { echo 'FAIL: nix-doctor failed during Layer 7 reboot verify' >&2; exit 1; }
+  if [ "${LAYER7_KEEP:-0}" != "1" ]; then
+    "${NIXCTL}" user-env deactivate >>"${L7_LOG}" 2>&1 \
+      || { echo 'FAIL: Layer 7 deactivate failed after reboot verify' >&2; exit 1; }
+  fi
+  printf 'nix-integration Layer 7 reboot smoke passed\n'
+  printf 'log: %s\n' "${L7_LOG}"
+  exit 0
+fi
+
+log7 'pre-flight: Layer 7 browser activation bundle'
+"${NIXCTL}" user-env preflight "${L7_BUNDLE}" >>"${L7_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 7 preflight failed' >&2; exit 1; }
+
+log7 'activate: Layer 7 browser launcher bundle'
+"${NIXCTL}" user-env activate "${L7_BUNDLE}" >>"${L7_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 7 activation failed' >&2; exit 1; }
+
+log7 'verify: launcher readiness uses Nix profile binary'
+ROCKNIX_LAYER7_BROWSER_APP="${L7_BIN}" "${L7_LAUNCHER}" --check >>"${L7_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 7 launcher readiness check failed' >&2; exit 1; }
+grep -q 'rocknix-layer7-browser:ready' "${L7_LOG}" \
+  || { echo 'FAIL: Layer 7 launcher did not report ready' >&2; exit 1; }
+
+log7 'diagnostics: nixctl status and nix-doctor report Layer 7 state'
+NIX_LAYER7_APP_BIN="${L7_BIN}" "${NIXCTL}" status >>"${L7_LOG}" 2>&1 \
+  || { echo 'FAIL: nixctl status failed during Layer 7 smoke' >&2; exit 1; }
+grep -q 'Layer 7 (app/UI experiment) status' "${L7_LOG}" \
+  || { echo 'FAIL: nixctl status did not report Layer 7 section' >&2; exit 1; }
+NIX_LAYER7_APP_BIN="${L7_BIN}" "${DOCTOR}" --offline >>"${L7_LOG}" 2>&1 \
+  || { echo 'FAIL: nix-doctor failed during Layer 7 smoke' >&2; exit 1; }
+grep -q 'Layer 7 ready' "${L7_LOG}" \
+  || { echo 'FAIL: nix-doctor did not report Layer 7 readiness' >&2; exit 1; }
+
+if [ "${LAYER7_REBOOT_VERIFY:-}" = "prepare" ]; then
+  log7 'leaving Layer 7 launcher active for reboot verification'
+  printf 'nix-integration Layer 7 smoke prepared for reboot verification\n'
+  printf 'After reboot run: LAYER7_SMOKE=1 LAYER7_REBOOT_VERIFY=verify %s\n' "$0"
+  printf 'log: %s\n' "${L7_LOG}"
+  exit 0
+fi
+
+log7 'cleanup: deactivate Layer 7 launcher bundle'
+"${NIXCTL}" user-env deactivate >>"${L7_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 7 deactivate failed' >&2; exit 1; }
+[ ! -e /storage/bin/rocknix-layer7-browser ] \
+  || { echo 'FAIL: Layer 7 launcher still present after deactivate' >&2; exit 1; }
+[ ! -e /storage/.config/profile.d/999-rocknix-layer7-browser ] \
+  || { echo 'FAIL: Layer 7 profile snippet still present after deactivate' >&2; exit 1; }
+
+printf 'nix-integration Layer 7 smoke passed\n'
+printf 'log: %s\n' "${L7_LOG}"

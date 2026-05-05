@@ -625,12 +625,57 @@ Initial candidates:
 - app-specific failures are not base Nix-layer failures
 - test GPU, input, touch, audio, and fullscreen separately
 
-### Validation
+### Initial implementation shape
 
-For each candidate app:
+The first Layer 7 control-plane slice adds a browser-like launcher fixture under:
+
+```text
+projects/ROCKNIX/packages/tools/nix-integration/tests/fixtures/layer7-apps/browser/
+```
+
+The fixture is activated through Layer 6 and manages only:
+
+```text
+/storage/bin/rocknix-layer7-browser
+/storage/.config/profile.d/999-rocknix-layer7-browser
+```
+
+Readiness checks require the selected app binary to resolve from the Nix profile or store. A same-named binary from `/usr`, `/bin`, or unrelated `/storage/bin` is not accepted as Layer 7-ready.
+
+Layer 7 status and diagnostics are reported by:
+
+```text
+nixctl status
+nix-doctor --offline
+```
+
+Default runtime smoke checks activation/status/doctor behavior in temporary directories without launching graphics. Hardware validation is opt-in:
 
 ```sh
-# launch manually over SSH
+LAYER7_SMOKE=1 projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
+```
+
+### Validation
+
+Layer 7 was validated on `thor` with `nixpkgs#chromium` installed through the standard user profile.
+
+Observed evidence:
+
+```text
+LAYER7_SMOKE=1 .../nix-integration-runtime-smoke.sh -> passed
+Sway window: about:blank - Chromium, app_id=chromium-browser
+binary: /storage/.nix-profile/bin/chromium -> /nix/store/.../bin/chromium
+Crashpad database: /storage/.config/nix-apps/layer7/browser/chromium/Crash Reports
+LAYER7_REBOOT_VERIFY=verify -> passed
+Layer 6 state after cleanup: inactive, managed files: 0
+```
+
+For future candidate apps:
+
+```sh
+# install the selected app with standard nix profile
+# activate the Layer 7 launcher bundle through nixctl user-env
+# launch manually over SSH/Sway
 # observe on device screen
 # exit app
 # confirm EmulationStation/Sway recovers or was unaffected
