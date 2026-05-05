@@ -33,6 +33,12 @@ NIX_LAYER7_PROFILE_SNIPPET="${NIX_LAYER7_PROFILE_SNIPPET:-999-rocknix-layer7-bro
 NIX_LAYER7_APP_STATE_DIR="${NIX_LAYER7_APP_STATE_DIR:-${NIX_USER_HOME}/.local/share/nix-apps/layer7/${NIX_LAYER7_APP_NAME}}"
 NIX_LAYER7_APP_CONFIG_DIR="${NIX_LAYER7_APP_CONFIG_DIR:-${NIX_USER_HOME}/.config/nix-apps/layer7/${NIX_LAYER7_APP_NAME}}"
 NIX_LAYER7_APP_CACHE_DIR="${NIX_LAYER7_APP_CACHE_DIR:-${NIX_USER_HOME}/.cache/nix-apps/layer7/${NIX_LAYER7_APP_NAME}}"
+NIX_LAYER8_STATE_DIR="${NIX_LAYER8_STATE_DIR:-/storage/.config/nix-integration/layer8}"
+NIX_LAYER8_SYSTEMD_DIR="${NIX_LAYER8_SYSTEMD_DIR:-}"
+NIX_DAEMON_BIN="${NIX_DAEMON_BIN:-${NIX_DEFAULT_PROFILE_BIN}/nix-daemon}"
+NIX_DAEMON_SERVICE="${NIX_DAEMON_SERVICE:-nix-daemon.service}"
+NIX_DAEMON_SOCKET="${NIX_DAEMON_SOCKET:-nix-daemon.socket}"
+NIX_DAEMON_SOCKET_PATH="${NIX_DAEMON_SOCKET_PATH:-${NIX_INSTALL_ROOT}/var/nix/daemon-socket/socket}"
 CHECK_NETWORK=1
 RUN_SMOKE=1
 RUN_DEV_SHELL_SMOKE=0
@@ -199,6 +205,72 @@ layer7_path_safe() {
       return 1
       ;;
   esac
+}
+
+systemd_unit_path() {
+  unit=$1
+  dirs="${NIX_LAYER8_SYSTEMD_DIR} /storage/.config/system.d /usr/lib/systemd/system /etc/systemd/system"
+  for dir in ${dirs}; do
+    [ -n "${dir}" ] || continue
+    if [ -f "${dir}/${unit}" ]; then
+      echo "${dir}/${unit}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+nix_is_mounted() {
+  awk -v p="${NIX_INSTALL_ROOT}" '$2 == p {found=1} END {exit !found}' /proc/mounts 2>/dev/null
+}
+
+layer8_state() {
+  if [ -f "${NIX_LAYER8_STATE_DIR}/state" ]; then
+    awk 'NR==1 {print; exit}' "${NIX_LAYER8_STATE_DIR}/state"
+  else
+    echo inactive
+  fi
+}
+
+layer8_build_users_group() {
+  if [ ! -f "${NIX_USER_CONFIG_FILE}" ]; then
+    echo "(no nix.conf)"
+    return
+  fi
+  awk -F= '
+    /^[[:space:]]*build-users-group[[:space:]]*=/ {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+      print $2
+      found=1
+      exit
+    }
+    END { if (!found) print "(default)" }
+  ' "${NIX_USER_CONFIG_FILE}"
+}
+
+group_exists() {
+  group=$1
+  [ -n "${group}" ] || return 1
+  if have getent; then
+    getent group "${group}" >/dev/null 2>&1 && return 0
+  fi
+  awk -F: -v group="${group}" '$1 == group {found=1} END {exit !found}' /etc/group 2>/dev/null
+}
+
+layer8_eligibility() {
+  [ -d "${NIX_INSTALL_ROOT}" ] || { echo "unsupported: ${NIX_INSTALL_ROOT} directory missing"; return; }
+  nix_is_mounted || { echo "unsupported: ${NIX_INSTALL_ROOT} is not mounted"; return; }
+  [ -x "${NIX_DEFAULT_PROFILE_BIN}/nix" ] || { echo "unsupported: Layer 4 real Nix missing"; return; }
+  [ -x "${NIX_DAEMON_BIN}" ] || { echo "unsupported: nix-daemon binary missing: ${NIX_DAEMON_BIN}"; return; }
+  systemd_unit_path "${NIX_DAEMON_SOCKET}" >/dev/null 2>&1 || { echo "unsupported: ${NIX_DAEMON_SOCKET} unit missing"; return; }
+  systemd_unit_path "${NIX_DAEMON_SERVICE}" >/dev/null 2>&1 || { echo "unsupported: ${NIX_DAEMON_SERVICE} unit missing"; return; }
+  group=$(layer8_build_users_group)
+  case "${group}" in
+    ""|"(no nix.conf)") echo "unsupported: build-users-group is empty (single-user/root config)"; return ;;
+    "(default)") group=nixbld ;;
+  esac
+  group_exists "${group}" || { echo "unsupported: build-users-group '${group}' is not present"; return; }
+  echo "available: daemon prerequisites present"
 }
 
 check_profile_command_conflicts() {
@@ -670,6 +742,101 @@ check_layer7() {
   fi
 }
 
+check_layer8() {
+  state=$(layer8_state)
+  eligibility=$(layer8_eligibility)
+
+  case "${state}" in
+    inactive|absent)
+      ok "Layer 8 daemon state: inactive"
+      ;;
+    active|enabled|running)
+      ok "Layer 8 daemon state: ${state}"
+      ;;
+    partial|failed)
+      fail_check "Layer 8 daemon state is ${state}; run nixctl daemon rollback/disable or inspect ${NIX_LAYER8_STATE_DIR}"
+      ;;
+    rejected)
+      warn "Layer 8 daemon state is rejected; keep using Layer 4-7 fallback"
+      ;;
+    *)
+      warn "Layer 8 daemon state has unexpected value: ${state}"
+      ;;
+  esac
+
+  case "${eligibility}" in
+    available:*)
+      ok "Layer 8 daemon eligibility: ${eligibility}"
+      ;;
+    unsupported:*)
+      if [ "${state}" = "active" ] || [ "${state}" = "enabled" ] || [ "${state}" = "running" ]; then
+        fail_check "Layer 8 daemon active but prerequisites are missing: ${eligibility}"
+      else
+        warn "Layer 8 daemon eligibility: ${eligibility}"
+      fi
+      ;;
+    *)
+      warn "Layer 8 daemon eligibility: ${eligibility}"
+      ;;
+  esac
+
+  if socket_unit=$(systemd_unit_path "${NIX_DAEMON_SOCKET}" 2>/dev/null); then
+    ok "Layer 8 socket unit present: ${socket_unit}"
+  else
+    if [ "${state}" = "active" ] || [ "${state}" = "enabled" ] || [ "${state}" = "running" ]; then
+      fail_check "Layer 8 active state missing socket unit: ${NIX_DAEMON_SOCKET}"
+    else
+      ok "Layer 8 socket unit inactive/missing: ${NIX_DAEMON_SOCKET}"
+    fi
+  fi
+
+  if service_unit=$(systemd_unit_path "${NIX_DAEMON_SERVICE}" 2>/dev/null); then
+    ok "Layer 8 service unit present: ${service_unit}"
+  else
+    if [ "${state}" = "active" ] || [ "${state}" = "enabled" ] || [ "${state}" = "running" ]; then
+      fail_check "Layer 8 active state missing service unit: ${NIX_DAEMON_SERVICE}"
+    else
+      ok "Layer 8 service unit inactive/missing: ${NIX_DAEMON_SERVICE}"
+    fi
+  fi
+
+  build_group=$(layer8_build_users_group)
+  case "${build_group}" in
+    "")
+      warn "Layer 8 build-users-group is empty; this is expected for Layer 4 single-user/root fallback but not daemon mode"
+      ;;
+    "(no nix.conf)")
+      warn "Layer 8 daemon config unavailable: ${NIX_USER_CONFIG_FILE} missing"
+      ;;
+    "(default)")
+      if group_exists nixbld; then
+        ok "Layer 8 build-users-group defaults to existing nixbld group"
+      else
+        warn "Layer 8 build-users-group defaults to nixbld, but nixbld group is missing"
+      fi
+      ;;
+    *)
+      if group_exists "${build_group}"; then
+        ok "Layer 8 build-users-group exists: ${build_group}"
+      else
+        warn "Layer 8 build-users-group missing from /etc/group: ${build_group}"
+      fi
+      ;;
+  esac
+
+  if [ -S "${NIX_DAEMON_SOCKET_PATH}" ]; then
+    ok "Layer 8 daemon socket exists: ${NIX_DAEMON_SOCKET_PATH}"
+  else
+    if [ "${state}" = "running" ]; then
+      fail_check "Layer 8 running state missing daemon socket: ${NIX_DAEMON_SOCKET_PATH}"
+    else
+      ok "Layer 8 daemon socket not present while inactive/not running: ${NIX_DAEMON_SOCKET_PATH}"
+    fi
+  fi
+
+  ok "Layer 8 fallback: Layer 4 single-user/root Nix remains the primary recovery path"
+}
+
 check_network() {
   if [ "${CHECK_NETWORK}" -eq 0 ]; then
     warn "network checks skipped"
@@ -706,6 +873,7 @@ check_layer4
 check_layer5
 check_layer6
 check_layer7
+check_layer8
 
 if [ "${FAILURES}" -eq 0 ]; then
   echo "nix-doctor: passed with ${WARNINGS} warning(s)"

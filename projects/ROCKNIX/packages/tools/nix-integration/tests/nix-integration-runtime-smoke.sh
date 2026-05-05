@@ -81,8 +81,22 @@ grep -q 'package does not exist' /tmp/nix-dev-shell-error.log
 "${NIX_WRAPPER_DIR}/nix" --version | grep -q 'nix (Nix) smoke-test'
 NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
   "${PKG_DIR}/scripts/nix-doctor" --offline --dev-shell-smoke >/tmp/nix-doctor-smoke.log
+grep -q 'Layer 8 daemon state: inactive' /tmp/nix-doctor-smoke.log
+grep -q 'Layer 8 daemon eligibility:' /tmp/nix-doctor-smoke.log
 NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
   "${NIX_WRAPPER_DIR}/nix-doctor" --offline --dev-shell-smoke >/tmp/nix-doctor-wrapper-smoke.log
+"${PKG_DIR}/scripts/nixctl" status >/tmp/nix-layer8-nixctl-status.log
+grep -q 'Layer 8 (experimental daemon) status' /tmp/nix-layer8-nixctl-status.log
+grep -q 'fallback:   Layer 4 single-user/root Nix remains primary' /tmp/nix-layer8-nixctl-status.log
+mkdir -p "${TMP_DIR}/layer8-active-state"
+printf 'active\n' >"${TMP_DIR}/layer8-active-state/state"
+if NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-active-state" \
+  NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+  "${PKG_DIR}/scripts/nix-doctor" --offline --no-smoke >/tmp/nix-layer8-active-missing.log 2>&1; then
+  echo 'expected active Layer 8 state without prerequisites to fail doctor' >&2
+  exit 1
+fi
+grep -q 'Layer 8 daemon active but prerequisites are missing' /tmp/nix-layer8-active-missing.log
 "${PKG_DIR}/scripts/nix-portable-install" status | grep -q 'nix-portable: installed'
 grep -q 'What=/storage/.nix-root' "${PKG_DIR}/system.d/nix.mount"
 grep -q 'Where=/nix' "${PKG_DIR}/system.d/nix.mount"

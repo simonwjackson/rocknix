@@ -608,6 +608,34 @@ Stop at Layer 7 or switch candidates if any of these hold:
 - Layer 6 cannot deactivate the launcher cleanly.
 - Package-specific Wayland/GPU/audio/input failures dominate and no useful candidate remains.
 
-## Next layer
+## Layer 8: experimental daemon mode
 
 Layer 8 remains experimental daemon mode. Do not start it unless single-user/root Nix, persistent profiles, managed activation, and app/UI experiments produce a clear reason to accept daemon complexity.
+
+The first Layer 8 implementation step is diagnostic-only. `nixctl status` reports a Layer 8 section without enabling any service:
+
+```text
+Layer 8 (experimental daemon) status
+--------------------------------------
+  state:      inactive
+  eligible:   unsupported: <specific missing prerequisite>
+  daemon:     /nix/var/nix/profiles/default/bin/nix-daemon
+  socket:     <unit path or missing>
+  service:    <unit path or missing>
+  sock path:  /nix/var/nix/daemon-socket/socket
+  build grp:  <configured build-users-group>
+  fallback:   Layer 4 single-user/root Nix remains primary unless daemon is explicitly enabled
+```
+
+`nix-doctor --offline` now performs the same feasibility check. Missing daemon prerequisites are warnings while Layer 8 is inactive, because Layers 4-7 are the supported path. If Layer 8 metadata says daemon mode is active, missing daemon binary, units, mount, or build-user configuration becomes a failure with rollback guidance.
+
+Initial stop gates:
+
+- `/nix` must be mounted from storage.
+- Layer 4 real Nix must be installed.
+- `nix-daemon` must exist in the Nix profile.
+- `nix-daemon.socket` and `nix-daemon.service` must be present.
+- `build-users-group` must not be the empty single-user/root fallback value.
+- The configured build group must exist in `/etc/group`.
+
+Until those gates pass, keep using Layer 4 single-user/root Nix, Layer 5 profiles, Layer 6 activation, and Layer 7 app launchers.
