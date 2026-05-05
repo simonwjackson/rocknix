@@ -175,5 +175,10 @@ grep -q 'LAYER8_SMOKE=1' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fai
 grep -q 'LAYER8_REBOOT_VERIFY' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 8 reboot verification"
 grep -q 'NIX_REMOTE=daemon' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing daemon client proof"
 grep -q 'nix-integration Layer 8 smoke passed' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 8 success marker"
+grep -q 'LAYER9_SMOKE=1' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 9 opt-in flag"
+grep -q 'LAYER9_GUEST_ROOT' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 9 guest root override"
+grep -q 'systemd-nspawn guest proof' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 9 nspawn proof description"
+grep -q 'layer9-guest-proof' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 9 proof marker"
+grep -q 'nix-integration Layer 9 smoke passed' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 9 success marker"
 
 printf 'nix-integration static checks passed\n'

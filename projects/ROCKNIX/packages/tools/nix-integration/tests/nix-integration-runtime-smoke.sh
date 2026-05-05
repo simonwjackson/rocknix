@@ -333,12 +333,13 @@ printf 'nix-integration runtime smoke passed\n'
 #   - network reachability to releases.nixos.org and cache.nixos.org
 #   - >= 1 GB free on /storage
 # Not run in default CI; intended for manual validation on hardware.
-if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ]; then
+if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ]; then
   printf 'nix-integration Layer 4 smoke: skipped (set LAYER4_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 5 smoke: skipped (set LAYER5_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 6 smoke: skipped (set LAYER6_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 7 smoke: skipped (set LAYER7_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 8 smoke: skipped (set LAYER8_SMOKE=1 to enable)\n'
+  printf 'nix-integration Layer 9 smoke: skipped (set LAYER9_SMOKE=1 to enable)\n'
   exit 0
 fi
 
@@ -420,7 +421,7 @@ fi
 # hardware. Requires Layer 4 real Nix to already be installed. The default
 # package is nixpkgs#hello because it is small and low-conflict.
 if [ "${LAYER5_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ]; then
+  if [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ]; then
     exit 0
   fi
 else
@@ -505,7 +506,7 @@ fi
 # Set LAYER6_SMOKE=1 to validate managed storage-local user-environment
 # activation on hardware. Requires Layer 4/5 shell integration to be healthy.
 if [ "${LAYER6_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ]; then
+  if [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ]; then
     exit 0
   fi
 else
@@ -614,7 +615,7 @@ fi
 # visual confirmation remains operator-observed because CI cannot inspect the
 # handheld screen.
 if [ "${LAYER7_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER8_SMOKE:-0}" != "1" ]; then
+  if [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ]; then
     exit 0
   fi
 else
@@ -714,8 +715,10 @@ fi
 # Requires Layer 4 real Nix, image-time daemon build identities/config, and
 # opt-in daemon units. Default CI never starts systemd units.
 if [ "${LAYER8_SMOKE:-0}" != "1" ]; then
-  exit 0
-fi
+  if [ "${LAYER9_SMOKE:-0}" != "1" ]; then
+    exit 0
+  fi
+else
 
 L8_LOG=/tmp/nix-integration-layer8-smoke.log
 rm -f "${L8_LOG}"
@@ -791,3 +794,85 @@ log8 'cleanup: disable Layer 8 daemon mode'
 
 printf 'nix-integration Layer 8 smoke passed\n'
 printf 'log: %s\n' "${L8_LOG}"
+fi
+
+# ---- Layer 9 device-side smoke (opt-in) ------------------------------------
+# Set LAYER9_SMOKE=1 to validate a manually started systemd-nspawn guest proof
+# on hardware. Requires a Layer 9-enabled image and a pre-staged guest rootfs.
+# The smoke does not download or generate the rootfs and never enables a unit.
+if [ "${LAYER9_SMOKE:-0}" != "1" ]; then
+  exit 0
+fi
+
+L9_LOG=/tmp/nix-integration-layer9-smoke.log
+L9_NSPAWN="${LAYER9_NSPAWN_BIN:-${NIX_LAYER9_NSPAWN_BIN:-/usr/bin/systemd-nspawn}}"
+L9_ROOT="${LAYER9_GUEST_ROOT:-${NIX_LAYER9_GUEST_ROOT:-/storage/machines/rocknix-guest}}"
+L9_TIMEOUT="${LAYER9_TIMEOUT:-30}"
+L9_PROOF_COMMAND="${LAYER9_PROOF_COMMAND:-printf 'layer9-guest-proof\\n'; if command -v nix >/dev/null 2>&1; then nix --version; fi}"
+rm -f "${L9_LOG}"
+
+log9() {
+  printf '[layer9-smoke] %s\n' "$*"
+  printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" >>"${L9_LOG}"
+}
+
+layer9_guest_running() {
+  ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${L9_ROOT}" >/dev/null 2>&1
+}
+
+layer9_no_enabled_unit() {
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-enabled systemd-nspawn@rocknix-guest.service >/dev/null 2>&1; then
+      return 1
+    fi
+  fi
+  return 0
+}
+
+[ -x "${L9_NSPAWN}" ] || { echo "FAIL: Layer 9 smoke requires executable systemd-nspawn at ${L9_NSPAWN}" >&2; exit 1; }
+[ -d "${L9_ROOT}" ] || { echo "FAIL: Layer 9 smoke requires staged guest rootfs at ${L9_ROOT}" >&2; exit 1; }
+[ -d "${L9_ROOT}/etc" ] || [ -d "${L9_ROOT}/usr" ] || [ -d "${L9_ROOT}/nix" ] \
+  || { echo "FAIL: Layer 9 guest root does not look proof-ready: ${L9_ROOT}" >&2; exit 1; }
+command -v timeout >/dev/null 2>&1 \
+  || { echo 'FAIL: Layer 9 smoke requires timeout to keep the guest proof bounded' >&2; exit 1; }
+layer9_no_enabled_unit \
+  || { echo 'FAIL: Layer 9 found an enabled systemd-nspawn guest unit before smoke' >&2; exit 1; }
+
+log9 'pre-flight: Layer 9 nspawn diagnostics'
+NIX_LAYER9_NSPAWN_BIN="${L9_NSPAWN}" \
+NIX_LAYER9_GUEST_ROOT="${L9_ROOT}" \
+  "${NIXCTL}" status >>"${L9_LOG}" 2>&1 \
+  || { echo 'FAIL: nixctl status failed during Layer 9 preflight' >&2; exit 1; }
+grep -q 'Layer 9 (nspawn guest proof) status' "${L9_LOG}" \
+  || { echo 'FAIL: nixctl status did not report Layer 9 section' >&2; exit 1; }
+NIX_LAYER9_NSPAWN_BIN="${L9_NSPAWN}" \
+NIX_LAYER9_GUEST_ROOT="${L9_ROOT}" \
+  "${DOCTOR}" --offline >>"${L9_LOG}" 2>&1 \
+  || { echo 'FAIL: nix-doctor failed during Layer 9 preflight' >&2; exit 1; }
+grep -q 'Layer 9 nspawn guest state' "${L9_LOG}" \
+  || { echo 'FAIL: nix-doctor did not report Layer 9 state' >&2; exit 1; }
+
+log9 'start: bounded systemd-nspawn guest proof command'
+timeout "${L9_TIMEOUT}" "${L9_NSPAWN}" --quiet --directory="${L9_ROOT}" /bin/sh -lc "${L9_PROOF_COMMAND}" >>"${L9_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 9 nspawn proof command failed' >&2; layer9_guest_running && pkill -f "systemd-nspawn.*${L9_ROOT}" 2>/dev/null || true; exit 1; }
+grep -q 'layer9-guest-proof' "${L9_LOG}" \
+  || { echo 'FAIL: Layer 9 guest proof marker missing' >&2; exit 1; }
+
+log9 'cleanup: verify no guest process or enabled guest unit remains'
+if layer9_guest_running; then
+  pkill -f "systemd-nspawn.*${L9_ROOT}" 2>/dev/null || true
+  sleep 1
+fi
+layer9_guest_running \
+  && { echo 'FAIL: Layer 9 guest process still running after proof' >&2; exit 1; }
+layer9_no_enabled_unit \
+  || { echo 'FAIL: Layer 9 found enabled systemd-nspawn guest unit after smoke' >&2; exit 1; }
+
+log9 'diagnostics: post-proof host Layer 9 status remains readable'
+NIX_LAYER9_NSPAWN_BIN="${L9_NSPAWN}" \
+NIX_LAYER9_GUEST_ROOT="${L9_ROOT}" \
+  "${NIXCTL}" status >>"${L9_LOG}" 2>&1 \
+  || { echo 'FAIL: nixctl status failed after Layer 9 proof' >&2; exit 1; }
+
+printf 'nix-integration Layer 9 smoke passed\n'
+printf 'log: %s\n' "${L9_LOG}"
