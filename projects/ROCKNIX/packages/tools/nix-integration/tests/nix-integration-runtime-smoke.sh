@@ -51,6 +51,21 @@ export NIX_PORTABLE_REQUIRED_MB=1
 export NIX_PORTABLE_SKIP_ARCH_CHECK=1
 mkdir -p "${NP_LOCATION}"
 
+# Layer 5 profile contract: the profile.d snippet must expose the root Nix
+# profile before Layer 4 and portable paths, and must be idempotent.
+PROFILE_ENV="${TMP_DIR}/profile-env"
+HOME="${TMP_DIR}/home" PATH="/usr/bin:/usr/sbin" /bin/sh -c \
+  '. "'"${PKG_DIR}/profile.d/998-nix-integration.conf"'"; . "'"${PKG_DIR}/profile.d/998-nix-integration.conf"'"; printf "%s\n" "$PATH"' \
+  >"${PROFILE_ENV}"
+PROFILE_PATH=$(cat "${PROFILE_ENV}")
+case "${PROFILE_PATH}" in
+  "${TMP_DIR}/home/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/storage/bin:"*) ;;
+  *) echo "FAIL: profile.d PATH order unexpected: ${PROFILE_PATH}" >&2; exit 1 ;;
+esac
+case "${PROFILE_PATH}" in
+  *".nix-profile/bin"*".nix-profile/bin"*) echo "FAIL: profile.d duplicated .nix-profile path" >&2; exit 1 ;;
+esac
+
 "${PKG_DIR}/scripts/nix-portable-install" install >/tmp/nix-portable-install-smoke.log
 "${NIX_WRAPPER_DIR}/nix" --version | grep -q 'nix (Nix) smoke-test'
 "${NIX_WRAPPER_DIR}/nix" run nixpkgs#hello | grep -q 'Hello, world!'
@@ -86,12 +101,13 @@ printf 'nix-integration runtime smoke passed\n'
 #   - network reachability to releases.nixos.org and cache.nixos.org
 #   - >= 1 GB free on /storage
 # Not run in default CI; intended for manual validation on hardware.
-if [ "${LAYER4_SMOKE:-0}" != "1" ]; then
+if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ]; then
   printf 'nix-integration Layer 4 smoke: skipped (set LAYER4_SMOKE=1 to enable)\n'
+  printf 'nix-integration Layer 5 smoke: skipped (set LAYER5_SMOKE=1 to enable)\n'
   exit 0
 fi
 
-# Layer 4 smoke uses the real package script paths (not the fake-tarball
+# Device-side smokes use the real package script paths (not the fake-tarball
 # harness above), so reset the per-test environment.
 unset NIX_PORTABLE_DIR NIX_WRAPPER_DIR NP_LOCATION NIX_PORTABLE_URL
 unset NIX_PORTABLE_SHA256 NIX_PORTABLE_REQUIRED_MB NIX_PORTABLE_SKIP_ARCH_CHECK
@@ -106,6 +122,7 @@ log() {
   printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" >>"${L4_LOG}"
 }
 
+if [ "${LAYER4_SMOKE:-0}" = "1" ]; then
 log 'pre-flight: nixctl status reports current state'
 "${NIXCTL}" status >>"${L4_LOG}" 2>&1
 
@@ -160,3 +177,87 @@ fi
 
 printf 'nix-integration Layer 4 smoke passed\n'
 printf 'log: %s\n' "${L4_LOG}"
+fi
+
+# ---- Layer 5 device-side smoke (opt-in) ------------------------------------
+# Set LAYER5_SMOKE=1 to validate persistent Nix profiles for CLI tools on
+# hardware. Requires Layer 4 real Nix to already be installed. The default
+# package is nixpkgs#hello because it is small and low-conflict.
+if [ "${LAYER5_SMOKE:-0}" != "1" ]; then
+  exit 0
+fi
+
+L5_LOG=/tmp/nix-integration-layer5-smoke.log
+L5_PACKAGE="${LAYER5_SMOKE_PACKAGE:-nixpkgs#hello}"
+L5_NAME="${LAYER5_SMOKE_NAME:-hello}"
+L5_BIN="${LAYER5_SMOKE_BIN:-hello}"
+rm -f "${L5_LOG}"
+
+log5() {
+  printf '[layer5-smoke] %s\n' "$*"
+  printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" >>"${L5_LOG}"
+}
+
+NIX_BIN=/nix/var/nix/profiles/default/bin/nix
+[ -x "${NIX_BIN}" ] || { echo 'FAIL: Layer 5 smoke requires Layer 4 real Nix' >&2; exit 1; }
+[ -d /nix ] || { echo 'FAIL: /nix missing' >&2; exit 1; }
+awk '$2 == "/nix" {found=1} END {exit !found}' /proc/mounts 2>/dev/null \
+  || { echo 'FAIL: /nix is not mounted' >&2; exit 1; }
+
+log5 "pre-flight: inspect existing profile"
+preexisting=0
+if "${NIX_BIN}" --extra-experimental-features 'nix-command flakes' profile list 2>/tmp/layer5-profile-list.err | grep -q "Name:[[:space:]]*${L5_NAME}"; then
+  preexisting=1
+  log5 "${L5_NAME} is already present; smoke will not remove it"
+fi
+
+if [ "${LAYER5_REBOOT_VERIFY:-}" = "verify" ]; then
+  log5 'reboot verify: checking existing profile binary after reboot'
+  . /etc/profile
+  command -v "${L5_BIN}" >>"${L5_LOG}" 2>&1 \
+    || { echo "FAIL: ${L5_BIN} not on PATH after reboot" >&2; exit 1; }
+  "${L5_BIN}" --version >>"${L5_LOG}" 2>&1 || "${L5_BIN}" >>"${L5_LOG}" 2>&1 \
+    || { echo "FAIL: ${L5_BIN} did not run after reboot" >&2; exit 1; }
+  printf 'nix-integration Layer 5 reboot smoke passed\n'
+  printf 'log: %s\n' "${L5_LOG}"
+  exit 0
+fi
+
+log5 "install: nix profile install ${L5_PACKAGE}"
+"${NIX_BIN}" --extra-experimental-features 'nix-command flakes' profile install "${L5_PACKAGE}" >>"${L5_LOG}" 2>&1 \
+  || { echo "FAIL: nix profile install ${L5_PACKAGE} failed" >&2; exit 1; }
+
+log5 'verify: binary exists via profile link and fresh profile-sourced shell'
+[ -x "${HOME:-/storage}/.nix-profile/bin/${L5_BIN}" ] \
+  || { echo "FAIL: profile binary missing: ${HOME:-/storage}/.nix-profile/bin/${L5_BIN}" >&2; exit 1; }
+/bin/sh -c '. /etc/profile; command -v "'"${L5_BIN}"'"; "'"${L5_BIN}"'"' >>"${L5_LOG}" 2>&1 \
+  || { echo "FAIL: ${L5_BIN} did not run from a fresh profile-sourced shell" >&2; exit 1; }
+
+log5 'diagnostics: nixctl status and nix-doctor report Layer 5 state'
+"${NIXCTL}" status >>"${L5_LOG}" 2>&1 \
+  || { echo 'FAIL: nixctl status failed during Layer 5 smoke' >&2; exit 1; }
+grep -q 'Layer 5 (persistent profile) status' "${L5_LOG}" \
+  || { echo 'FAIL: nixctl status did not report Layer 5 section' >&2; exit 1; }
+"${DOCTOR}" --offline >>"${L5_LOG}" 2>&1 \
+  || { echo 'FAIL: nix-doctor failed during Layer 5 smoke' >&2; exit 1; }
+grep -q 'Layer 5 profile link' "${L5_LOG}" \
+  || { echo 'FAIL: nix-doctor did not report Layer 5 profile state' >&2; exit 1; }
+
+if [ "${LAYER5_REBOOT_VERIFY:-}" = "prepare" ]; then
+  log5 "leaving ${L5_NAME} installed for reboot verification"
+  printf 'nix-integration Layer 5 smoke prepared for reboot verification\n'
+  printf 'After reboot run: LAYER5_SMOKE=1 LAYER5_REBOOT_VERIFY=verify %s\n' "$0"
+  printf 'log: %s\n' "${L5_LOG}"
+  exit 0
+fi
+
+if [ "${preexisting}" -eq 0 ]; then
+  log5 "cleanup: nix profile remove ${L5_NAME}"
+  "${NIX_BIN}" --extra-experimental-features 'nix-command flakes' profile remove "${L5_NAME}" >>"${L5_LOG}" 2>&1 \
+    || { echo "FAIL: nix profile remove ${L5_NAME} failed" >&2; exit 1; }
+else
+  log5 "cleanup: leaving pre-existing ${L5_NAME} profile entry intact"
+fi
+
+printf 'nix-integration Layer 5 smoke passed\n'
+printf 'log: %s\n' "${L5_LOG}"

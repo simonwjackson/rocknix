@@ -16,8 +16,11 @@ NP_RUNTIME="${NP_RUNTIME:-proot}"
 # ---- Layer 3 / Layer 4 paths ---------------------------------------------
 NIX_INSTALL_ROOT="${NIX_INSTALL_ROOT:-/nix}"
 NIX_DEFAULT_PROFILE_BIN="${NIX_DEFAULT_PROFILE_BIN:-${NIX_INSTALL_ROOT}/var/nix/profiles/default/bin}"
-NIX_USER_CONFIG_FILE="${NIX_USER_CONFIG_FILE:-${HOME:-/storage}/.config/nix/nix.conf}"
-NIX_USER_PROFILE_LINK="${NIX_USER_PROFILE_LINK:-${HOME:-/storage}/.nix-profile}"
+NIX_USER_HOME="${HOME:-/storage}"
+NIX_USER_CONFIG_FILE="${NIX_USER_CONFIG_FILE:-${NIX_USER_HOME}/.config/nix/nix.conf}"
+NIX_USER_PROFILE_LINK="${NIX_USER_PROFILE_LINK:-${NIX_USER_HOME}/.nix-profile}"
+NIX_USER_PROFILE_BIN="${NIX_USER_PROFILE_BIN:-${NIX_USER_PROFILE_LINK}/bin}"
+NIX_PROFILE_STORAGE_WARN_MB="${NIX_PROFILE_STORAGE_WARN_MB:-2048}"
 CHECK_NETWORK=1
 RUN_SMOKE=1
 RUN_DEV_SHELL_SMOKE=0
@@ -92,6 +95,59 @@ sha256_file() {
     openssl dgst -sha256 "$1" | awk '{print $NF}'
   else
     return 1
+  fi
+}
+
+canonical_path() {
+  path=$1
+  if [ -e "${path}" ] || [ -L "${path}" ]; then
+    readlink -f "${path}" 2>/dev/null || echo "${path}"
+  else
+    echo "${path}"
+  fi
+}
+
+is_expected_nix_tool_shadow() {
+  case "$1" in
+    nix|nix-build|nix-channel|nix-collect-garbage|nix-copy-closure|nix-daemon|nix-env|nix-hash|nix-instantiate|nix-prefetch-url|nix-shell|nix-store)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+check_profile_command_conflicts() {
+  if [ ! -d "${NIX_USER_PROFILE_BIN}" ]; then
+    return
+  fi
+
+  found=0
+  for profile_cmd in "${NIX_USER_PROFILE_BIN}"/*; do
+    [ -e "${profile_cmd}" ] || continue
+    [ -x "${profile_cmd}" ] || continue
+    [ ! -d "${profile_cmd}" ] || continue
+
+    name=${profile_cmd##*/}
+    profile_real=$(canonical_path "${profile_cmd}")
+    for dir in "${NIX_DEFAULT_PROFILE_BIN}" "${NIX_WRAPPER_DIR}" /usr/bin /usr/sbin; do
+      candidate="${dir}/${name}"
+      [ "${candidate}" != "${profile_cmd}" ] || continue
+      [ -e "${candidate}" ] || continue
+      [ -x "${candidate}" ] || continue
+      candidate_real=$(canonical_path "${candidate}")
+      [ "${candidate_real}" != "${profile_real}" ] || continue
+      if [ "${dir}" = "${NIX_WRAPPER_DIR}" ] && is_expected_nix_tool_shadow "${name}"; then
+        continue
+      fi
+      warn "Layer 5 command shadowing: ${profile_cmd} shadows ${candidate}"
+      found=1
+    done
+  done
+
+  if [ "${found}" -eq 0 ]; then
+    ok "Layer 5 profile command conflicts: none detected"
   fi
 }
 
@@ -329,6 +385,58 @@ check_layer4() {
   fi
 }
 
+check_layer5() {
+  layer4_nix="${NIX_DEFAULT_PROFILE_BIN}/nix"
+  if [ ! -x "${layer4_nix}" ]; then
+    return  # Layer 5 depends on Layer 4 real Nix.
+  fi
+
+  if [ ! -L "${NIX_USER_PROFILE_LINK}" ]; then
+    if [ -e "${NIX_USER_PROFILE_LINK}" ]; then
+      fail_check "Layer 5 profile exists but is not a symlink: ${NIX_USER_PROFILE_LINK}"
+    else
+      warn "Layer 5 profile link is missing: ${NIX_USER_PROFILE_LINK}"
+    fi
+    return
+  fi
+
+  target=$(readlink "${NIX_USER_PROFILE_LINK}" 2>/dev/null || echo "")
+  if [ ! -e "${NIX_USER_PROFILE_LINK}" ]; then
+    fail_check "Layer 5 profile is a dangling symlink to ${target}"
+    return
+  fi
+  ok "Layer 5 profile link: ${NIX_USER_PROFILE_LINK} -> ${target}"
+
+  if [ -d "${NIX_USER_PROFILE_BIN}" ]; then
+    ok "Layer 5 profile bin exists: ${NIX_USER_PROFILE_BIN}"
+  else
+    fail_check "Layer 5 profile bin missing: ${NIX_USER_PROFILE_BIN}"
+    return
+  fi
+
+  if profile_list=$("${layer4_nix}" --extra-experimental-features 'nix-command flakes' profile list 2>&1); then
+    if [ -n "${profile_list}" ]; then
+      ok "nix profile list succeeded"
+    else
+      ok "nix profile list succeeded (no profile entries reported)"
+    fi
+  else
+    fail_check "nix profile list failed: ${profile_list}"
+  fi
+
+  check_profile_command_conflicts
+
+  available_mb=$(df -m "${NP_LOCATION}" 2>/dev/null | awk 'NR==2 {print $4}')
+  case "${available_mb}" in
+    ''|*[!0-9]*) ;;
+    *)
+      if [ "${available_mb}" -lt "${NIX_PROFILE_STORAGE_WARN_MB}" ]; then
+        warn "storage free space ${available_mb}MB < ${NIX_PROFILE_STORAGE_WARN_MB}MB; profile installs may exhaust /storage"
+      fi
+      ;;
+  esac
+}
+
 check_network() {
   if [ "${CHECK_NETWORK}" -eq 0 ]; then
     warn "network checks skipped"
@@ -362,6 +470,7 @@ check_dev_shell
 check_network
 check_layer3_mount
 check_layer4
+check_layer5
 
 if [ "${FAILURES}" -eq 0 ]; then
   echo "nix-doctor: passed with ${WARNINGS} warning(s)"

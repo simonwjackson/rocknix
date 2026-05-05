@@ -212,19 +212,40 @@ done
 
 ### Validation checklist for a Nix-integration-enabled build
 
-When the fork's build sets `NIX_INTEGRATION_SUPPORT=yes`, the post-update validation should additionally confirm Layer 3 came up:
+When the fork's build sets `NIX_INTEGRATION_SUPPORT=yes`, the post-update validation should additionally confirm Layer 3 came up and the shipped profile integration sorts after ROCKNIX's busybox PATH reset:
 
 ```sh
 ssh $DEV '
   systemctl is-active nix-storage-setup.service nix.mount
   cat /proc/mounts | grep " /nix "
   ls -ld /storage/.nix-root /storage/.nix-root/store /storage/.nix-root/var/nix
-  ls /usr/bin/nix-portable-install /etc/profile.d/998-nix-integration.conf
+  ls /usr/bin/nix-portable-install /usr/bin/nixctl /usr/bin/nix-doctor /etc/profile.d/998-nix-integration.conf
   touch /nix/.layer3-validated && ls -la /nix/.layer3-validated  # persistence smoke
+  . /etc/profile
+  case "$PATH" in /storage/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/storage/bin:*) echo "PATH integration OK" ;; *) echo "PATH integration unexpected: $PATH"; exit 1 ;; esac
 '
 ```
 
 Both units should report `active`. `/proc/mounts` should show `/nix` backed by the same block device as `/storage` (the bind source). The Layer 3 design is fail-closed — if the units fail, multi-user.target still reaches and EmulationStation/SSH/Sway still come up.
+
+For Layer 4 and Layer 5 validation on a device where installing real Nix is acceptable:
+
+```sh
+ssh $DEV '
+  nixctl install
+  . /etc/profile
+  nix --version
+  nix run nixpkgs#hello
+  nix profile install nixpkgs#hello
+  command -v hello
+  hello
+  nixctl status
+  nix-doctor --offline
+  nix profile remove hello
+'
+```
+
+For a reboot persistence check, install `hello`, reboot, then validate that `command -v hello` still resolves under `/storage/.nix-profile/bin` before removing it. `nix-doctor --offline` should pass with only the expected offline warning on a healthy Layer 4/5 install.
 
 ## Related
 

@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 
-# nixctl: front door for ROCKNIX Nix Layer 4 (standard single-user Nix on
-# real /nix). This skeleton lands the read-only `status` subcommand. The
-# `install`, `upgrade`, `uninstall`, and `doctor` subcommands are stubbed
-# until later units (Unit 3, 4, 5) of the Layer 4 plan land.
+# nixctl: front door for ROCKNIX Nix integration layers.
 #
-# Plan: docs/plans/2026-05-04-001-feat-nix-layer-4-real-store-plan.md
+# Layer 4: standard single-user Nix on real /nix.
+# Layer 5: persistent Nix profiles for CLI tools.
+#
+# Plans:
+# - docs/plans/2026-05-04-001-feat-nix-layer-4-real-store-plan.md
+# - docs/plans/2026-05-05-001-feat-nix-layer-5-persistent-profiles-plan.md
 
 set -eu
 
@@ -25,7 +27,10 @@ NIX_TARBALL_SHA256="${NIX_TARBALL_SHA256:-${NIX_TARBALL_SHA256_PINNED}}"
 # ---- Filesystem layout -----------------------------------------------------
 NIX_INSTALL_ROOT="${NIX_INSTALL_ROOT:-/nix}"
 NIX_DEFAULT_PROFILE_BIN="${NIX_DEFAULT_PROFILE_BIN:-${NIX_INSTALL_ROOT}/var/nix/profiles/default/bin}"
-NIX_USER_CONFIG_DIR="${NIX_USER_CONFIG_DIR:-${HOME:-/storage}/.config/nix}"
+NIX_USER_HOME="${HOME:-/storage}"
+NIX_USER_PROFILE_LINK="${NIX_USER_PROFILE_LINK:-${NIX_USER_HOME}/.nix-profile}"
+NIX_USER_PROFILE_BIN="${NIX_USER_PROFILE_BIN:-${NIX_USER_PROFILE_LINK}/bin}"
+NIX_USER_CONFIG_DIR="${NIX_USER_CONFIG_DIR:-${NIX_USER_HOME}/.config/nix}"
 NIX_USER_CONFIG_FILE="${NIX_USER_CONFIG_FILE:-${NIX_USER_CONFIG_DIR}/nix.conf}"
 NIX_CACHE_DIR="${NIX_CACHE_DIR:-/storage/.cache/nix-install}"
 
@@ -68,10 +73,11 @@ Environment overrides (defaults shown):
   NIX_TARBALL_SHA256     ${NIX_TARBALL_SHA256}
   NIX_FORCE              Set to 1 to override safety checks (rare)
 
-After install, profile.d puts ${NIX_DEFAULT_PROFILE_BIN} on \$PATH ahead of
-/storage/bin, so 'nix' resolves to real Nix in any login shell. The
-nix-portable wrappers under /storage/bin remain available; invoke them
-explicitly via /storage/bin/nix-portable when needed.
+After install, profile.d puts ${NIX_USER_PROFILE_BIN} and
+${NIX_DEFAULT_PROFILE_BIN} on \$PATH ahead of /storage/bin, so 'nix' and
+profile-installed CLI tools resolve to real Nix/profile binaries in any login
+shell. The nix-portable wrappers under /storage/bin remain available; invoke
+them explicitly via /storage/bin/nix-portable when needed.
 
 Recovery: if real Nix breaks, 'nixctl uninstall' removes it cleanly. As a
 last resort, 'rm -rf /storage/.nix-root && reboot' restores the Layer 3
@@ -247,6 +253,15 @@ report_nix_mount() {
   echo "mounted: ${line}"
 }
 
+canonical_path() {
+  path=$1
+  if [ -e "${path}" ] || [ -L "${path}" ]; then
+    readlink -f "${path}" 2>/dev/null || echo "${path}"
+  else
+    echo "${path}"
+  fi
+}
+
 # Report which 'nix' the user's $PATH currently resolves to. This is a
 # diagnostic for the profile.d ordering, not authoritative for what's
 # installed.
@@ -254,7 +269,7 @@ report_path_resolution() {
   if have nix; then
     nix_path=$(command -v nix 2>/dev/null || true)
     case "${nix_path}" in
-      ${NIX_DEFAULT_PROFILE_BIN}/nix)
+      ${NIX_DEFAULT_PROFILE_BIN}/nix|${NIX_USER_PROFILE_BIN}/nix)
         echo "real nix (${nix_path})"
         ;;
       /storage/bin/nix)
@@ -267,6 +282,94 @@ report_path_resolution() {
   else
     echo "no 'nix' on \$PATH"
   fi
+}
+
+is_expected_nix_tool_shadow() {
+  case "$1" in
+    nix|nix-build|nix-channel|nix-collect-garbage|nix-copy-closure|nix-daemon|nix-env|nix-hash|nix-instantiate|nix-prefetch-url|nix-shell|nix-store)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+print_profile_conflicts() {
+  if [ ! -d "${NIX_USER_PROFILE_BIN}" ]; then
+    echo "  command conflicts: profile bin missing"
+    return
+  fi
+
+  found=0
+  for profile_cmd in "${NIX_USER_PROFILE_BIN}"/*; do
+    [ -e "${profile_cmd}" ] || continue
+    [ -x "${profile_cmd}" ] || continue
+    [ ! -d "${profile_cmd}" ] || continue
+
+    name=${profile_cmd##*/}
+    profile_real=$(canonical_path "${profile_cmd}")
+    for dir in "${NIX_DEFAULT_PROFILE_BIN}" /storage/bin /usr/bin /usr/sbin; do
+      candidate="${dir}/${name}"
+      [ "${candidate}" != "${profile_cmd}" ] || continue
+      [ -e "${candidate}" ] || continue
+      [ -x "${candidate}" ] || continue
+      candidate_real=$(canonical_path "${candidate}")
+      [ "${candidate_real}" != "${profile_real}" ] || continue
+      if [ "${dir}" = "/storage/bin" ] && is_expected_nix_tool_shadow "${name}"; then
+        continue
+      fi
+      if [ "${found}" -eq 0 ]; then
+        echo "  command conflicts:"
+        found=1
+      fi
+      echo "    ${name}: ${profile_cmd} shadows ${candidate}"
+    done
+  done
+
+  if [ "${found}" -eq 0 ]; then
+    echo "  command conflicts: none detected"
+  fi
+}
+
+print_layer5_profile_status() {
+  echo "Layer 5 (persistent profile) status"
+  echo "-----------------------------------"
+  if [ -L "${NIX_USER_PROFILE_LINK}" ]; then
+    target=$(readlink "${NIX_USER_PROFILE_LINK}" 2>/dev/null || echo "")
+    if [ -e "${NIX_USER_PROFILE_LINK}" ]; then
+      echo "  profile:  ${NIX_USER_PROFILE_LINK} -> ${target}"
+    else
+      echo "  profile:  broken symlink ${NIX_USER_PROFILE_LINK} -> ${target}"
+    fi
+  elif [ -e "${NIX_USER_PROFILE_LINK}" ]; then
+    echo "  profile:  present but not a symlink: ${NIX_USER_PROFILE_LINK}"
+  else
+    echo "  profile:  missing (Layer 5 depends on Layer 4 install)"
+  fi
+
+  if [ -d "${NIX_USER_PROFILE_BIN}" ]; then
+    echo "  bin:      ${NIX_USER_PROFILE_BIN}"
+  else
+    echo "  bin:      missing: ${NIX_USER_PROFILE_BIN}"
+  fi
+
+  if detect_real_nix; then
+    if profile_list=$("${NIX_BIN}" --extra-experimental-features 'nix-command flakes' profile list --json 2>&1); then
+      if [ -n "${profile_list}" ]; then
+        echo "  entries:"
+        printf '%s\n' "${profile_list}" | sed 's/^/    /'
+      else
+        echo "  entries:  none"
+      fi
+    else
+      echo "  entries:  failed to query profile: ${profile_list}"
+    fi
+  else
+    echo "  entries:  unavailable until Layer 4 real Nix is installed"
+  fi
+
+  print_profile_conflicts
 }
 
 # ---- Subcommands -----------------------------------------------------------
@@ -294,6 +397,8 @@ cmd_status() {
   echo "Shell PATH resolution"
   echo "---------------------"
   echo "  which nix -> $(report_path_resolution)"
+  echo ""
+  print_layer5_profile_status
   echo ""
   if [ -x /storage/apps/nix-portable/nix-portable ]; then
     echo "Layer 1/2 (nix-portable) status"
@@ -547,8 +652,7 @@ EOF
 
 cmd_doctor() {
   if have nix-doctor; then
-    info "Delegating to nix-doctor for Layer 1/2/3 checks."
-    info "Layer 4 doctor extensions land in Unit 5 of the plan."
+    info "Delegating to nix-doctor for Nix integration checks."
     exec nix-doctor "$@"
   fi
   fail "doctor: nix-doctor not found on \$PATH (expected /usr/bin/nix-doctor)"
