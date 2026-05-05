@@ -485,7 +485,7 @@ flowchart TB
 
 **Implementation note (2026-05-05):** Implemented with `docs/plans/2026-05-05-003-feat-nix-layer-7-app-ui-experiments-plan.md`, a browser-like Layer 6 launcher fixture, Layer 7 status/doctor readiness checks, CI-safe temp-surface smoke coverage, and opt-in hardware validation. Validated on `thor` with `nixpkgs#chromium`: readiness smoke passed, a Sway-launched Chromium window appeared as `about:blank - Chromium`, the app binary resolved from `/nix/store`, Crashpad/config/cache were isolated under Layer 7 experiment roots, reboot verification passed, and the launcher deactivated cleanly.
 
-- [ ] **Unit 9: Layer 8 — Experimental nix-daemon mode**
+- [x] **Unit 9: Layer 8 — Experimental nix-daemon mode**
 
 **Goal:** Explore whether ROCKNIX can support daemon-style Nix with dedicated service/socket integration and build users.
 
@@ -522,6 +522,8 @@ flowchart TB
 
 **Verification:**
 - Daemon mode either works as a usable optional layer or is rejected with enough evidence to stop pursuing it.
+
+**Implementation note (2026-05-05):** Implemented Layer 8 diagnostics, image-time daemon identity gate, opt-in daemon units, `nixctl daemon` lifecycle controls, and opt-in `LAYER8_SMOKE=1`/reboot smoke path in `docs/plans/2026-05-05-004-feat-nix-layer-8-daemon-mode-plan.md`. Hardware validation on `thor` found Nix `2.34.7` includes `nix-daemon`, but the current image has no `nixbld` group and the active config has empty `build-users-group` for the known-good single-user/root fallback. Result: No-Go daemon activation on current SM8550 images; preflight refused enablement and left no Layer 8 state. Full daemon validation now requires an image built with `NIX_DAEMON_SUPPORT=yes` and non-conflicting build identities.
 
 - [ ] **Unit 10: Layer-aware rollback, update behavior, and stopping rules**
 
