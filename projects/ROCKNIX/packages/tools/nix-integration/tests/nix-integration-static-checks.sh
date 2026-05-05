@@ -125,8 +125,16 @@ grep -q 'NIX_CONF_DIR=/storage/.config/nix-daemon' "${PKG_DIR}/system.d/nix-daem
 grep -q 'ExecStart=/nix/var/nix/profiles/default/bin/nix-daemon --daemon' "${PKG_DIR}/system.d/nix-daemon.service" || fail "nix-daemon.service has wrong ExecStart"
 ! grep -q 'enable_service nix-daemon' "${PKG_DIR}/package.mk" || fail "package.mk must not enable Layer 8 daemon units by default"
 
+SYSTEMD_PKG="${REPO_ROOT}/packages/sysutils/systemd/package.mk"
+[ -f "${SYSTEMD_PKG}" ] || fail "missing systemd package.mk"
 grep -q 'NIX_INTEGRATION_SUPPORT=' "${REPO_ROOT}/projects/ROCKNIX/options" || fail "missing NIX_INTEGRATION_SUPPORT build option"
+grep -q 'NIX_NSPAWN_SUPPORT=' "${REPO_ROOT}/projects/ROCKNIX/options" || fail "missing NIX_NSPAWN_SUPPORT build option"
 grep -q 'nix-integration' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk" || fail "image package does not include nix-integration gate"
+grep -q 'NIX_NSPAWN_SUPPORT=' "${SYSTEMD_PKG}" || fail "systemd package missing Layer 9 nspawn support gate"
+grep -q 'if \[ "${NIX_NSPAWN_SUPPORT}" != "yes" \]' "${SYSTEMD_PKG}" || fail "systemd package must remove nspawn only when Layer 9 support is disabled"
+grep -q 'safe_remove ${INSTALL}/usr/bin/systemd-nspawn' "${SYSTEMD_PKG}" || fail "systemd package missing nspawn binary removal fallback"
+grep -q 'safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-nspawn@.service' "${SYSTEMD_PKG}" || fail "systemd package missing nspawn unit removal fallback"
+! grep -qE 'enable_service .*nspawn' "${SYSTEMD_PKG}" || fail "systemd package must not enable nspawn services by default"
 
 [ -f "${REPO_ROOT}/nix-on-rocknix-bootstrap.sh" ] || fail "missing standalone bootstrap script"
 [ -x "${REPO_ROOT}/nix-on-rocknix-bootstrap.sh" ] || fail "standalone bootstrap script is not executable"

@@ -43,5 +43,8 @@
   # Experimental Nix daemon build identities for Layer 8 validation (yes / no)
     NIX_DAEMON_SUPPORT="${NIX_DAEMON_SUPPORT:-yes}"
 
+  # Experimental systemd-nspawn preservation for Layer 9 validation (yes / no)
+    NIX_NSPAWN_SUPPORT="${NIX_NSPAWN_SUPPORT:-yes}"
+
   # Satisfy legacy build dependencies
     SWAP_SUPPORT="yes"
