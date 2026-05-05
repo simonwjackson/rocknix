@@ -11,7 +11,7 @@ applies_when:
   - Launching a Steam/Proton game manually on ROCKNIX ARM64 from SSH or the desktop Sway session.
   - Keeping Steam desktop UI available while avoiding Steam GamepadUI takeover.
   - Debugging Gamescope, Proton, FEX, Box64, or Steam Runtime launch behavior on SM8550 handhelds.
-tags: [rocknix, steam, proton, gamescope, arm64, sway, balatro, fex]
+tags: [rocknix, steam, proton, proton-ge, gamescope, arm64, sway, balatro]
 ---
 
 # Manually launch Steam games on ROCKNIX ARM64 without Steam GamepadUI
@@ -37,7 +37,7 @@ Sway desktop
 └── Gamescope SDL/X11 fullscreen window titled "Balatro"
     └── Gamescope internal compositor + Xwayland :1
         └── SteamLinuxRuntime_sniper
-            └── Proton 10.0
+            └── Proton compatibility tool (Proton 10.0 or GE-Proton10-34)
                 └── Balatro.exe
 ```
 
@@ -124,12 +124,77 @@ This produces the same important runtime layer Steam uses internally:
 ```text
 SteamLinuxRuntime_sniper/_v2-entry-point
 └── pressure-vessel-wrap / Box64/FEX path
-    └── Proton 10.0
+    └── Proton / GE-Proton compatibility tool
         └── Wine
             └── Balatro.exe
 ```
 
-### 4. Disable Xalia with Proton's real knob
+### 4. Select Proton by the actual `version` file, not by directory name
+
+Manual launchers should treat the compatibility tool path as an explicit per-game setting. On Thor, `/storage/bin/start_balatro.sh` supports this with `BALATRO_PROTON`:
+
+```bash
+BALATRO_PROTON="/storage/games-internal/roms/steam/steamapps/common/Proton 10.0/proton" \
+  /storage/bin/start_balatro.sh
+```
+
+Do not trust the directory name alone. Earlier, `Proton 11.0 (ARM64)` was only a compatibility-tool placeholder symlink to Proton 10.0. That fake symlink was later removed after real Proton 11 and GE-Proton were installed:
+
+```text
+Proton 11.0 (ARM64) -> /storage/games-internal/roms/steam/steamapps/common/Proton 10.0
+version: 1769167055 proton-10.0-4
+```
+
+After installing real Proton 11, the path and version were:
+
+```text
+/storage/games-internal/roms/steam/steamapps/common/Proton 11.0/proton
+version: 1777025816 proton-11.0-1-beta2
+```
+
+That real Proton 11 beta could start the stack and upgrade the prefix, but after a clean reboot Balatro did not reach a running `Balatro.exe` process and appeared to stall around Wine device initialization:
+
+```text
+ntsync: up and running
+winedevice.exe ... Proton 11.0/files/lib/wine/x86_64-unix/wine
+```
+
+GE-Proton10-34 was installable as a separate compatibility tool and did launch Balatro:
+
+```bash
+mkdir -p /storage/downloads /storage/games-internal/roms/steam/compatibilitytools.d
+cd /storage/downloads
+curl -L --fail -O \
+  https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton10-34/GE-Proton10-34.tar.gz
+curl -L --fail -O \
+  https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-Proton10-34/GE-Proton10-34.sha512sum
+sha512sum -c GE-Proton10-34.sha512sum
+tar -xzf GE-Proton10-34.tar.gz \
+  -C /storage/games-internal/roms/steam/compatibilitytools.d
+
+BALATRO_PROTON="/storage/games-internal/roms/steam/compatibilitytools.d/GE-Proton10-34/proton" \
+  /storage/bin/start_balatro.sh
+```
+
+Verified GE-Proton version and process shape:
+
+```text
+version: 1774238111 GE-Proton10-34
+gamescope ... GE-Proton10-34/proton waitforexitandrun ... Balatro.exe
+Balatro.exe ... GE-Proton10-34/files/bin/wine64 ... Balatro.exe
+AppID 2379780 state changed : Fully Installed,App Running
+```
+
+GE-Proton warned while reusing the same Balatro prefix after Proton 10/11 experiments:
+
+```text
+Proton: Upgrading prefix from 10.1000-105 to GE-Proton10-34
+Proton: Prefix has an invalid version?! You may want to back up user files and delete this prefix.
+```
+
+For quick experiments this was acceptable, but for repeatable testing use a backup or a separate `STEAM_COMPAT_DATA_PATH` per compatibility tool so prefix upgrades do not churn the known-good Balatro prefix.
+
+### 5. Disable Xalia with Proton's real knob
 
 Proton 10 did not honor the earlier guessed variables `PROTON_DISABLE_XALIA=1` or `XALIA_DISABLE=1`. The effective switch is:
 
@@ -159,7 +224,7 @@ export PROTON_LOG_DIR=/storage
 export WINEDEBUG=-all
 ```
 
-### 5. Wrap the runtime/Proton command in nested Gamescope SDL/X11 for a visible window
+### 6. Wrap the runtime/Proton command in nested Gamescope SDL/X11 for a visible window
 
 Direct Steam Runtime + Proton without Gamescope started Balatro briefly, but Sway never saw a visible Balatro/Wine window and the game exited. After cold boot, Steam Runtime + Proton inside Gamescope also exited early when Steam desktop UI was not running. The working visible path was nested Gamescope with the SDL backend forced to X11, launched after Steam desktop UI was initialized in the background:
 
@@ -245,6 +310,8 @@ Manual Steam launching on ROCKNIX ARM64 is not equivalent to desktop Linux x86_6
 - **Seat/display ownership**: raw SSH is not the active graphical session. DRM Gamescope fails from SSH without the ROCKNIX lifecycle because it cannot open the seat.
 - **Steam Runtime**: Proton needs SteamLinuxRuntime/pressure-vessel on this ARM64 stack. Plain `proton waitforexitandrun Game.exe` can fail before Wine loads correctly.
 - **Translation layer**: the working stack runs through Box64/FEX-style x86 support. Warnings about wrong ELF class for libraries can be noise if the game continues running.
+- **Compatibility tool identity**: directory names and Steam labels can hide symlinks. Check `version` before concluding that a Proton 11 or GE-Proton test actually used that build.
+- **Prefix churn**: switching Proton 10, Proton 11, and GE-Proton against the same `compatdata/2379780` prefix can trigger prefix upgrades or invalid-version warnings. Back up or isolate prefixes before broad compatibility testing.
 - **Xalia**: Proton 10 enables Xalia by default in this environment; for Balatro, it can crash with `x11 not available` unless `PROTON_USE_XALIA=0` is set.
 - **Gamescope backend choice**: `--backend sdl` alone may run audio without a mapped Sway window. For this device/session, `SDL_VIDEODRIVER=x11` made the nested Gamescope window visible to Sway.
 
@@ -259,6 +326,50 @@ The nested SDL/X11 path has more overhead than DRM Gamescope because it adds ano
 - You are debugging from SSH and need the command to run inside the active device desktop session.
 
 ## Examples
+
+### Verified: GE-Proton10-34 as an ARM64 compatibility-tool experiment
+
+GE-Proton10-34 is not necessary for Balatro when Proton 10.0 works, but it was a useful proof that GE-Proton's ARM64/aarch64 support can run under the same Steam desktop + Sway + Gamescope SDL/X11 pattern on Thor:
+
+```bash
+BALATRO_PROTON="/storage/games-internal/roms/steam/compatibilitytools.d/GE-Proton10-34/proton" \
+BALATRO_GAME_WIDTH=854 \
+BALATRO_GAME_HEIGHT=480 \
+BALATRO_GAMESCOPE_SCALER=fit \
+BALATRO_GAMESCOPE_FILTER=fsr \
+BALATRO_GAMESCOPE_SHARPNESS=5 \
+/storage/bin/start_balatro.sh
+```
+
+Expected signals:
+
+```text
+PROTON_VERSION=1774238111 GE-Proton10-34
+ProtonFixes ... All checks successful
+Balatro.exe ... GE-Proton10-34/files/bin/wine64 ... Balatro.exe
+AppID 2379780 state changed : Fully Installed,App Running
+```
+
+Box64 may emit wrong-ELF-class and `winegstreamer.so` symbol warnings. Treat those as suspicious but not fatal if `Balatro.exe` remains alive and the game is visible.
+
+### Partial/failed: real Proton 11 beta2 on Balatro
+
+Real Proton 11 was installed at:
+
+```text
+/storage/games-internal/roms/steam/steamapps/common/Proton 11.0/proton
+version: 1777025816 proton-11.0-1-beta2
+```
+
+It could start the stack and upgrade the prefix, but after reboot it did not produce a stable `Balatro.exe` process. The observed stuck shape was:
+
+```text
+gamescope ... Proton 11.0/proton waitforexitandrun ... Balatro.exe
+winedevice.exe ... Proton 11.0/files/lib/wine/x86_64-unix/wine
+ntsync: up and running
+```
+
+For Balatro on this Thor build, keep Proton 10.0 or GE-Proton10-34 as the working manual-launch options until Proton 11 is retested with a clean prefix.
 
 ### Known-good stock ROCKNIX path: reliable but shows GamepadUI
 
@@ -392,7 +503,7 @@ Check whether the game and runtime are alive:
 
 ```bash
 ps -A -o pid,stat,comm,args | \
-  grep -Ei 'gamescope|Balatro.exe|SteamLinuxRuntime|Proton 10.0|pressure-vessel|steamrtarm64/steam|steamwebhelper' | \
+  grep -Ei 'gamescope|Balatro.exe|SteamLinuxRuntime|Proton 10.0|Proton 11.0|GE-Proton|pressure-vessel|steamrtarm64/steam|steamwebhelper' | \
   grep -v grep
 ```
 
@@ -419,7 +530,8 @@ swaymsg -s "$SWAYSOCK" -t get_tree
 
 ## Related
 
-- `/storage/bin/start_balatro_gamescope_runtime_proton.sh` — current working Thor launcher script. It self-relaunches inside Sway, uses `PROTON_USE_XALIA=0`, forces Gamescope SDL/X11, and uses landscape `1920x1080` dimensions.
+- `/storage/bin/start_balatro.sh` — current canonical Thor Balatro launcher script. It self-relaunches inside Sway, accepts `BALATRO_PROTON`, uses `PROTON_USE_XALIA=0`, forces Gamescope SDL/X11, and supports Gamescope resolution/FSR overrides.
+- `/storage/games-internal/roms/steam/compatibilitytools.d/GE-Proton10-34` — installed GE-Proton compatibility tool verified with Balatro on Thor.
 - `/storage/bin/start_steam_desktop_ui.sh` — background Steam desktop context launcher; recreates the ARM64 manifest before startup.
 - `docs/solutions/runtime-errors/steam-desktop-ui-arm64-manifest-spinner-rocknix-2026-05-04.md` — prerequisite fix for making Steam desktop UI usable under Sway on ROCKNIX ARM64.
 - `docs/solutions/best-practices/rocknix-sm8550-power-profiling-2026-05-04.md` — power and battery tuning for the same Thor/SM8550 Steam/Balatro workload.
