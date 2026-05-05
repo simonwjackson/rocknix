@@ -52,6 +52,7 @@ NIX_DAEMON_BIN="${NIX_DAEMON_BIN:-${NIX_DEFAULT_PROFILE_BIN}/nix-daemon}"
 NIX_DAEMON_SERVICE="${NIX_DAEMON_SERVICE:-nix-daemon.service}"
 NIX_DAEMON_SOCKET="${NIX_DAEMON_SOCKET:-nix-daemon.socket}"
 NIX_DAEMON_SOCKET_PATH="${NIX_DAEMON_SOCKET_PATH:-${NIX_INSTALL_ROOT}/var/nix/daemon-socket/socket}"
+NIX_GROUP_FILE="${NIX_GROUP_FILE:-/etc/group}"
 
 # ---- SSL ------------------------------------------------------------------
 # Pre-set for the upstream installer so it skips its cacert derivation install
@@ -544,7 +545,7 @@ group_exists() {
   if have getent; then
     getent group "${group}" >/dev/null 2>&1 && return 0
   fi
-  awk -F: -v group="${group}" '$1 == group {found=1} END {exit !found}' /etc/group 2>/dev/null
+  awk -F: -v group="${group}" '$1 == group {found=1} END {exit !found}' "${NIX_GROUP_FILE}" 2>/dev/null
 }
 
 layer8_eligibility() {
