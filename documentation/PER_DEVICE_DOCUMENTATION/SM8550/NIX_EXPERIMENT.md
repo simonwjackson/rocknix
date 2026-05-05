@@ -641,3 +641,5 @@ Initial stop gates:
 Until those gates pass, keep using Layer 4 single-user/root Nix, Layer 5 profiles, Layer 6 activation, and Layer 7 app launchers.
 
 Layer 8 build identities are image-time only. The `nix-integration` package declares an opt-in `NIX_DAEMON_SUPPORT=yes` gate that can add a `nixbld` group and numbered `nixbld*` users through ROCKNIX's existing `add_group`/`add_user` build helpers. Runtime scripts must not invent users or groups under `/storage`. If the image cannot provide non-conflicting daemon build identities, daemon mode should remain unsupported or be explicitly rejected.
+
+The package may ship `nix-daemon.socket` and `nix-daemon.service`, but it must not enable them by default. The units are ordered after `nix.mount`, require `/nix` to be a mount point, and point daemon config at `/storage/.config/nix-daemon` rather than `/etc/nix`. Later lifecycle work must explicitly opt in before these units run.

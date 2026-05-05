@@ -246,7 +246,7 @@ Daemon mode should have explicit states in diagnostics:
 **Verification:**
 - Daemon identity and config prerequisites are explicit, testable, and reversible before any systemd unit can run.
 
-- [ ] **Unit 3: Add opt-in daemon socket/service units**
+- [x] **Unit 3: Add opt-in daemon socket/service units**
 
 **Goal:** Ship `nix-daemon` systemd units that can be activated explicitly and that order correctly after storage-backed `/nix` is ready.
 
