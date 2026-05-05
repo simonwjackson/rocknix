@@ -298,7 +298,7 @@ Failure/fallback matrix:
 **Verification:**
 - `nixctl status` and `nix-doctor --offline` can evaluate Layer 9 readiness without starting a guest.
 
-- [ ] **Unit 4: Add opt-in Layer 9 hardware smoke path**
+- [x] **Unit 4: Add opt-in Layer 9 hardware smoke path**
 
 **Goal:** Provide a repeatable manual hardware validation path that starts a pre-staged guest, proves it works, stops it, and records logs.
 

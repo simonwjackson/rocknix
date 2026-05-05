@@ -746,6 +746,16 @@ Layer 9 now has an implementation plan and guest contract:
 
 The Layer 9 boundary is intentionally narrow: preserve `systemd-nspawn` in an opt-in image, stage a guest under `/storage/machines/rocknix-guest`, start it manually for proof, and stop/delete it without affecting host Nix. Fallback means ROCKNIX still boots, SSH remains available, and Layers 4/8 remain usable or recoverable; it does not mean lower layers provide the same NixOS guest capability.
 
+Opt-in hardware smoke shape after a Layer 9-enabled image and pre-staged guest rootfs are present:
+
+```text
+LAYER9_SMOKE=1 \
+LAYER9_GUEST_ROOT=/storage/machines/rocknix-guest \
+projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
+```
+
+The smoke is intentionally bounded: it requires an executable `systemd-nspawn`, refuses a missing/non-proof-ready rootfs before starting anything, runs a one-shot guest proof command with `timeout`, verifies no enabled guest unit exists, and fails if a guest process remains after cleanup.
+
 The remaining future layers below are directional only. They are not implemented and not validated on SM8550. Each must get its own plan before device work begins. ROCKNIX remains the host OS in every case and continues to own boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
 
 - **Layer 9: NixOS/nspawn guest proof.** Run a storage-backed NixOS-ish guest under `systemd-nspawn` with its own `nix-daemon`. Manual start only; no boot autostart; stop rule on any impact to SSH, Sway, EmulationStation, Steam/FEX, host updates, or recovery.
