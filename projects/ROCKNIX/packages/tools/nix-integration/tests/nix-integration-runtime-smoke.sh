@@ -97,6 +97,14 @@ if NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-active-state" \
   exit 1
 fi
 grep -q 'Layer 8 daemon active but prerequisites are missing' /tmp/nix-layer8-active-missing.log
+mkdir -p "${TMP_DIR}/layer8-config"
+printf 'build-users-group = nixbld\n' >"${TMP_DIR}/layer8-config/nix.conf"
+printf 'nixbld:x:30000:nixbld1,nixbld2\n' >"${TMP_DIR}/layer8-config/group"
+NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-config/nix.conf" \
+NIX_GROUP_FILE="${TMP_DIR}/layer8-config/group" \
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+  "${PKG_DIR}/scripts/nix-doctor" --offline --no-smoke >/tmp/nix-layer8-build-group.log || true
+grep -q 'Layer 8 build-users-group exists: nixbld' /tmp/nix-layer8-build-group.log
 "${PKG_DIR}/scripts/nix-portable-install" status | grep -q 'nix-portable: installed'
 grep -q 'What=/storage/.nix-root' "${PKG_DIR}/system.d/nix.mount"
 grep -q 'Where=/nix' "${PKG_DIR}/system.d/nix.mount"

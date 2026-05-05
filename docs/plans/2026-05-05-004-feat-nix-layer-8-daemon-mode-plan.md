@@ -210,7 +210,7 @@ Daemon mode should have explicit states in diagnostics:
 **Verification:**
 - Operators can run status/doctor before enabling daemon mode and get a clear go/no-go decision with fallback guidance.
 
-- [ ] **Unit 2: Define the daemon build identity and configuration model**
+- [x] **Unit 2: Define the daemon build identity and configuration model**
 
 **Goal:** Establish the minimum safe image-time identity/config support needed for daemon mode, or reject daemon mode if ROCKNIX cannot provide it cleanly.
 
