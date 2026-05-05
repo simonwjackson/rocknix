@@ -294,11 +294,12 @@ printf 'nix-integration runtime smoke passed\n'
 #   - network reachability to releases.nixos.org and cache.nixos.org
 #   - >= 1 GB free on /storage
 # Not run in default CI; intended for manual validation on hardware.
-if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ]; then
+if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ]; then
   printf 'nix-integration Layer 4 smoke: skipped (set LAYER4_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 5 smoke: skipped (set LAYER5_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 6 smoke: skipped (set LAYER6_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 7 smoke: skipped (set LAYER7_SMOKE=1 to enable)\n'
+  printf 'nix-integration Layer 8 smoke: skipped (set LAYER8_SMOKE=1 to enable)\n'
   exit 0
 fi
 
@@ -380,7 +381,7 @@ fi
 # hardware. Requires Layer 4 real Nix to already be installed. The default
 # package is nixpkgs#hello because it is small and low-conflict.
 if [ "${LAYER5_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ]; then
+  if [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ]; then
     exit 0
   fi
 else
@@ -465,7 +466,7 @@ fi
 # Set LAYER6_SMOKE=1 to validate managed storage-local user-environment
 # activation on hardware. Requires Layer 4/5 shell integration to be healthy.
 if [ "${LAYER6_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER7_SMOKE:-0}" != "1" ]; then
+  if [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ]; then
     exit 0
   fi
 else
@@ -574,8 +575,10 @@ fi
 # visual confirmation remains operator-observed because CI cannot inspect the
 # handheld screen.
 if [ "${LAYER7_SMOKE:-0}" != "1" ]; then
-  exit 0
-fi
+  if [ "${LAYER8_SMOKE:-0}" != "1" ]; then
+    exit 0
+  fi
+else
 
 L7_LOG=/tmp/nix-integration-layer7-smoke.log
 L7_CACHE=/storage/.cache/nix-layer7-browser-bundle
@@ -665,3 +668,87 @@ log7 'cleanup: deactivate Layer 7 launcher bundle'
 
 printf 'nix-integration Layer 7 smoke passed\n'
 printf 'log: %s\n' "${L7_LOG}"
+fi
+
+# ---- Layer 8 device-side smoke (opt-in) ------------------------------------
+# Set LAYER8_SMOKE=1 to validate experimental nix-daemon mode on hardware.
+# Requires Layer 4 real Nix, image-time daemon build identities/config, and
+# opt-in daemon units. Default CI never starts systemd units.
+if [ "${LAYER8_SMOKE:-0}" != "1" ]; then
+  exit 0
+fi
+
+L8_LOG=/tmp/nix-integration-layer8-smoke.log
+rm -f "${L8_LOG}"
+
+log8() {
+  printf '[layer8-smoke] %s\n' "$*"
+  printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" >>"${L8_LOG}"
+}
+
+NIX_BIN=/nix/var/nix/profiles/default/bin/nix
+[ -x "${NIX_BIN}" ] || { echo 'FAIL: Layer 8 smoke requires Layer 4 real Nix' >&2; exit 1; }
+[ -x /nix/var/nix/profiles/default/bin/nix-daemon ] || { echo 'FAIL: Layer 8 smoke requires nix-daemon in the Nix default profile' >&2; exit 1; }
+awk '$2 == "/nix" {found=1} END {exit !found}' /proc/mounts 2>/dev/null \
+  || { echo 'FAIL: /nix is not mounted' >&2; exit 1; }
+
+if [ "${LAYER8_REBOOT_VERIFY:-}" = "verify" ]; then
+  log8 'reboot verify: checking daemon mode after reboot'
+  "${NIXCTL}" daemon status >>"${L8_LOG}" 2>&1 \
+    || { echo 'FAIL: nixctl daemon status failed during Layer 8 reboot verify' >&2; exit 1; }
+  NIX_REMOTE=daemon "${NIX_BIN}" --extra-experimental-features 'nix-command flakes' store ping >>"${L8_LOG}" 2>&1 \
+    || { echo 'FAIL: daemon store ping failed after reboot' >&2; exit 1; }
+  "${DOCTOR}" --offline >>"${L8_LOG}" 2>&1 \
+    || { echo 'FAIL: nix-doctor failed during Layer 8 reboot verify' >&2; exit 1; }
+  if [ "${LAYER8_KEEP:-0}" != "1" ]; then
+    "${NIXCTL}" daemon disable >>"${L8_LOG}" 2>&1 \
+      || { echo 'FAIL: Layer 8 daemon disable failed after reboot verify' >&2; exit 1; }
+  fi
+  printf 'nix-integration Layer 8 reboot smoke passed\n'
+  printf 'log: %s\n' "${L8_LOG}"
+  exit 0
+fi
+
+log8 'pre-flight: Layer 8 daemon prerequisites'
+"${NIXCTL}" daemon preflight >>"${L8_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 8 daemon preflight failed' >&2; exit 1; }
+
+log8 'enable: Layer 8 daemon socket'
+"${NIXCTL}" daemon enable >>"${L8_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 8 daemon enable failed' >&2; exit 1; }
+
+log8 'verify: client talks to daemon'
+NIX_REMOTE=daemon "${NIX_BIN}" --extra-experimental-features 'nix-command flakes' store ping >>"${L8_LOG}" 2>&1 \
+  || { echo 'FAIL: daemon store ping failed' >&2; exit 1; }
+
+log8 'verify: trivial cached package through daemon'
+NIX_REMOTE=daemon "${NIX_BIN}" --extra-experimental-features 'nix-command flakes' run nixpkgs#hello >>"${L8_LOG}" 2>&1 \
+  || { echo 'FAIL: daemon nix run hello smoke failed' >&2; exit 1; }
+
+grep -q 'Hello, world!' "${L8_LOG}" \
+  || { echo 'FAIL: daemon hello smoke did not print expected output' >&2; exit 1; }
+
+log8 'diagnostics: nixctl status and nix-doctor report Layer 8 state'
+"${NIXCTL}" status >>"${L8_LOG}" 2>&1 \
+  || { echo 'FAIL: nixctl status failed during Layer 8 smoke' >&2; exit 1; }
+grep -q 'Layer 8 (experimental daemon) status' "${L8_LOG}" \
+  || { echo 'FAIL: nixctl status did not report Layer 8 section' >&2; exit 1; }
+"${DOCTOR}" --offline >>"${L8_LOG}" 2>&1 \
+  || { echo 'FAIL: nix-doctor failed during Layer 8 smoke' >&2; exit 1; }
+grep -q 'Layer 8 daemon state' "${L8_LOG}" \
+  || { echo 'FAIL: nix-doctor did not report Layer 8 state' >&2; exit 1; }
+
+if [ "${LAYER8_REBOOT_VERIFY:-}" = "prepare" ]; then
+  log8 'leaving Layer 8 daemon active for reboot verification'
+  printf 'nix-integration Layer 8 smoke prepared for reboot verification\n'
+  printf 'After reboot run: LAYER8_SMOKE=1 LAYER8_REBOOT_VERIFY=verify %s\n' "$0"
+  printf 'log: %s\n' "${L8_LOG}"
+  exit 0
+fi
+
+log8 'cleanup: disable Layer 8 daemon mode'
+"${NIXCTL}" daemon disable >>"${L8_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 8 daemon disable failed' >&2; exit 1; }
+
+printf 'nix-integration Layer 8 smoke passed\n'
+printf 'log: %s\n' "${L8_LOG}"

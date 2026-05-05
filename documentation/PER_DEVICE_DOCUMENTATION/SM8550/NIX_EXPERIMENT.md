@@ -653,3 +653,26 @@ nixctl daemon rollback
 ```
 
 `enable` must pass preflight first. `disable` and `rollback` stop daemon units when systemd is available, remove Layer 8 activation metadata under `/storage/.config/nix-integration/layer8`, and leave `/nix` plus Layer 4/5 profile state intact.
+
+Default static/runtime checks do not start the daemon:
+
+```sh
+projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-static-checks.sh
+projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
+```
+
+Hardware daemon validation is opt-in:
+
+```sh
+LAYER8_SMOKE=1 projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
+```
+
+Optional reboot persistence:
+
+```sh
+LAYER8_SMOKE=1 LAYER8_REBOOT_VERIFY=prepare projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
+reboot
+LAYER8_SMOKE=1 LAYER8_REBOOT_VERIFY=verify projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
+```
+
+The Layer 8 smoke proves daemon preflight, socket enablement, `NIX_REMOTE=daemon` client communication, a trivial `nixpkgs#hello` run, status/doctor reporting, and cleanup/disable unless `LAYER8_KEEP=1` is set.

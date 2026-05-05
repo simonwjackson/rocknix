@@ -322,7 +322,7 @@ Daemon mode should have explicit states in diagnostics:
 **Verification:**
 - Operators can opt into and out of daemon mode through `nixctl` without hand-editing units or losing the existing single-user Nix installation.
 
-- [ ] **Unit 5: Add daemon smoke and reboot validation paths**
+- [x] **Unit 5: Add daemon smoke and reboot validation paths**
 
 **Goal:** Extend static/runtime smoke coverage so daemon mode can be validated safely in CI-like temporary fixtures and opt-in hardware runs.
 
