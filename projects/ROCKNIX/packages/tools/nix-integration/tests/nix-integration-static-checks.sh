@@ -143,8 +143,8 @@ grep -q 'NIX_CONF_DIR=/storage/.config/nix-daemon' "${PKG_DIR}/system.d/nix-daem
 grep -q 'ExecStart=/nix/var/nix/profiles/default/bin/nix-daemon --daemon' "${PKG_DIR}/system.d/nix-daemon.service" || fail "nix-daemon.service has wrong ExecStart"
 ! grep -q 'enable_service nix-daemon' "${PKG_DIR}/package.mk" || fail "package.mk must not enable Layer 8 daemon units by default"
 
-SYSTEMD_PKG="${REPO_ROOT}/packages/sysutils/systemd/package.mk"
-[ -f "${SYSTEMD_PKG}" ] || fail "missing systemd package.mk"
+SYSTEMD_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/systemd/package.mk"
+[ -f "${SYSTEMD_PKG}" ] || fail "missing ROCKNIX systemd package.mk"
 grep -q 'NIX_INTEGRATION_SUPPORT=' "${REPO_ROOT}/projects/ROCKNIX/options" || fail "missing NIX_INTEGRATION_SUPPORT build option"
 grep -q 'NIX_NSPAWN_SUPPORT=' "${REPO_ROOT}/projects/ROCKNIX/options" || fail "missing NIX_NSPAWN_SUPPORT build option"
 grep -q 'nix-integration' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk" || fail "image package does not include nix-integration gate"
