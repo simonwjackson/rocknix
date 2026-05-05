@@ -359,7 +359,7 @@ Daemon mode should have explicit states in diagnostics:
 **Verification:**
 - Layer 8 has the same evidence quality as Layers 5-7: static checks, safe default runtime smoke, opt-in hardware smoke, reboot verification, and cleanup.
 
-- [ ] **Unit 6: Document hardware findings, rollback, and the keep/reject decision**
+- [x] **Unit 6: Document hardware findings, rollback, and the keep/reject decision**
 
 **Goal:** Capture the final Layer 8 outcome so future work knows whether daemon mode is a supported optional layer or a rejected path.
 

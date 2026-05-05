@@ -676,3 +676,32 @@ LAYER8_SMOKE=1 LAYER8_REBOOT_VERIFY=verify projects/ROCKNIX/packages/tools/nix-i
 ```
 
 The Layer 8 smoke proves daemon preflight, socket enablement, `NIX_REMOTE=daemon` client communication, a trivial `nixpkgs#hello` run, status/doctor reporting, and cleanup/disable unless `LAYER8_KEEP=1` is set.
+
+Validation on `thor` with the current image reached the Layer 8 safety gate:
+
+```text
+nix (Nix) 2.34.7
+nix-daemon (Nix) 2.34.7
+/etc/group: no nixbld group
+/storage/.config/nix/nix.conf: build-users-group = <empty>
+```
+
+With Layer 8 units supplied from the test tree, `nixctl daemon status` reported:
+
+```text
+state:      inactive
+eligible:   unsupported: build-users-group is empty (single-user/root config)
+daemon:     /nix/var/nix/profiles/default/bin/nix-daemon
+socket:     .../nix-daemon.socket
+service:    .../nix-daemon.service
+fallback:   Layer 4 single-user/root Nix remains primary unless daemon is explicitly enabled
+```
+
+`nix-doctor --offline` passed with Layer 8 warnings because daemon mode was inactive. `LAYER8_SMOKE=1` stopped at preflight as expected:
+
+```text
+[layer8-smoke] pre-flight: Layer 8 daemon prerequisites
+FAIL: Layer 8 daemon preflight failed
+```
+
+No Layer 8 state was left under `/storage/.config/nix-integration/layer8`. Current keep/reject decision: keep the Layer 8 diagnostics, units, and lifecycle controls in the repo, but No-Go daemon activation on current SM8550 images. Full daemon validation requires an image built with `NIX_DAEMON_SUPPORT=yes` and non-conflicting `nixbld` identities.

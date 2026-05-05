@@ -736,6 +736,22 @@ Pass criteria:
 - daemon starts only after `/nix` is mounted
 - failure does not block boot, SSH, Sway, EmulationStation, Steam/FEX, or Chromium
 
+### Current validation result
+
+Layer 8 control-plane work landed in `docs/plans/2026-05-05-004-feat-nix-layer-8-daemon-mode-plan.md`: diagnostics, image-time identity gate, opt-in units, lifecycle controls, and opt-in smoke/reboot validation.
+
+On `thor`, the current image reached a No-Go preflight gate:
+
+```text
+nix-daemon exists: /nix/var/nix/profiles/default/bin/nix-daemon
+nixbld group: missing
+build-users-group: empty single-user/root fallback
+Layer 8 state: inactive
+LAYER8_SMOKE=1: stopped at preflight
+```
+
+Decision: keep the Layer 8 repo controls, but do not activate daemon mode on current SM8550 images. Full daemon validation requires an image built with `NIX_DAEMON_SUPPORT=yes` and non-conflicting `nixbld` identities.
+
 ## Cross-layer tooling to add
 
 The remaining layers need a single status/control tool.
