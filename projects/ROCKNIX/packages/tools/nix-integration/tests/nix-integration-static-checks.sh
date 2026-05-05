@@ -78,6 +78,9 @@ grep -q 'check_layer7' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missi
 grep -q 'Layer 7 ready' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 7 readiness output"
 grep -q 'Layer 8 (experimental daemon) status' "${PKG_DIR}/scripts/nixctl" || fail "nixctl status missing Layer 8 section"
 grep -q 'print_layer8_status' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 8 status reporter"
+grep -q 'cmd_daemon' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 8 daemon lifecycle dispatch"
+grep -q 'daemon preflight failed' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 8 daemon preflight gate"
+grep -q 'Layer 8 daemon mode disabled' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 8 daemon disable path"
 grep -q 'check_layer8' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 8 checks"
 grep -q 'Layer 8 daemon eligibility' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 8 eligibility output"
 grep -q 'Layer 4 single-user/root Nix remains' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 8 fallback guidance"
@@ -93,7 +96,7 @@ grep -q 'standard `nix profile`' "${PKG_DIR}/docs/layer7-app-experiment-contract
 grep -q '/storage/.local/share/nix-apps/layer7' "${PKG_DIR}/docs/layer7-app-experiment-contract.md" || fail "Layer 7 contract missing safe app state root"
 grep -q '/storage/.cache/nix-apps/layer7' "${PKG_DIR}/docs/layer7-app-experiment-contract.md" || fail "Layer 7 contract missing safe app cache root"
 grep -q 'Nix-backed binary' "${PKG_DIR}/docs/layer7-app-experiment-contract.md" || fail "Layer 7 contract missing Nix-backed binary proof"
-for sub in status install upgrade uninstall doctor user-env; do
+for sub in status install upgrade uninstall doctor user-env daemon; do
   # Subcommand can appear as 'sub)' (alone), 'sub|other)' (left of alt),
   # or '...|sub)' (right of alt). Match by requiring sub to be preceded by
   # start-of-line, whitespace, or '|' and followed by ')' or '|'.

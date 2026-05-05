@@ -53,6 +53,7 @@ NIX_DAEMON_SERVICE="${NIX_DAEMON_SERVICE:-nix-daemon.service}"
 NIX_DAEMON_SOCKET="${NIX_DAEMON_SOCKET:-nix-daemon.socket}"
 NIX_DAEMON_SOCKET_PATH="${NIX_DAEMON_SOCKET_PATH:-${NIX_INSTALL_ROOT}/var/nix/daemon-socket/socket}"
 NIX_GROUP_FILE="${NIX_GROUP_FILE:-/etc/group}"
+NIX_SYSTEMCTL="${NIX_SYSTEMCTL:-systemctl}"
 
 # ---- SSL ------------------------------------------------------------------
 # Pre-set for the upstream installer so it skips its cacert derivation install
@@ -85,6 +86,8 @@ Subcommands:
   user-env <action>      Manage Layer 6 storage-local user environment files.
                          Actions: status, preflight <bundle>, activate <bundle>,
                          deactivate, rollback.
+  daemon <action>        Manage experimental Layer 8 nix-daemon mode.
+                         Actions: status, preflight, enable, disable, rollback.
   help, -h, --help       This message.
 
 Environment overrides (defaults shown):
@@ -564,10 +567,17 @@ layer8_eligibility() {
   echo "available: daemon prerequisites present"
 }
 
+systemctl_available() {
+  if [ -n "${NIX_SYSTEMCTL}" ] && command -v "${NIX_SYSTEMCTL}" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
 systemctl_state() {
   unit=$1
-  if have systemctl; then
-    systemctl is-active "${unit}" 2>/dev/null || true
+  if systemctl_available; then
+    "${NIX_SYSTEMCTL}" is-active "${unit}" 2>/dev/null || true
   else
     echo unknown
   fi
@@ -954,6 +964,84 @@ cmd_user_env() {
     exec "${activate_bin}" "$@"
 }
 
+layer8_write_state() {
+  state=$1
+  mkdir -p "${NIX_LAYER8_STATE_DIR}"
+  printf '%s\n' "${state}" >"${NIX_LAYER8_STATE_DIR}/state"
+  date -u +%Y-%m-%dT%H:%M:%SZ >"${NIX_LAYER8_STATE_DIR}/updated-at"
+}
+
+cmd_daemon_status() {
+  print_layer8_status
+}
+
+cmd_daemon_preflight() {
+  eligibility=$(layer8_eligibility)
+  case "${eligibility}" in
+    available:*)
+      info "Layer 8 daemon preflight passed"
+      note "${eligibility}"
+      ;;
+    *)
+      fail "daemon preflight failed: ${eligibility}"
+      ;;
+  esac
+}
+
+cmd_daemon_enable() {
+  cmd_daemon_preflight
+  systemctl_available || fail "daemon enable requires systemctl"
+  layer8_write_state enabled
+  if "${NIX_SYSTEMCTL}" enable --now "${NIX_DAEMON_SOCKET}"; then
+    layer8_write_state enabled
+    info "Layer 8 daemon socket enabled: ${NIX_DAEMON_SOCKET}"
+  else
+    layer8_write_state partial
+    fail "daemon enable failed; state marked partial, run '${0##*/} daemon rollback'"
+  fi
+}
+
+cmd_daemon_disable() {
+  if systemctl_available; then
+    "${NIX_SYSTEMCTL}" disable --now "${NIX_DAEMON_SOCKET}" >/dev/null 2>&1 || true
+    "${NIX_SYSTEMCTL}" stop "${NIX_DAEMON_SERVICE}" >/dev/null 2>&1 || true
+  else
+    note "systemctl unavailable; removing Layer 8 metadata only"
+  fi
+  rm -rf "${NIX_LAYER8_STATE_DIR}"
+  info "Layer 8 daemon mode disabled; Layer 4 single-user/root Nix is unchanged"
+}
+
+cmd_daemon_rollback() {
+  cmd_daemon_disable
+}
+
+cmd_daemon() {
+  [ $# -gt 0 ] || fail "daemon: missing action (status, preflight, enable, disable, rollback)"
+  action=$1
+  shift
+  case "${action}" in
+    status)
+      cmd_daemon_status "$@"
+      ;;
+    preflight|plan)
+      cmd_daemon_preflight "$@"
+      ;;
+    enable|activate)
+      cmd_daemon_enable "$@"
+      ;;
+    disable|deactivate)
+      cmd_daemon_disable "$@"
+      ;;
+    rollback)
+      cmd_daemon_rollback "$@"
+      ;;
+    *)
+      fail "daemon: unknown action: ${action}"
+      ;;
+  esac
+}
+
 # ---- Dispatch --------------------------------------------------------------
 
 if [ $# -eq 0 ]; then
@@ -982,6 +1070,9 @@ case "${cmd}" in
     ;;
   user-env|env)
     cmd_user_env "$@"
+    ;;
+  daemon)
+    cmd_daemon "$@"
     ;;
   -h|--help|help)
     usage
