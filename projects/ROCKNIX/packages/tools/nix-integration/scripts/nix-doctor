@@ -314,7 +314,7 @@ check_layer4() {
   # wrapper. WARN, do not fail.
   if path_nix=$(command -v nix 2>/dev/null); then
     case "${path_nix}" in
-      "${NIX_DEFAULT_PROFILE_BIN}/nix")
+      "${NIX_DEFAULT_PROFILE_BIN}/nix"|"${NIX_USER_PROFILE_LINK}/bin/nix")
         ok "\$PATH 'nix' resolves to real nix: ${path_nix}"
         ;;
       "${NIX_WRAPPER_DIR}/nix")
