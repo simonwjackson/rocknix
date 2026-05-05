@@ -79,7 +79,11 @@ if "${NIX_WRAPPER_DIR}/nix" shell nixpkgs#does-not-exist >/tmp/nix-dev-shell-err
 fi
 grep -q 'package does not exist' /tmp/nix-dev-shell-error.log
 "${NIX_WRAPPER_DIR}/nix" --version | grep -q 'nix (Nix) smoke-test'
+mkdir -p "${TMP_DIR}/layer8-doctor-config"
+printf 'experimental-features = nix-command flakes\nbuild-users-group =\n' >"${TMP_DIR}/layer8-doctor-config/nix.conf"
 NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-doctor-state" \
+NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
   "${PKG_DIR}/scripts/nix-doctor" --offline --dev-shell-smoke >/tmp/nix-doctor-smoke.log
 grep -q 'Layer 8 daemon state: inactive' /tmp/nix-doctor-smoke.log
 grep -q 'Layer 8 daemon eligibility:' /tmp/nix-doctor-smoke.log
@@ -92,9 +96,12 @@ NIX_LAYER8_SYSTEMD_DIR="${PKG_DIR}/system.d" \
   "${PKG_DIR}/scripts/nixctl" status >/tmp/nix-layer8-unit-status.log
 grep -q 'socket:     .*nix-daemon.socket' /tmp/nix-layer8-unit-status.log
 grep -q 'service:    .*nix-daemon.service' /tmp/nix-layer8-unit-status.log
+mkdir -p "${TMP_DIR}/layer8-empty-config"
+printf 'experimental-features = nix-command flakes\nbuild-users-group =\n' >"${TMP_DIR}/layer8-empty-config/nix.conf"
 if NIX_LAYER8_SYSTEMD_DIR="${PKG_DIR}/system.d" \
+  NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-empty-config/nix.conf" \
   "${PKG_DIR}/scripts/nixctl" daemon preflight >/tmp/nix-layer8-preflight.log 2>&1; then
-  echo 'expected Layer 8 preflight to fail without mounted /nix + real daemon prerequisites' >&2
+  echo 'expected Layer 8 preflight to fail with empty build-users-group' >&2
   exit 1
 fi
 grep -q 'daemon preflight failed:' /tmp/nix-layer8-preflight.log
@@ -119,9 +126,11 @@ NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl.log" \
 grep -q 'disable --now nix-daemon.socket' "${TMP_DIR}/systemctl.log"
 grep -q 'stop nix-daemon.service' "${TMP_DIR}/systemctl.log"
 grep -q 'Layer 8 daemon mode disabled' /tmp/nix-layer8-rollback.log
-mkdir -p "${TMP_DIR}/layer8-active-state"
+mkdir -p "${TMP_DIR}/layer8-active-state" "${TMP_DIR}/layer8-active-config"
 printf 'active\n' >"${TMP_DIR}/layer8-active-state/state"
+printf 'experimental-features = nix-command flakes\nbuild-users-group =\n' >"${TMP_DIR}/layer8-active-config/nix.conf"
 if NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-active-state" \
+  NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-active-config/nix.conf" \
   NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
   "${PKG_DIR}/scripts/nix-doctor" --offline --no-smoke >/tmp/nix-layer8-active-missing.log 2>&1; then
   echo 'expected active Layer 8 state without prerequisites to fail doctor' >&2

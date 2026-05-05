@@ -704,7 +704,38 @@ fallback:   Layer 4 single-user/root Nix remains primary unless daemon is explic
 FAIL: Layer 8 daemon preflight failed
 ```
 
-No Layer 8 state was left under `/storage/.config/nix-integration/layer8`. Current keep/reject decision: keep the Layer 8 diagnostics, units, and lifecycle controls in the repo, but No-Go daemon activation on current SM8550 images. Full daemon validation requires an image built with `NIX_DAEMON_SUPPORT=yes` and non-conflicting `nixbld` identities.
+No Layer 8 state was left under `/storage/.config/nix-integration/layer8`. The Layer 8 safety gate worked as designed for this image.
+
+A second SM8550 image was built from `feat/nix-layer-8-daemon-mode` with `NIX_DAEMON_SUPPORT=yes` and applied to `thor`. After the update:
+
+```text
+nixbld + nixbld1..10 present
+nix-daemon.socket / nix-daemon.service shipped (disabled by default)
+/storage/.config/nix-daemon/nix.conf -> build-users-group = nixbld, sandbox = true
+```
+
+Daemon enable + client proof:
+
+```text
+nixctl daemon preflight -> passed
+nixctl daemon enable    -> socket enabled and active
+NIX_REMOTE=daemon nix store ping -> Store URL: daemon, Version: 2.34.7, Trusted: 1
+NIX_REMOTE=daemon nix run nixpkgs#hello -> Hello, world!
+```
+
+Reboot persistence:
+
+```text
+LAYER8_SMOKE=1 LAYER8_REBOOT_VERIFY=prepare ... -> Layer 8 smoke prepared
+reboot                                          -> SSH back in ~30s
+nix-daemon.socket after reboot                  -> enabled, active
+LAYER8_SMOKE=1 LAYER8_REBOOT_VERIFY=verify  ... -> Layer 8 reboot smoke passed
+cleanup after verify                            -> daemon disabled, state removed, socket file removed
+```
+
+Layer 4 single-user/root Nix remained available as the fallback after disable. SSH, Sway, EmulationStation, Steam/FEX integration, and Chromium/Layer 7 launch behavior were unaffected.
+
+Keep/reject decision: Layer 8 stays in the repo as an opt-in capability. Activate it only on images built with `NIX_DAEMON_SUPPORT=yes`. Default ROCKNIX images continue to use Layer 4 single-user/root Nix.
 
 ## Proposed future layers after Layer 8
 
