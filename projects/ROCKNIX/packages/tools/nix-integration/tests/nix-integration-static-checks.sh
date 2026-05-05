@@ -145,5 +145,9 @@ sh -n "${PKG_DIR}/tests/fixtures/layer7-apps/browser/files/profile.d/999-rocknix
 
 [ -f "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" ] || fail "missing runtime smoke test"
 sh -n "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke syntax failed"
+grep -q 'LAYER8_SMOKE=1' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 8 opt-in flag"
+grep -q 'LAYER8_REBOOT_VERIFY' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 8 reboot verification"
+grep -q 'NIX_REMOTE=daemon' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing daemon client proof"
+grep -q 'nix-integration Layer 8 smoke passed' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 8 success marker"
 
 printf 'nix-integration static checks passed\n'
