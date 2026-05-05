@@ -42,6 +42,7 @@ sh -n "${PKG_DIR}/profile.d/${PROFILE_SNIPPET}" || fail "profile integration syn
 grep -q 'NP_RUNTIME="proot"' "${PKG_DIR}/profile.d/${PROFILE_SNIPPET}" || fail "profile does not default NP_RUNTIME to proot"
 grep -q '/nix/var/nix/profiles/default/bin' "${PKG_DIR}/profile.d/${PROFILE_SNIPPET}" || fail "profile.d missing Layer 4 PATH prefix (/nix/var/nix/profiles/default/bin)"
 grep -q '\.nix-profile/bin' "${PKG_DIR}/profile.d/${PROFILE_SNIPPET}" || fail "profile.d missing Layer 5 PATH prefix (~/.nix-profile/bin)"
+grep -q 'Layer 5: persistent Nix profiles' "${PKG_DIR}/profile.d/${PROFILE_SNIPPET}" || fail "profile.d missing Layer 5 profile contract documentation"
 
 # ROCKNIX's /etc/profile.d/098-busybox resets PATH. The Nix profile snippet
 # must sort after it, or the Layer 4/5 PATH prefixes are clobbered in login
@@ -54,6 +55,13 @@ esac
 # Verify nixctl declares the canonical subcommands and pinned-version constants.
 grep -q 'NIX_VERSION_PINNED=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing NIX_VERSION_PINNED constant"
 grep -q 'NIX_TARBALL_SHA256_PINNED=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing NIX_TARBALL_SHA256_PINNED constant"
+grep -q 'NIX_USER_PROFILE_BIN=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 5 profile bin constant"
+grep -q 'Layer 5 (persistent profile) status' "${PKG_DIR}/scripts/nixctl" || fail "nixctl status missing Layer 5 section"
+grep -q 'print_profile_conflicts' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 5 conflict reporting"
+grep -q 'is_expected_nix_tool_shadow' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing expected Nix tool shadow allowlist"
+grep -q 'check_layer5' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 5 checks"
+grep -q 'check_profile_command_conflicts' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 5 conflict checks"
+grep -q 'is_expected_nix_tool_shadow' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing expected Nix tool shadow allowlist"
 for sub in status install upgrade uninstall doctor; do
   # Subcommand can appear as 'sub)' (alone), 'sub|other)' (left of alt),
   # or '...|sub)' (right of alt). Match by requiring sub to be preceded by

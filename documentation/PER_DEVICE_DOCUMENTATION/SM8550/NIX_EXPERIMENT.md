@@ -331,6 +331,111 @@ Stop at Layer 4 (do not pursue Layer 5+) if any of these hold:
 - The install or uninstall cycle leaves orphaned state under `/storage` that reboot does not clear.
 - A workflow that previously worked under Layer 1/2 (portable) regresses under Layer 4 with no clear path to fix.
 
+## Layer 5: persistent Nix profiles for CLI tools
+
+Layer 5 makes real Nix useful as a persistent SSH/admin toolbox. With Layer 4 installed, the root profile link is:
+
+```sh
+/storage/.nix-profile -> /nix/var/nix/profiles/per-user/root/profile
+```
+
+`/etc/profile.d/998-nix-integration.conf` puts `/storage/.nix-profile/bin` first on `$PATH`, ahead of the Layer 4 real-Nix profile, `/storage/bin`, and ROCKNIX system paths. On the validated SM8550 build, plain `nix profile` commands operate on that same profile link, so installed CLI tools are available in fresh SSH sessions and persist across reboot.
+
+### Install profile tools
+
+Start with low-risk CLI tools whose command names are unlikely to be critical ROCKNIX runtime commands:
+
+```sh
+nix profile install nixpkgs#ripgrep nixpkgs#fd nixpkgs#bat
+. /etc/profile   # or open a fresh SSH session
+rg --version
+fd --version
+bat --version
+```
+
+A minimal smoke package:
+
+```sh
+nix profile install nixpkgs#hello
+hello
+```
+
+### Inspect profile state
+
+```sh
+nix profile list
+nixctl status
+nix-doctor --offline
+```
+
+`nixctl status` includes a `Layer 5 (persistent profile) status` block with the profile link, profile `bin` path, profile entries, and command-conflict report. `nix-doctor` treats the expected Nix toolchain shadowing of `/storage/bin/nix*` as healthy, but warns when a profile-installed user command shadows a lower-precedence command.
+
+### Remove or update tools
+
+```sh
+nix profile remove ripgrep
+nix profile upgrade ripgrep
+```
+
+Use the names shown by `nix profile list`. Removing a profile entry creates a new generation; old generations can still keep store paths alive until deleted.
+
+### Garbage collection and disk cleanup
+
+Profiles are GC roots. To remove old generations and collect unreferenced store paths:
+
+```sh
+nix profile history
+nix profile wipe-history --older-than 30d
+nix store gc
+```
+
+For a more aggressive cleanup across profiles:
+
+```sh
+nix-collect-garbage -d
+```
+
+Do not run automatic GC from ROCKNIX boot scripts in this layer; cleanup is an explicit operator action.
+
+### Command conflicts
+
+Profile-installed tools intentionally have highest precedence. This lets you override an SSH/admin tool with a Nix-managed version, but it can also shadow ROCKNIX commands:
+
+```sh
+nix profile install nixpkgs#jq
+nixctl status
+nix-doctor --offline
+```
+
+If `jq` already exists lower on `$PATH`, status/doctor report the conflict. This is a warning, not a failure; remove the profile entry if the override is not intended.
+
+Avoid replacing critical shell/runtime commands (`sh`, `busybox`, `systemctl`, core boot utilities) through the profile unless you are deliberately testing over SSH and have a recovery path.
+
+### Layer 5 validation on thor
+
+Validated on `thor` after the Layer 4 image update:
+
+- `nix profile install nixpkgs#hello` created `/storage/.nix-profile/bin/hello`.
+- A fresh profile-sourced shell resolved and ran `hello` from the Nix profile.
+- `nixctl status` reported the Layer 5 profile block and no unexpected conflicts.
+- `nix-doctor --offline` passed with only the expected offline warning.
+- Reboot persistence passed: after reboot, `hello` remained on `$PATH` from `/storage/.nix-profile/bin`.
+- Cleanup with `nix profile remove hello` returned the profile to the baseline Nix-only entry.
+
+### Uninstall interaction
+
+`nixctl uninstall --yes` is a Layer 4 reset. It removes `/nix/store/*`, `/nix/var/*`, `~/.config/nix/`, and `~/.nix-profile`, so it also removes Layer 5 profile tools. This is intentional: Layer 5 lives on the real `/nix` substrate.
+
+### Stopping rule for Layer 5
+
+Stop at Layer 5 (do not pursue Layer 6+) if any of these hold:
+
+- Plain `nix profile install nixpkgs#hello` does not put the binary under `/storage/.nix-profile/bin`.
+- Profile tools do not persist across reboot.
+- `nixctl status` or `nix-doctor --offline` cannot distinguish healthy profile state from broken profile state.
+- Command shadowing causes ROCKNIX UI, SSH, game runtime, or existing `/storage/bin` recovery tools to regress.
+- Store/profile growth cannot be recovered with documented remove/history/GC commands.
+
 ## Next layer
 
-Layer 5 validates persistent Nix profiles for CLI tools. With Layer 4 in place, `nix profile install <pkg>` deposits binaries into `~/.nix-profile/bin`, which is already on `$PATH` thanks to the profile.d work shipped in Layer 4. Layer 5 is mostly a convention + documentation step rather than new infrastructure.
+Layer 6 would expand from CLI profiles into a narrow Nix-managed user environment under selected `/storage` surfaces. Do not start Layer 6 until Layer 5 profile installs, command conflict reporting, and cleanup workflows remain boring across multiple reboots.
