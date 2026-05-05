@@ -96,6 +96,36 @@ NIX_LAYER8_SYSTEMD_DIR="${PKG_DIR}/system.d" \
   "${PKG_DIR}/scripts/nixctl" status >/tmp/nix-layer8-unit-status.log
 grep -q 'socket:     .*nix-daemon.socket' /tmp/nix-layer8-unit-status.log
 grep -q 'service:    .*nix-daemon.service' /tmp/nix-layer8-unit-status.log
+FAKE_NSPAWN="${TMP_DIR}/systemd-nspawn"
+cat >"${FAKE_NSPAWN}" <<'EOF'
+#!/bin/sh
+echo 'systemd-nspawn smoke-test'
+EOF
+chmod 0755 "${FAKE_NSPAWN}"
+mkdir -p "${TMP_DIR}/layer9-root/etc" "${TMP_DIR}/layer9-state"
+NIX_LAYER9_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER9_GUEST_ROOT="${TMP_DIR}/layer9-root" \
+NIX_LAYER9_STATE_DIR="${TMP_DIR}/layer9-state" \
+NIX_LAYER9_SKIP_KERNEL_CHECK=1 \
+  "${PKG_DIR}/scripts/nixctl" status >/tmp/nix-layer9-proof-ready-status.log
+grep -q 'Layer 9 (nspawn guest proof) status' /tmp/nix-layer9-proof-ready-status.log
+grep -q 'state:      proof-ready' /tmp/nix-layer9-proof-ready-status.log
+grep -q 'fallback:   host Layers 4/8 remain the recovery path' /tmp/nix-layer9-proof-ready-status.log
+NIX_LAYER9_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER9_GUEST_ROOT="${TMP_DIR}/layer9-root" \
+NIX_LAYER9_STATE_DIR="${TMP_DIR}/layer9-state" \
+NIX_LAYER9_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-doctor-state" \
+NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
+  "${PKG_DIR}/scripts/nix-doctor" --offline --no-smoke >/tmp/nix-layer9-doctor-proof-ready.log
+grep -q 'Layer 9 nspawn guest state: proof-ready' /tmp/nix-layer9-doctor-proof-ready.log
+grep -q 'Layer 9 nspawn eligibility: available: nspawn guest proof prerequisites present' /tmp/nix-layer9-doctor-proof-ready.log
+NIX_LAYER9_NSPAWN_BIN="${TMP_DIR}/missing-nspawn" \
+NIX_LAYER9_GUEST_ROOT="${TMP_DIR}/missing-root" \
+NIX_LAYER9_SKIP_KERNEL_CHECK=1 \
+  "${PKG_DIR}/scripts/nixctl" status >/tmp/nix-layer9-unsupported-status.log
+grep -q 'state:      unsupported' /tmp/nix-layer9-unsupported-status.log
 mkdir -p "${TMP_DIR}/layer8-empty-config"
 printf 'experimental-features = nix-command flakes\nbuild-users-group =\n' >"${TMP_DIR}/layer8-empty-config/nix.conf"
 if NIX_LAYER8_SYSTEMD_DIR="${PKG_DIR}/system.d" \

@@ -263,7 +263,7 @@ Failure/fallback matrix:
 **Verification:**
 - A reviewer can tell exactly what host surfaces Layer 9 is allowed to touch before reading implementation code.
 
-- [ ] **Unit 3: Add read-only Layer 9 diagnostics to nixctl and nix-doctor**
+- [x] **Unit 3: Add read-only Layer 9 diagnostics to nixctl and nix-doctor**
 
 **Goal:** Report whether a device is ready for the manual nspawn proof without starting or mutating guest state.
 

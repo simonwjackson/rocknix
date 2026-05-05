@@ -54,6 +54,10 @@ NIX_DAEMON_SOCKET="${NIX_DAEMON_SOCKET:-nix-daemon.socket}"
 NIX_DAEMON_SOCKET_PATH="${NIX_DAEMON_SOCKET_PATH:-${NIX_INSTALL_ROOT}/var/nix/daemon-socket/socket}"
 NIX_GROUP_FILE="${NIX_GROUP_FILE:-/etc/group}"
 NIX_SYSTEMCTL="${NIX_SYSTEMCTL:-systemctl}"
+NIX_LAYER9_STATE_DIR="${NIX_LAYER9_STATE_DIR:-/storage/.config/nix-integration/layer9}"
+NIX_LAYER9_NSPAWN_BIN="${NIX_LAYER9_NSPAWN_BIN:-/usr/bin/systemd-nspawn}"
+NIX_LAYER9_GUEST_ROOT="${NIX_LAYER9_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+NIX_LAYER9_SKIP_KERNEL_CHECK="${NIX_LAYER9_SKIP_KERNEL_CHECK:-0}"
 
 # ---- SSL ------------------------------------------------------------------
 # Pre-set for the upstream installer so it skips its cacert derivation install
@@ -99,6 +103,9 @@ Environment overrides (defaults shown):
   NIX_LAYER7_APP_BIN     ${NIX_LAYER7_APP_BIN}
   NIX_LAYER7_APP_STATE_DIR ${NIX_LAYER7_APP_STATE_DIR}
   NIX_LAYER8_STATE_DIR   ${NIX_LAYER8_STATE_DIR}
+  NIX_LAYER9_STATE_DIR   ${NIX_LAYER9_STATE_DIR}
+  NIX_LAYER9_NSPAWN_BIN  ${NIX_LAYER9_NSPAWN_BIN}
+  NIX_LAYER9_GUEST_ROOT  ${NIX_LAYER9_GUEST_ROOT}
   NIX_TARBALL_URL        ${NIX_TARBALL_URL}
   NIX_TARBALL_SHA256     ${NIX_TARBALL_SHA256}
   NIX_FORCE              Set to 1 to override safety checks (rare)
@@ -604,6 +611,77 @@ print_layer8_status() {
   echo "  fallback:   Layer 4 single-user/root Nix remains primary unless daemon is explicitly enabled"
 }
 
+layer9_kernel_ready() {
+  [ "${NIX_LAYER9_SKIP_KERNEL_CHECK}" = "1" ] && return 0
+  [ -e /proc/self/ns/mnt ] || return 1
+  [ -e /proc/self/ns/pid ] || return 1
+  [ -e /proc/self/ns/uts ] || return 1
+  [ -d /sys/fs/cgroup ] || return 1
+  return 0
+}
+
+layer9_guest_root_ready() {
+  [ -d "${NIX_LAYER9_GUEST_ROOT}" ] || return 1
+  [ -d "${NIX_LAYER9_GUEST_ROOT}/etc" ] || [ -d "${NIX_LAYER9_GUEST_ROOT}/usr" ] || [ -d "${NIX_LAYER9_GUEST_ROOT}/nix" ]
+}
+
+layer9_running() {
+  if [ -f "${NIX_LAYER9_STATE_DIR}/state" ]; then
+    state=$(awk 'NR==1 {print; exit}' "${NIX_LAYER9_STATE_DIR}/state")
+    [ "${state}" = "running" ] && return 0
+  fi
+  if have ps; then
+    ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${NIX_LAYER9_GUEST_ROOT}" >/dev/null 2>&1 && return 0
+  fi
+  return 1
+}
+
+layer9_state() {
+  [ -x "${NIX_LAYER9_NSPAWN_BIN}" ] || { echo unsupported; return; }
+  layer9_kernel_ready || { echo unsupported; return; }
+  layer9_running && { echo running; return; }
+  if [ -d "${NIX_LAYER9_GUEST_ROOT}" ]; then
+    if layer9_guest_root_ready; then
+      echo proof-ready
+    else
+      echo available
+    fi
+  else
+    echo available
+  fi
+}
+
+layer9_eligibility() {
+  [ -x "${NIX_LAYER9_NSPAWN_BIN}" ] || { echo "unsupported: systemd-nspawn missing: ${NIX_LAYER9_NSPAWN_BIN}"; return; }
+  layer9_kernel_ready || { echo "unsupported: namespace/cgroup prerequisites missing"; return; }
+  if [ ! -e "${NIX_LAYER9_GUEST_ROOT}" ]; then
+    echo "available: guest root missing: ${NIX_LAYER9_GUEST_ROOT}"
+    return
+  fi
+  [ -d "${NIX_LAYER9_GUEST_ROOT}" ] || { echo "unsupported: guest root is not a directory: ${NIX_LAYER9_GUEST_ROOT}"; return; }
+  layer9_guest_root_ready || { echo "available: guest root present but not proof-ready: ${NIX_LAYER9_GUEST_ROOT}"; return; }
+  echo "available: nspawn guest proof prerequisites present"
+}
+
+print_layer9_status() {
+  echo "Layer 9 (nspawn guest proof) status"
+  echo "------------------------------------"
+  state=$(layer9_state)
+  eligibility=$(layer9_eligibility)
+
+  echo "  state:      ${state}"
+  echo "  eligible:   ${eligibility}"
+  echo "  nspawn:     ${NIX_LAYER9_NSPAWN_BIN}"
+  echo "  guest root: ${NIX_LAYER9_GUEST_ROOT}"
+  echo "  state dir:  ${NIX_LAYER9_STATE_DIR}"
+  if layer9_running; then
+    echo "  running:    yes"
+  else
+    echo "  running:    no"
+  fi
+  echo "  fallback:   host Layers 4/8 remain the recovery path; guest cleanup must not touch host Nix state"
+}
+
 print_layer7_status() {
   echo "Layer 7 (app/UI experiment) status"
   echo "------------------------------------"
@@ -689,6 +767,8 @@ cmd_status() {
   print_layer7_status
   echo ""
   print_layer8_status
+  echo ""
+  print_layer9_status
   echo ""
   if [ -x /storage/apps/nix-portable/nix-portable ]; then
     echo "Layer 1/2 (nix-portable) status"
