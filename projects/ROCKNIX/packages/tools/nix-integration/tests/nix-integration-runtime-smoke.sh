@@ -79,8 +79,10 @@ if "${NIX_WRAPPER_DIR}/nix" shell nixpkgs#does-not-exist >/tmp/nix-dev-shell-err
 fi
 grep -q 'package does not exist' /tmp/nix-dev-shell-error.log
 "${NIX_WRAPPER_DIR}/nix" --version | grep -q 'nix (Nix) smoke-test'
-"${PKG_DIR}/scripts/nix-doctor" --offline --dev-shell-smoke >/tmp/nix-doctor-smoke.log
-"${NIX_WRAPPER_DIR}/nix-doctor" --offline --dev-shell-smoke >/tmp/nix-doctor-wrapper-smoke.log
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+  "${PKG_DIR}/scripts/nix-doctor" --offline --dev-shell-smoke >/tmp/nix-doctor-smoke.log
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+  "${NIX_WRAPPER_DIR}/nix-doctor" --offline --dev-shell-smoke >/tmp/nix-doctor-wrapper-smoke.log
 "${PKG_DIR}/scripts/nix-portable-install" status | grep -q 'nix-portable: installed'
 grep -q 'What=/storage/.nix-root' "${PKG_DIR}/system.d/nix.mount"
 grep -q 'Where=/nix' "${PKG_DIR}/system.d/nix.mount"
@@ -90,6 +92,67 @@ grep -q 'Before=nix.mount' "${PKG_DIR}/system.d/nix-storage-setup.service"
 [ ! -e "${NIX_WRAPPER_DIR}/nix-dev-shell" ]
 [ ! -e "${NIX_WRAPPER_DIR}/nix-doctor" ]
 [ ! -d "${NIX_PORTABLE_DIR}" ]
+
+# Layer 6 activation engine smoke against temp surfaces (safe for default CI).
+L6_TMP="${TMP_DIR}/layer6"
+L6_BUNDLE="${PKG_DIR}/tests/fixtures/layer6-user-env"
+mkdir -p "${L6_TMP}/state" "${L6_TMP}/bin" "${L6_TMP}/profile.d"
+NIX_LAYER6_STATE_DIR="${L6_TMP}/state" \
+NIX_LAYER6_BIN_DIR="${L6_TMP}/bin" \
+NIX_LAYER6_PROFILE_D_DIR="${L6_TMP}/profile.d" \
+  "${PKG_DIR}/scripts/nix-layer-activate" preflight "${L6_BUNDLE}" >/tmp/nix-layer6-preflight-smoke.log
+NIX_LAYER6_STATE_DIR="${L6_TMP}/state" \
+NIX_LAYER6_BIN_DIR="${L6_TMP}/bin" \
+NIX_LAYER6_PROFILE_D_DIR="${L6_TMP}/profile.d" \
+  "${PKG_DIR}/scripts/nix-layer-activate" activate "${L6_BUNDLE}" >/tmp/nix-layer6-activate-smoke.log
+[ -x "${L6_TMP}/bin/rocknix-layer6-smoke" ]
+/bin/sh -c '. "'"${L6_TMP}/profile.d/999-rocknix-layer6-smoke"'"; "'"${L6_TMP}/bin/rocknix-layer6-smoke"'"' | grep -q 'rocknix-layer6-smoke:active'
+NIX_LAYER6_STATE_DIR="${L6_TMP}/state" \
+NIX_LAYER6_BIN_DIR="${L6_TMP}/bin" \
+NIX_LAYER6_PROFILE_D_DIR="${L6_TMP}/profile.d" \
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+  "${PKG_DIR}/scripts/nixctl" status | grep -q 'Layer 6 (managed user environment) status'
+NIX_LAYER6_STATE_DIR="${L6_TMP}/state" \
+NIX_LAYER6_BIN_DIR="${L6_TMP}/bin" \
+NIX_LAYER6_PROFILE_D_DIR="${L6_TMP}/profile.d" \
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+NIX_PORTABLE_DIR="${NIX_PORTABLE_DIR}" \
+NIX_WRAPPER_DIR="${NIX_WRAPPER_DIR}" \
+NP_LOCATION="${NP_LOCATION}" \
+NIX_PORTABLE_REQUIRED_MB=1 \
+  "${PKG_DIR}/scripts/nix-doctor" --offline --no-smoke >/tmp/nix-layer6-doctor-smoke.log || true
+# Doctor may fail because the fake portable layer was removed; assert Layer 6 checks ran.
+grep -q 'Layer 6 state: active' /tmp/nix-layer6-doctor-smoke.log
+printf 'user-file\n' >"${L6_TMP}/bin/rocknix-layer6-conflict"
+mkdir -p "${L6_TMP}/conflict-bundle/files/bin"
+printf '#!/bin/sh\necho conflict\n' >"${L6_TMP}/conflict-bundle/files/bin/rocknix-layer6-conflict"
+chmod 0755 "${L6_TMP}/conflict-bundle/files/bin/rocknix-layer6-conflict"
+printf 'bin|rocknix-layer6-conflict|files/bin/rocknix-layer6-conflict|0755\n' >"${L6_TMP}/conflict-bundle/manifest"
+if NIX_LAYER6_STATE_DIR="${L6_TMP}/conflict-state" \
+  NIX_LAYER6_BIN_DIR="${L6_TMP}/bin" \
+  NIX_LAYER6_PROFILE_D_DIR="${L6_TMP}/profile.d" \
+  "${PKG_DIR}/scripts/nix-layer-activate" activate "${L6_TMP}/conflict-bundle" >/tmp/nix-layer6-conflict-smoke.log 2>&1; then
+  echo 'expected Layer 6 conflict activation to fail' >&2
+  exit 1
+fi
+grep -q 'target exists and is not owned by Layer 6' /tmp/nix-layer6-conflict-smoke.log
+grep -q 'user-file' "${L6_TMP}/bin/rocknix-layer6-conflict"
+mkdir -p "${L6_TMP}/empty-bundle"
+: >"${L6_TMP}/empty-bundle/manifest"
+if NIX_LAYER6_STATE_DIR="${L6_TMP}/empty-state" \
+  NIX_LAYER6_BIN_DIR="${L6_TMP}/bin" \
+  NIX_LAYER6_PROFILE_D_DIR="${L6_TMP}/profile.d" \
+  "${PKG_DIR}/scripts/nix-layer-activate" activate "${L6_TMP}/empty-bundle" >/tmp/nix-layer6-empty-smoke.log 2>&1; then
+  echo 'expected Layer 6 empty activation to fail' >&2
+  exit 1
+fi
+grep -q 'bundle manifest contains no activatable files' /tmp/nix-layer6-empty-smoke.log
+NIX_LAYER6_STATE_DIR="${L6_TMP}/state" \
+NIX_LAYER6_BIN_DIR="${L6_TMP}/bin" \
+NIX_LAYER6_PROFILE_D_DIR="${L6_TMP}/profile.d" \
+  "${PKG_DIR}/scripts/nix-layer-activate" deactivate >/tmp/nix-layer6-deactivate-smoke.log
+[ ! -e "${L6_TMP}/bin/rocknix-layer6-smoke" ]
+[ ! -e "${L6_TMP}/profile.d/999-rocknix-layer6-smoke" ]
 
 printf 'nix-integration runtime smoke passed\n'
 
@@ -101,9 +164,10 @@ printf 'nix-integration runtime smoke passed\n'
 #   - network reachability to releases.nixos.org and cache.nixos.org
 #   - >= 1 GB free on /storage
 # Not run in default CI; intended for manual validation on hardware.
-if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ]; then
+if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ]; then
   printf 'nix-integration Layer 4 smoke: skipped (set LAYER4_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 5 smoke: skipped (set LAYER5_SMOKE=1 to enable)\n'
+  printf 'nix-integration Layer 6 smoke: skipped (set LAYER6_SMOKE=1 to enable)\n'
   exit 0
 fi
 
@@ -114,6 +178,7 @@ unset NIX_PORTABLE_SHA256 NIX_PORTABLE_REQUIRED_MB NIX_PORTABLE_SKIP_ARCH_CHECK
 
 NIXCTL="${PKG_DIR}/scripts/nixctl"
 DOCTOR="${PKG_DIR}/scripts/nix-doctor"
+export NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate"
 L4_LOG=/tmp/nix-integration-layer4-smoke.log
 rm -f "${L4_LOG}"
 
@@ -184,8 +249,10 @@ fi
 # hardware. Requires Layer 4 real Nix to already be installed. The default
 # package is nixpkgs#hello because it is small and low-conflict.
 if [ "${LAYER5_SMOKE:-0}" != "1" ]; then
-  exit 0
-fi
+  if [ "${LAYER6_SMOKE:-0}" != "1" ]; then
+    exit 0
+  fi
+else
 
 L5_LOG=/tmp/nix-integration-layer5-smoke.log
 L5_PACKAGE="${LAYER5_SMOKE_PACKAGE:-nixpkgs#hello}"
@@ -261,3 +328,108 @@ fi
 
 printf 'nix-integration Layer 5 smoke passed\n'
 printf 'log: %s\n' "${L5_LOG}"
+fi
+
+# ---- Layer 6 device-side smoke (opt-in) ------------------------------------
+# Set LAYER6_SMOKE=1 to validate managed storage-local user-environment
+# activation on hardware. Requires Layer 4/5 shell integration to be healthy.
+if [ "${LAYER6_SMOKE:-0}" != "1" ]; then
+  exit 0
+fi
+
+L6_LOG=/tmp/nix-integration-layer6-smoke.log
+L6_CACHE=/storage/.cache/nix-layer6-smoke-bundle
+L6_BUNDLE="${L6_CACHE}/layer6-user-env"
+rm -f "${L6_LOG}"
+mkdir -p "${L6_CACHE}"
+rm -rf "${L6_BUNDLE}"
+cp -R "${PKG_DIR}/tests/fixtures/layer6-user-env" "${L6_BUNDLE}"
+
+log6() {
+  printf '[layer6-smoke] %s\n' "$*"
+  printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" >>"${L6_LOG}"
+}
+
+NIX_BIN=/nix/var/nix/profiles/default/bin/nix
+[ -x "${NIX_BIN}" ] || { echo 'FAIL: Layer 6 smoke requires Layer 4 real Nix' >&2; exit 1; }
+[ -d "${HOME:-/storage}/.nix-profile/bin" ] || { echo 'FAIL: Layer 6 smoke requires Layer 5 profile bin' >&2; exit 1; }
+[ -w /storage ] || { echo 'FAIL: /storage is not writable' >&2; exit 1; }
+
+if [ "${LAYER6_REBOOT_VERIFY:-}" = "verify" ]; then
+  log6 'reboot verify: checking existing Layer 6 managed files after reboot'
+  . /etc/profile
+  command -v rocknix-layer6-smoke >>"${L6_LOG}" 2>&1 \
+    || { echo 'FAIL: rocknix-layer6-smoke not on PATH after reboot' >&2; exit 1; }
+  rocknix-layer6-smoke >>"${L6_LOG}" 2>&1 \
+    || { echo 'FAIL: rocknix-layer6-smoke did not run after reboot' >&2; exit 1; }
+  "${NIXCTL}" status >>"${L6_LOG}" 2>&1 \
+    || { echo 'FAIL: nixctl status failed during Layer 6 reboot verify' >&2; exit 1; }
+  "${DOCTOR}" --offline >>"${L6_LOG}" 2>&1 \
+    || { echo 'FAIL: nix-doctor failed during Layer 6 reboot verify' >&2; exit 1; }
+  if [ "${LAYER6_KEEP:-0}" != "1" ]; then
+    "${NIXCTL}" user-env deactivate >>"${L6_LOG}" 2>&1 \
+      || { echo 'FAIL: Layer 6 deactivate failed after reboot verify' >&2; exit 1; }
+  fi
+  printf 'nix-integration Layer 6 reboot smoke passed\n'
+  printf 'log: %s\n' "${L6_LOG}"
+  exit 0
+fi
+
+log6 'pre-flight: Layer 6 activation bundle'
+"${NIXCTL}" user-env preflight "${L6_BUNDLE}" >>"${L6_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 6 preflight failed' >&2; exit 1; }
+
+log6 'activate: Layer 6 smoke bundle'
+"${NIXCTL}" user-env activate "${L6_BUNDLE}" >>"${L6_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 6 activation failed' >&2; exit 1; }
+
+log6 'verify: wrapper and profile snippet work in a fresh shell'
+/bin/sh -c '. /etc/profile; command -v rocknix-layer6-smoke; rocknix-layer6-smoke' >>"${L6_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 6 managed wrapper did not run from a fresh shell' >&2; exit 1; }
+
+grep -q 'rocknix-layer6-smoke:active' "${L6_LOG}" \
+  || { echo 'FAIL: Layer 6 profile snippet did not set smoke environment' >&2; exit 1; }
+
+log6 'diagnostics: nixctl status and nix-doctor report Layer 6 state'
+"${NIXCTL}" status >>"${L6_LOG}" 2>&1 \
+  || { echo 'FAIL: nixctl status failed during Layer 6 smoke' >&2; exit 1; }
+grep -q 'Layer 6 (managed user environment) status' "${L6_LOG}" \
+  || { echo 'FAIL: nixctl status did not report Layer 6 section' >&2; exit 1; }
+"${DOCTOR}" --offline >>"${L6_LOG}" 2>&1 \
+  || { echo 'FAIL: nix-doctor failed during Layer 6 smoke' >&2; exit 1; }
+grep -q 'Layer 6 state: active' "${L6_LOG}" \
+  || { echo 'FAIL: nix-doctor did not report Layer 6 active state' >&2; exit 1; }
+
+log6 'conflict: non-owned target is refused and preserved'
+printf 'user-owned\n' >/storage/bin/rocknix-layer6-conflict
+mkdir -p /storage/.cache/nix-layer6-conflict/files/bin
+printf '#!/bin/sh\necho conflict\n' >/storage/.cache/nix-layer6-conflict/files/bin/rocknix-layer6-conflict
+chmod 0755 /storage/.cache/nix-layer6-conflict/files/bin/rocknix-layer6-conflict
+printf 'bin|rocknix-layer6-conflict|files/bin/rocknix-layer6-conflict|0755\n' >/storage/.cache/nix-layer6-conflict/manifest
+if "${NIXCTL}" user-env activate /storage/.cache/nix-layer6-conflict >>"${L6_LOG}" 2>&1; then
+  echo 'FAIL: Layer 6 conflict activation unexpectedly succeeded' >&2
+  exit 1
+fi
+grep -q 'user-owned' /storage/bin/rocknix-layer6-conflict \
+  || { echo 'FAIL: Layer 6 conflict target was modified' >&2; exit 1; }
+rm -f /storage/bin/rocknix-layer6-conflict
+rm -rf /storage/.cache/nix-layer6-conflict
+
+if [ "${LAYER6_REBOOT_VERIFY:-}" = "prepare" ]; then
+  log6 'leaving Layer 6 smoke bundle active for reboot verification'
+  printf 'nix-integration Layer 6 smoke prepared for reboot verification\n'
+  printf 'After reboot run: LAYER6_SMOKE=1 LAYER6_REBOOT_VERIFY=verify %s\n' "$0"
+  printf 'log: %s\n' "${L6_LOG}"
+  exit 0
+fi
+
+log6 'cleanup: deactivate Layer 6 smoke bundle'
+"${NIXCTL}" user-env deactivate >>"${L6_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 6 deactivate failed' >&2; exit 1; }
+[ ! -e /storage/bin/rocknix-layer6-smoke ] \
+  || { echo 'FAIL: Layer 6 wrapper still present after deactivate' >&2; exit 1; }
+[ ! -e /storage/.config/profile.d/999-rocknix-layer6-smoke ] \
+  || { echo 'FAIL: Layer 6 profile snippet still present after deactivate' >&2; exit 1; }
+
+printf 'nix-integration Layer 6 smoke passed\n'
+printf 'log: %s\n' "${L6_LOG}"

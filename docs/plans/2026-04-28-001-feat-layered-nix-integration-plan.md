@@ -415,7 +415,7 @@ flowchart TB
 **Verification:**
 - The device gains persistent Nix-managed CLI tools that feel normal to use from shell sessions.
 
-- [ ] **Unit 7: Layer 6 — Nix-managed user environment**
+- [x] **Unit 7: Layer 6 — Nix-managed user environment**
 
 **Goal:** Use the working Nix layer to manage selected user-space tools/config under storage without claiming ownership of the ROCKNIX base OS.
 
@@ -447,6 +447,8 @@ flowchart TB
 
 **Verification:**
 - Nix can manage a narrow, reversible user environment while ROCKNIX continues to manage the base system.
+
+**Implementation note (2026-05-05):** Implemented as `nix-layer-activate` with a line-oriented activation manifest, ownership metadata under `/storage/.config/nix-integration/layer6`, `nixctl user-env` dispatch, `nix-doctor` Layer 6 checks, temp-surface runtime smoke, and opt-in hardware smoke/reboot verification. Initial managed surfaces are `/storage/bin` and `/storage/.config/profile.d`; autostart/systemd remain deferred.
 
 - [ ] **Unit 8: Layer 7 — Nix-managed apps and UI experiments**
 

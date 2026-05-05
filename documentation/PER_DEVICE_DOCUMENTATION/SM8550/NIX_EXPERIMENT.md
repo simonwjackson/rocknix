@@ -436,6 +436,93 @@ Stop at Layer 5 (do not pursue Layer 6+) if any of these hold:
 - Command shadowing causes ROCKNIX UI, SSH, game runtime, or existing `/storage/bin` recovery tools to regress.
 - Store/profile growth cannot be recovered with documented remove/history/GC commands.
 
+## Layer 6: managed user environment under storage
+
+Layer 6 extends beyond profile-installed binaries into a small, reversible file activation model for storage-local user environment files. It does not install packages, replace Home Manager, or manage ROCKNIX system services. Standard `nix profile` remains the package interface; Layer 6 only activates declared files such as wrappers and profile snippets.
+
+Initial supported surfaces:
+
+```text
+/storage/bin/<name>
+/storage/.config/profile.d/<name>
+```
+
+Deferred surfaces:
+
+```text
+/storage/.config/autostart.sh
+/storage/.config/system.d/<unit>
+```
+
+Forbidden surfaces include `/usr`, `/flash`, `/boot`, kernel modules, firmware, ROCKNIX package-managed services, EmulationStation/Sway default startup, ROMs, saves, Steam/FEX state, and browser profiles.
+
+### Activation model
+
+A Layer 6 bundle contains a simple manifest and payload files. The manifest declares the surface, target name, source path inside the bundle, and file mode:
+
+```text
+# surface|name|source|mode
+bin|rocknix-layer6-smoke|files/bin/rocknix-layer6-smoke|0755
+profile.d|999-rocknix-layer6-smoke|files/profile.d/999-rocknix-layer6-smoke|0644
+```
+
+Activate manually:
+
+```sh
+nixctl user-env preflight /path/to/layer6-bundle
+nixctl user-env activate /path/to/layer6-bundle
+nixctl status
+nix-doctor --offline
+```
+
+Deactivate:
+
+```sh
+nixctl user-env deactivate
+```
+
+Rollback an interrupted activation:
+
+```sh
+nixctl user-env rollback
+```
+
+State and ownership metadata live under:
+
+```text
+/storage/.config/nix-integration/layer6/
+```
+
+Layer 6 refuses to overwrite non-owned files by default. Owned files are recorded with checksums and source paths so `nix-doctor` can detect missing targets, external edits, partial activation, and active files whose backing store paths disappeared.
+
+### Validate Layer 6
+
+Default static/runtime checks exercise the activation engine against temporary directories. Hardware validation is opt-in because it writes to real storage surfaces:
+
+```sh
+LAYER6_SMOKE=1 projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
+```
+
+Optional reboot persistence:
+
+```sh
+LAYER6_SMOKE=1 LAYER6_REBOOT_VERIFY=prepare projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
+reboot
+LAYER6_SMOKE=1 LAYER6_REBOOT_VERIFY=verify projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
+```
+
+`nixctl uninstall --yes` refuses to remove Layer 4 real Nix while Layer 6 is active. Deactivate Layer 6 first so wrappers or snippets that may reference `/nix/store` paths are cleaned up through their ownership metadata.
+
+### Stopping rule for Layer 6
+
+Stop at Layer 6 (do not pursue Layer 7+) if any of these hold:
+
+- Activation cannot refuse non-owned file conflicts reliably.
+- Deactivation removes or modifies files not recorded as Layer 6-owned.
+- Partial activation cannot roll back or leave a clear doctor-visible failure state.
+- Active Layer 6 files survive a Layer 4 reset in a broken state.
+- Managed profile snippets or wrappers regress SSH, EmulationStation/Sway, game runtime, or existing `/storage/bin` recovery scripts.
+
 ## Next layer
 
-Layer 6 would expand from CLI profiles into a narrow Nix-managed user environment under selected `/storage` surfaces. Do not start Layer 6 until Layer 5 profile installs, command conflict reporting, and cleanup workflows remain boring across multiple reboots.
+Layer 7 can use Layer 6 to install launch wrappers/config for Nix-managed apps and UI experiments. Do not start Layer 7 until Layer 6 activation, conflict refusal, deactivation, doctor/status reporting, and reboot persistence are boring.

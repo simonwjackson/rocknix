@@ -18,11 +18,13 @@ post_install() {
   cp ${PKG_DIR}/scripts/nix-portable-install ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/nix-portable-run ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/nix-doctor ${INSTALL}/usr/bin
+  cp ${PKG_DIR}/scripts/nix-layer-activate ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/nixctl ${INSTALL}/usr/bin
   chmod 0755 \
     ${INSTALL}/usr/bin/nix-portable-install \
     ${INSTALL}/usr/bin/nix-portable-run \
     ${INSTALL}/usr/bin/nix-doctor \
+    ${INSTALL}/usr/bin/nix-layer-activate \
     ${INSTALL}/usr/bin/nixctl
 
   enable_service nix-storage-setup.service
