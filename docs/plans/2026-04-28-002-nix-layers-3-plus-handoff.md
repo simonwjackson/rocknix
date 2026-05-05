@@ -501,9 +501,9 @@ Pass criteria:
 - existing `/storage/bin` custom scripts still work
 - command precedence is documented
 
-## Layer 6 plan: Nix-managed user environment
+## Layer 6: Nix-managed user environment
 
-Layer 6 depends on Layer 5.
+Layer 6 is implemented and hardware-validated. It depends on Layer 5.
 
 ### Goal
 
@@ -549,19 +549,46 @@ Activation must:
 - record every file it owns
 - support rollback after partial failure
 
-Potential script:
+Implemented script:
 
 ```text
 projects/ROCKNIX/packages/tools/nix-integration/scripts/nix-layer-activate
 ```
 
+Implemented front-door and diagnostics:
+
+```text
+nixctl user-env status|preflight|activate|deactivate|rollback
+nixctl status
+nix-doctor --offline
+```
+
+Initial supported surfaces are intentionally narrower than the sketch:
+
+```text
+/storage/bin
+/storage/.config/profile.d
+```
+
+Autostart and systemd activation remain deferred until wrapper/profile activation remains boring.
+
 ### Validation
 
-- activate one Nix-managed wrapper or profile snippet
-- verify it works
-- deactivate it
-- verify unrelated storage files remain unchanged
-- verify custom Chromium scripts still exist and run
+Validated on `thor` with `LAYER6_SMOKE=1`:
+
+- activated one managed wrapper and one managed profile snippet
+- verified the wrapper ran from a fresh profile-sourced shell
+- verified `nixctl status` and `nix-doctor --offline` reported active Layer 6 state
+- verified a non-owned conflict target was refused and preserved
+- deactivated the managed files cleanly
+- prepared reboot persistence, rebooted, verified the managed wrapper after reboot, and cleaned up
+
+Layer 6 state after cleanup:
+
+```text
+state: inactive
+managed files: 0
+```
 
 ## Layer 7 plan: Nix-managed apps and UI experiments
 

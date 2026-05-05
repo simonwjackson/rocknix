@@ -21,6 +21,10 @@ NIX_USER_CONFIG_FILE="${NIX_USER_CONFIG_FILE:-${NIX_USER_HOME}/.config/nix/nix.c
 NIX_USER_PROFILE_LINK="${NIX_USER_PROFILE_LINK:-${NIX_USER_HOME}/.nix-profile}"
 NIX_USER_PROFILE_BIN="${NIX_USER_PROFILE_BIN:-${NIX_USER_PROFILE_LINK}/bin}"
 NIX_PROFILE_STORAGE_WARN_MB="${NIX_PROFILE_STORAGE_WARN_MB:-2048}"
+NIX_LAYER6_STATE_DIR="${NIX_LAYER6_STATE_DIR:-/storage/.config/nix-integration/layer6}"
+NIX_LAYER6_BIN_DIR="${NIX_LAYER6_BIN_DIR:-/storage/bin}"
+NIX_LAYER6_PROFILE_D_DIR="${NIX_LAYER6_PROFILE_D_DIR:-/storage/.config/profile.d}"
+NIX_LAYER6_ACTIVATE="${NIX_LAYER6_ACTIVATE:-}"
 CHECK_NETWORK=1
 RUN_SMOKE=1
 RUN_DEV_SHELL_SMOKE=0
@@ -116,6 +120,22 @@ is_expected_nix_tool_shadow() {
       return 1
       ;;
   esac
+}
+
+layer6_activate_bin() {
+  if [ -n "${NIX_LAYER6_ACTIVATE}" ] && [ -x "${NIX_LAYER6_ACTIVATE}" ]; then
+    echo "${NIX_LAYER6_ACTIVATE}"
+    return 0
+  fi
+  if have nix-layer-activate; then
+    command -v nix-layer-activate
+    return 0
+  fi
+  if [ -x /usr/bin/nix-layer-activate ]; then
+    echo /usr/bin/nix-layer-activate
+    return 0
+  fi
+  return 1
 }
 
 check_profile_command_conflicts() {
@@ -437,6 +457,89 @@ check_layer5() {
   esac
 }
 
+check_layer6() {
+  if [ ! -d "${NIX_LAYER6_STATE_DIR}" ]; then
+    ok "Layer 6 state absent (no managed user environment active)"
+    return
+  fi
+
+  state=absent
+  if [ -f "${NIX_LAYER6_STATE_DIR}/state" ]; then
+    state=$(awk 'NR==1 {print; exit}' "${NIX_LAYER6_STATE_DIR}/state")
+  fi
+  case "${state}" in
+    absent|inactive)
+      ok "Layer 6 state: ${state}"
+      return
+      ;;
+    active)
+      ok "Layer 6 state: active"
+      ;;
+    partial)
+      fail_check "Layer 6 state is partial; run nixctl user-env rollback or inspect ${NIX_LAYER6_STATE_DIR}"
+      ;;
+    *)
+      warn "Layer 6 state has unexpected value: ${state}"
+      ;;
+  esac
+
+  if activate_bin=$(layer6_activate_bin); then
+    if status_output=$(NIX_LAYER6_STATE_DIR="${NIX_LAYER6_STATE_DIR}" \
+      NIX_LAYER6_BIN_DIR="${NIX_LAYER6_BIN_DIR}" \
+      NIX_LAYER6_PROFILE_D_DIR="${NIX_LAYER6_PROFILE_D_DIR}" \
+      "${activate_bin}" status 2>&1); then
+      ok "Layer 6 status command succeeded"
+    else
+      fail_check "Layer 6 status command failed: ${status_output}"
+    fi
+  else
+    fail_check "Layer 6 state exists but nix-layer-activate is not available"
+  fi
+
+  owned="${NIX_LAYER6_STATE_DIR}/owned-files"
+  if [ ! -f "${owned}" ]; then
+    if [ "${state}" = "active" ]; then
+      fail_check "Layer 6 active state missing owned-files metadata: ${owned}"
+    fi
+    return
+  fi
+
+  count=$(awk 'NF {c++} END {print c+0}' "${owned}")
+  ok "Layer 6 owned files recorded: ${count}"
+
+  while IFS='|' read -r target sha source mode generation; do
+    [ -n "${target}" ] || continue
+    case "${target}" in
+      /storage/bin/*|/storage/.config/profile.d/*|${NIX_LAYER6_BIN_DIR%/}/*|${NIX_LAYER6_PROFILE_D_DIR%/}/*|${NIX_WRAPPER_DIR%/}/*|${NIX_USER_HOME}/.config/profile.d/*) ;;
+      *) fail_check "Layer 6 owned target outside allowed storage surfaces: ${target}" ;;
+    esac
+    if [ ! -e "${target}" ] && [ ! -L "${target}" ]; then
+      fail_check "Layer 6 owned target missing: ${target}"
+      continue
+    fi
+    current_sha=$(sha256_file "${target}" 2>/dev/null || echo "")
+    if [ -n "${sha}" ] && [ "${current_sha}" = "${sha}" ]; then
+      ok "Layer 6 owned target matches metadata: ${target}"
+    else
+      fail_check "Layer 6 owned target modified externally: ${target}"
+    fi
+    if [ -n "${source}" ] && [ "${source}" != "-" ] && [ ! -e "${source}" ]; then
+      fail_check "Layer 6 source missing for ${target}: ${source}"
+    fi
+    if grep -q '/nix/store/' "${target}" 2>/dev/null; then
+      missing_store_refs=$(grep -o '/nix/store/[^ "'"'"'`$]*' "${target}" 2>/dev/null | while IFS= read -r ref; do [ -e "${ref}" ] || echo "${ref}"; done | head -3)
+      if [ -n "${missing_store_refs}" ]; then
+        fail_check "Layer 6 owned target references missing Nix store path(s): ${target}: ${missing_store_refs}"
+      fi
+    fi
+    case "${target}" in
+      */.config/profile.d/[0-8][0-9][0-9]*|*/.config/profile.d/09[0-8]*)
+        warn "Layer 6 profile snippet may sort before late PATH resets: ${target}"
+        ;;
+    esac
+  done <"${owned}"
+}
+
 check_network() {
   if [ "${CHECK_NETWORK}" -eq 0 ]; then
     warn "network checks skipped"
@@ -471,6 +574,7 @@ check_network
 check_layer3_mount
 check_layer4
 check_layer5
+check_layer6
 
 if [ "${FAILURES}" -eq 0 ]; then
   echo "nix-doctor: passed with ${WARNINGS} warning(s)"

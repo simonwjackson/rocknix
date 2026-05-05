@@ -1,0 +1,365 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+# Activate a narrow Nix-managed user environment onto ROCKNIX storage.
+# Manifest format: surface|name|source|mode
+# Supported surfaces: bin, profile.d
+
+set -u
+
+STATE_DIR="${NIX_LAYER6_STATE_DIR:-/storage/.config/nix-integration/layer6}"
+BIN_DIR="${NIX_LAYER6_BIN_DIR:-/storage/bin}"
+PROFILE_D_DIR="${NIX_LAYER6_PROFILE_D_DIR:-/storage/.config/profile.d}"
+STATE_FILE="${STATE_DIR}/state"
+ACTIVE_GENERATION_FILE="${STATE_DIR}/active-generation"
+OWNED_FILES="${STATE_DIR}/owned-files"
+ROLLBACK_FILES="${STATE_DIR}/rollback-files"
+BACKUP_DIR="${STATE_DIR}/backups"
+LOG_DIR="${STATE_DIR}/logs"
+
+usage() {
+  cat <<EOF
+Usage: ${0##*/} <status|preflight|activate|deactivate|rollback> [bundle-dir]
+
+Activates a Layer 6 user-environment bundle onto ROCKNIX storage.
+Bundles contain a 'manifest' with lines shaped as:
+
+  surface|name|source|mode
+
+Supported surfaces:
+  bin        -> ${BIN_DIR}/<name>
+  profile.d -> ${PROFILE_D_DIR}/<name>
+
+Activation refuses to overwrite non-owned files. State lives at:
+  ${STATE_DIR}
+EOF
+}
+
+fail() {
+  echo "${0##*/}: $*" >&2
+  exit 1
+}
+
+info() {
+  echo "==> $*"
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+ensure_state_dir() {
+  mkdir -p "${STATE_DIR}" "${BACKUP_DIR}" "${LOG_DIR}" || fail "cannot create state dir: ${STATE_DIR}"
+}
+
+sha256_file() {
+  if have sha256sum; then
+    sha256sum "$1" | awk '{print $1}'
+  elif have openssl; then
+    openssl dgst -sha256 "$1" | awk '{print $NF}'
+  else
+    fail "sha256sum or openssl is required"
+  fi
+}
+
+current_state() {
+  if [ -f "${STATE_FILE}" ]; then
+    awk 'NR==1 {print; exit}' "${STATE_FILE}"
+  else
+    echo "absent"
+  fi
+}
+
+active_generation() {
+  if [ -f "${ACTIVE_GENERATION_FILE}" ]; then
+    awk 'NR==1 {print; exit}' "${ACTIVE_GENERATION_FILE}"
+  fi
+}
+
+sanitize_name() {
+  printf '%s' "$1" | sed 's|/|_|g; s|[^A-Za-z0-9_.-]|_|g'
+}
+
+valid_name() {
+  case "$1" in
+    ''|.*|*/*|*'..'*|*'|'*|*':'*|*' '*|*'`'*|*'"'*|*"'"*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+valid_mode() {
+  case "$1" in
+    [0-7][0-7][0-7][0-7]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+target_for() {
+  surface=$1
+  name=$2
+  case "${surface}" in
+    bin) echo "${BIN_DIR}/${name}" ;;
+    profile.d) echo "${PROFILE_D_DIR}/${name}" ;;
+    *) return 1 ;;
+  esac
+}
+
+is_owned_target() {
+  target=$1
+  [ -f "${OWNED_FILES}" ] || return 1
+  awk -F'|' -v target="${target}" '$1 == target {found=1} END {exit !found}' "${OWNED_FILES}"
+}
+
+manifest_path() {
+  bundle=$1
+  echo "${bundle}/manifest"
+}
+
+read_manifest() {
+  bundle=$1
+  manifest=$(manifest_path "${bundle}")
+  [ -d "${bundle}" ] || fail "bundle dir missing: ${bundle}"
+  [ -f "${manifest}" ] || fail "bundle manifest missing: ${manifest}"
+  grep -v '^[[:space:]]*$' "${manifest}" | grep -v '^[[:space:]]*#' || true
+}
+
+validate_manifest_line() {
+  bundle=$1
+  line=$2
+  old_ifs=${IFS}
+  IFS='|'
+  set -- ${line}
+  IFS=${old_ifs}
+  [ $# -eq 4 ] || fail "invalid manifest line (expected 4 fields): ${line}"
+  surface=$1
+  name=$2
+  source_rel=$3
+  mode=$4
+
+  case "${surface}" in
+    bin|profile.d) ;;
+    *) fail "unsupported Layer 6 surface: ${surface}" ;;
+  esac
+  valid_name "${name}" || fail "unsafe Layer 6 target name: ${name}"
+  valid_mode "${mode}" || fail "invalid mode for ${surface}/${name}: ${mode}"
+  case "${source_rel}" in
+    /*|*'..'*|'') fail "unsafe source path for ${surface}/${name}: ${source_rel}" ;;
+  esac
+  source_path="${bundle}/${source_rel}"
+  [ -f "${source_path}" ] || fail "source file missing for ${surface}/${name}: ${source_path}"
+  target=$(target_for "${surface}" "${name}") || fail "could not compute target for ${surface}/${name}"
+  echo "${target}|${source_path}|${mode}"
+}
+
+preflight_bundle() {
+  bundle=$1
+  tmp_seen=$(mktemp) || fail "mktemp failed"
+  trap 'rm -f "${tmp_seen}"' EXIT INT TERM
+  read_manifest "${bundle}" | while IFS= read -r line; do
+    parsed=$(validate_manifest_line "${bundle}" "${line}") || exit 1
+    target=${parsed%%|*}
+    if grep -Fxq "${target}" "${tmp_seen}" 2>/dev/null; then
+      echo "${0##*/}: duplicate Layer 6 target in manifest: ${target}" >&2
+      exit 1
+    fi
+    printf '%s\n' "${target}" >>"${tmp_seen}"
+    if [ -e "${target}" ] || [ -L "${target}" ]; then
+      if ! is_owned_target "${target}"; then
+        echo "${0##*/}: target exists and is not owned by Layer 6: ${target}" >&2
+        exit 1
+      fi
+    fi
+  done
+  status=$?
+  count=$(awk 'NF {c++} END {print c+0}' "${tmp_seen}" 2>/dev/null || echo 0)
+  rm -f "${tmp_seen}"
+  trap - EXIT INT TERM
+  [ "${status}" -eq 0 ] || exit "${status}"
+  [ "${count}" -gt 0 ] || fail "bundle manifest contains no activatable files"
+}
+
+write_state() {
+  ensure_state_dir
+  printf '%s\n' "$1" >"${STATE_FILE}"
+}
+
+record_generation() {
+  printf '%s\n' "$1" >"${ACTIVE_GENERATION_FILE}"
+}
+
+rollback_from_file() {
+  file=$1
+  [ -f "${file}" ] || return 0
+  # Reverse order for best-effort rollback.
+  sed '1!G;h;$!d' "${file}" | while IFS='|' read -r target created backup; do
+    [ -n "${target}" ] || continue
+    if [ "${created}" = "1" ]; then
+      rm -f "${target}" 2>/dev/null || true
+    elif [ -n "${backup}" ] && [ "${backup}" != "-" ] && [ -f "${backup}" ]; then
+      mkdir -p "$(dirname "${target}")"
+      cp "${backup}" "${target}" || exit 1
+    fi
+  done
+}
+
+apply_bundle() {
+  bundle=$1
+  ensure_state_dir
+  preflight_bundle "${bundle}"
+
+  generation=$(date -u +%Y%m%d%H%M%S 2>/dev/null || echo unknown)-$$
+  staging="${STATE_DIR}/staging-${generation}"
+  backup_gen_dir="${BACKUP_DIR}/${generation}"
+  new_owned="${STATE_DIR}/owned-files.${generation}"
+  rollback_tmp="${STATE_DIR}/rollback-files.${generation}"
+  mkdir -p "${staging}" "${backup_gen_dir}" || fail "cannot prepare Layer 6 staging area"
+  : >"${new_owned}"
+  : >"${rollback_tmp}"
+
+  applied=0
+  failed=0
+  read_manifest "${bundle}" | while IFS= read -r line; do
+    parsed=$(validate_manifest_line "${bundle}" "${line}") || exit 1
+    target=$(printf '%s' "${parsed}" | awk -F'|' '{print $1}')
+    source_path=$(printf '%s' "${parsed}" | awk -F'|' '{print $2}')
+    mode=$(printf '%s' "${parsed}" | awk -F'|' '{print $3}')
+    safe=$(sanitize_name "${target}")
+    staged="${staging}/${safe}"
+    backup="-"
+    created=1
+
+    cp "${source_path}" "${staged}" || exit 11
+    chmod "${mode}" "${staged}" || exit 12
+    if [ -e "${target}" ] || [ -L "${target}" ]; then
+      created=0
+      backup="${backup_gen_dir}/${safe}"
+      cp "${target}" "${backup}" || exit 13
+    fi
+    printf '%s|%s|%s\n' "${target}" "${created}" "${backup}" >>"${rollback_tmp}"
+    mkdir -p "$(dirname "${target}")" || exit 14
+    cp "${staged}" "${target}.layer6-tmp" || exit 15
+    chmod "${mode}" "${target}.layer6-tmp" || exit 16
+    mv "${target}.layer6-tmp" "${target}" || exit 17
+    sha=$(sha256_file "${target}") || exit 18
+    printf '%s|%s|%s|%s|%s\n' "${target}" "${sha}" "${source_path}" "${mode}" "${generation}" >>"${new_owned}"
+    applied=$((applied + 1))
+    if [ -n "${NIX_LAYER6_FAIL_AFTER:-}" ] && [ "${applied}" -ge "${NIX_LAYER6_FAIL_AFTER}" ]; then
+      exit 99
+    fi
+  done || failed=$?
+
+  if [ "${failed}" -ne 0 ]; then
+    cp "${rollback_tmp}" "${ROLLBACK_FILES}" 2>/dev/null || true
+    write_state partial
+    rollback_from_file "${rollback_tmp}" || true
+    rm -rf "${staging}"
+    fail "activation failed; attempted rollback and left state as partial (exit ${failed})"
+  fi
+
+  mv "${new_owned}" "${OWNED_FILES}" || fail "could not record Layer 6 ownership"
+  rm -f "${ROLLBACK_FILES}"
+  cp "${rollback_tmp}" "${STATE_DIR}/last-rollback-files" 2>/dev/null || true
+  rm -f "${rollback_tmp}"
+  record_generation "${generation}"
+  write_state active
+  rm -rf "${staging}"
+  info "Layer 6 activated generation ${generation}"
+}
+
+deactivate() {
+  ensure_state_dir
+  if [ ! -f "${OWNED_FILES}" ]; then
+    write_state inactive
+    rm -f "${ACTIVE_GENERATION_FILE}"
+    info "Layer 6 inactive: no owned files recorded"
+    return 0
+  fi
+
+  failures=0
+  while IFS='|' read -r target sha source mode generation; do
+    [ -n "${target}" ] || continue
+    if [ ! -e "${target}" ] && [ ! -L "${target}" ]; then
+      continue
+    fi
+    current_sha=$(sha256_file "${target}" 2>/dev/null || echo "")
+    if [ "${current_sha}" != "${sha}" ]; then
+      echo "${0##*/}: refusing to remove externally modified Layer 6 file: ${target}" >&2
+      failures=$((failures + 1))
+      continue
+    fi
+    rm -f "${target}" || failures=$((failures + 1))
+  done <"${OWNED_FILES}"
+
+  if [ "${failures}" -ne 0 ]; then
+    write_state partial
+    fail "Layer 6 deactivation incomplete: ${failures} failure(s)"
+  fi
+
+  rm -f "${OWNED_FILES}" "${ACTIVE_GENERATION_FILE}" "${ROLLBACK_FILES}"
+  write_state inactive
+  info "Layer 6 deactivated"
+}
+
+rollback_cmd() {
+  ensure_state_dir
+  if [ -f "${ROLLBACK_FILES}" ]; then
+    rollback_from_file "${ROLLBACK_FILES}" || fail "rollback failed"
+    rm -f "${ROLLBACK_FILES}"
+    write_state inactive
+    info "Layer 6 rollback complete"
+  else
+    info "No Layer 6 rollback metadata present"
+  fi
+}
+
+status_cmd() {
+  state=$(current_state)
+  generation=$(active_generation)
+  count=0
+  if [ -f "${OWNED_FILES}" ]; then
+    count=$(awk 'NF {c++} END {print c+0}' "${OWNED_FILES}")
+  fi
+  echo "Layer 6 (managed user environment) status"
+  echo "-----------------------------------------"
+  echo "  state:    ${state}"
+  echo "  state dir: ${STATE_DIR}"
+  if [ -n "${generation}" ]; then
+    echo "  generation: ${generation}"
+  fi
+  echo "  managed files: ${count}"
+  if [ -f "${OWNED_FILES}" ]; then
+    echo "  files:"
+    awk -F'|' '{print "    " $1}' "${OWNED_FILES}"
+  fi
+}
+
+cmd=${1:-}
+case "${cmd}" in
+  status)
+    status_cmd
+    ;;
+  preflight|plan)
+    [ $# -eq 2 ] || { usage >&2; exit 1; }
+    ensure_state_dir
+    preflight_bundle "$2"
+    info "Layer 6 preflight passed"
+    ;;
+  activate)
+    [ $# -eq 2 ] || { usage >&2; exit 1; }
+    apply_bundle "$2"
+    ;;
+  deactivate)
+    deactivate
+    ;;
+  rollback)
+    rollback_cmd
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 1
+    ;;
+esac

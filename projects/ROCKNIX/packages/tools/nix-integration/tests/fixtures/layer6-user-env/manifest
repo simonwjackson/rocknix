@@ -1,0 +1,3 @@
+# surface|name|source|mode
+bin|rocknix-layer6-smoke|files/bin/rocknix-layer6-smoke|0755
+profile.d|999-rocknix-layer6-smoke|files/profile.d/999-rocknix-layer6-smoke|0644

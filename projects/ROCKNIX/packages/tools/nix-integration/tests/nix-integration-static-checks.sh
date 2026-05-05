@@ -23,6 +23,7 @@ check_script() {
 check_script "${PKG_DIR}/scripts/nix-portable-install"
 check_script "${PKG_DIR}/scripts/nix-portable-run"
 check_script "${PKG_DIR}/scripts/nix-doctor"
+check_script "${PKG_DIR}/scripts/nix-layer-activate"
 check_script "${PKG_DIR}/scripts/nixctl"
 
 [ -f "${PKG_DIR}/package.mk" ] || fail "missing package.mk"
@@ -31,6 +32,7 @@ grep -q 'PKG_NAME="nix-integration"' "${PKG_DIR}/package.mk" || fail "package.mk
 grep -q 'PKG_TOOLCHAIN="manual"' "${PKG_DIR}/package.mk" || fail "package.mk should use manual toolchain"
 grep -q 'nix-portable-install' "${PKG_DIR}/package.mk" || fail "package.mk does not install nix-portable-install"
 grep -q 'nix-doctor' "${PKG_DIR}/package.mk" || fail "package.mk does not install nix-doctor"
+grep -q 'nix-layer-activate' "${PKG_DIR}/package.mk" || fail "package.mk does not install nix-layer-activate (Layer 6 activation engine)"
 grep -q 'nixctl' "${PKG_DIR}/package.mk" || fail "package.mk does not install nixctl (Layer 4 front door)"
 grep -q 'mkdir -p ${INSTALL}/nix' "${PKG_DIR}/package.mk" || fail "package.mk does not create /nix mountpoint"
 grep -q 'enable_service nix-storage-setup.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable nix-storage-setup.service"
@@ -62,7 +64,16 @@ grep -q 'is_expected_nix_tool_shadow' "${PKG_DIR}/scripts/nixctl" || fail "nixct
 grep -q 'check_layer5' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 5 checks"
 grep -q 'check_profile_command_conflicts' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 5 conflict checks"
 grep -q 'is_expected_nix_tool_shadow' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing expected Nix tool shadow allowlist"
-for sub in status install upgrade uninstall doctor; do
+grep -q 'Layer 6 (managed user environment) status' "${PKG_DIR}/scripts/nixctl" || fail "nixctl status missing Layer 6 section"
+grep -q 'cmd_user_env' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 6 user-env dispatch"
+grep -q 'check_layer6' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 6 checks"
+grep -q 'Layer 6 source missing' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 6 missing source/store-path checks"
+grep -q 'surface|name|source|mode' "${PKG_DIR}/scripts/nix-layer-activate" || fail "nix-layer-activate missing manifest contract"
+grep -q 'target exists and is not owned by Layer 6' "${PKG_DIR}/scripts/nix-layer-activate" || fail "nix-layer-activate missing conflict refusal"
+[ -f "${PKG_DIR}/docs/layer6-activation-contract.md" ] || fail "missing Layer 6 activation contract doc"
+grep -q '/storage/bin' "${PKG_DIR}/docs/layer6-activation-contract.md" || fail "Layer 6 contract missing storage bin surface"
+grep -q '/storage/.config/profile.d' "${PKG_DIR}/docs/layer6-activation-contract.md" || fail "Layer 6 contract missing profile.d surface"
+for sub in status install upgrade uninstall doctor user-env; do
   # Subcommand can appear as 'sub)' (alone), 'sub|other)' (left of alt),
   # or '...|sub)' (right of alt). Match by requiring sub to be preceded by
   # start-of-line, whitespace, or '|' and followed by ')' or '|'.
@@ -86,6 +97,10 @@ grep -q 'nix-integration' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/
 sh -n "${REPO_ROOT}/nix-on-rocknix-bootstrap.sh" || fail "standalone bootstrap script syntax failed"
 grep -q 'NP_RUNTIME=.*proot' "${REPO_ROOT}/nix-on-rocknix-bootstrap.sh" || fail "standalone bootstrap does not default to proot"
 grep -q 'nix-dev-shell' "${REPO_ROOT}/nix-on-rocknix-bootstrap.sh" || fail "standalone bootstrap does not install nix-dev-shell"
+
+[ -f "${PKG_DIR}/tests/fixtures/layer6-user-env/manifest" ] || fail "missing Layer 6 smoke fixture manifest"
+grep -q 'bin|rocknix-layer6-smoke' "${PKG_DIR}/tests/fixtures/layer6-user-env/manifest" || fail "Layer 6 smoke fixture missing bin target"
+grep -q 'profile.d|999-rocknix-layer6-smoke' "${PKG_DIR}/tests/fixtures/layer6-user-env/manifest" || fail "Layer 6 smoke fixture missing profile.d target"
 
 [ -f "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" ] || fail "missing runtime smoke test"
 sh -n "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke syntax failed"

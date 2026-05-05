@@ -1,0 +1,2 @@
+# Layer 6 smoke profile snippet.
+export ROCKNIX_LAYER6_SMOKE=active
