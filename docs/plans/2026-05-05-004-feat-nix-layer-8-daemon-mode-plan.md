@@ -284,7 +284,7 @@ Daemon mode should have explicit states in diagnostics:
 **Verification:**
 - Daemon units can be present in the image without changing default boot behavior, and their dependency graph is safe before hardware activation.
 
-- [ ] **Unit 4: Add explicit daemon lifecycle controls to `nixctl`**
+- [x] **Unit 4: Add explicit daemon lifecycle controls to `nixctl`**
 
 **Goal:** Provide a single front door for enabling, disabling, preflighting, and inspecting daemon mode while preserving single-user fallback.
 

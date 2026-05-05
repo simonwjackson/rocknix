@@ -92,6 +92,33 @@ NIX_LAYER8_SYSTEMD_DIR="${PKG_DIR}/system.d" \
   "${PKG_DIR}/scripts/nixctl" status >/tmp/nix-layer8-unit-status.log
 grep -q 'socket:     .*nix-daemon.socket' /tmp/nix-layer8-unit-status.log
 grep -q 'service:    .*nix-daemon.service' /tmp/nix-layer8-unit-status.log
+if NIX_LAYER8_SYSTEMD_DIR="${PKG_DIR}/system.d" \
+  "${PKG_DIR}/scripts/nixctl" daemon preflight >/tmp/nix-layer8-preflight.log 2>&1; then
+  echo 'expected Layer 8 preflight to fail without mounted /nix + real daemon prerequisites' >&2
+  exit 1
+fi
+grep -q 'daemon preflight failed:' /tmp/nix-layer8-preflight.log
+FAKE_SYSTEMCTL="${TMP_DIR}/systemctl"
+cat >"${FAKE_SYSTEMCTL}" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"${NIX_SYSTEMCTL_LOG}"
+case "$1" in
+  is-active) echo inactive; exit 3 ;;
+  enable|disable|stop) exit 0 ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod 0755 "${FAKE_SYSTEMCTL}"
+mkdir -p "${TMP_DIR}/layer8-rollback-state"
+printf 'active\n' >"${TMP_DIR}/layer8-rollback-state/state"
+NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-rollback-state" \
+NIX_SYSTEMCTL="${FAKE_SYSTEMCTL}" \
+NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl.log" \
+  "${PKG_DIR}/scripts/nixctl" daemon rollback >/tmp/nix-layer8-rollback.log
+[ ! -e "${TMP_DIR}/layer8-rollback-state/state" ]
+grep -q 'disable --now nix-daemon.socket' "${TMP_DIR}/systemctl.log"
+grep -q 'stop nix-daemon.service' "${TMP_DIR}/systemctl.log"
+grep -q 'Layer 8 daemon mode disabled' /tmp/nix-layer8-rollback.log
 mkdir -p "${TMP_DIR}/layer8-active-state"
 printf 'active\n' >"${TMP_DIR}/layer8-active-state/state"
 if NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-active-state" \
