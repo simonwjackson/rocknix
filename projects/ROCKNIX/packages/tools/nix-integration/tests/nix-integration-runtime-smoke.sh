@@ -88,6 +88,10 @@ NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
 "${PKG_DIR}/scripts/nixctl" status >/tmp/nix-layer8-nixctl-status.log
 grep -q 'Layer 8 (experimental daemon) status' /tmp/nix-layer8-nixctl-status.log
 grep -q 'fallback:   Layer 4 single-user/root Nix remains primary' /tmp/nix-layer8-nixctl-status.log
+NIX_LAYER8_SYSTEMD_DIR="${PKG_DIR}/system.d" \
+  "${PKG_DIR}/scripts/nixctl" status >/tmp/nix-layer8-unit-status.log
+grep -q 'socket:     .*nix-daemon.socket' /tmp/nix-layer8-unit-status.log
+grep -q 'service:    .*nix-daemon.service' /tmp/nix-layer8-unit-status.log
 mkdir -p "${TMP_DIR}/layer8-active-state"
 printf 'active\n' >"${TMP_DIR}/layer8-active-state/state"
 if NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-active-state" \
@@ -102,9 +106,12 @@ printf 'build-users-group = nixbld\n' >"${TMP_DIR}/layer8-config/nix.conf"
 printf 'nixbld:x:30000:nixbld1,nixbld2\n' >"${TMP_DIR}/layer8-config/group"
 NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-config/nix.conf" \
 NIX_GROUP_FILE="${TMP_DIR}/layer8-config/group" \
+NIX_LAYER8_SYSTEMD_DIR="${PKG_DIR}/system.d" \
 NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
   "${PKG_DIR}/scripts/nix-doctor" --offline --no-smoke >/tmp/nix-layer8-build-group.log || true
 grep -q 'Layer 8 build-users-group exists: nixbld' /tmp/nix-layer8-build-group.log
+grep -q 'Layer 8 socket unit present: .*nix-daemon.socket' /tmp/nix-layer8-build-group.log
+grep -q 'Layer 8 service unit present: .*nix-daemon.service' /tmp/nix-layer8-build-group.log
 "${PKG_DIR}/scripts/nix-portable-install" status | grep -q 'nix-portable: installed'
 grep -q 'What=/storage/.nix-root' "${PKG_DIR}/system.d/nix.mount"
 grep -q 'Where=/nix' "${PKG_DIR}/system.d/nix.mount"

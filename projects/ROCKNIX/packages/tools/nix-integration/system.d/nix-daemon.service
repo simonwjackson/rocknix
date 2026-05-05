@@ -1,0 +1,13 @@
+[Unit]
+Description=Nix daemon (experimental ROCKNIX Layer 8)
+Documentation=https://nix.dev/manual/nix/latest/installation
+Requires=nix.mount
+After=nix.mount
+ConditionPathIsMountPoint=/nix
+
+[Service]
+Type=notify
+Environment=NIX_CONF_DIR=/storage/.config/nix-daemon
+ExecStart=/nix/var/nix/profiles/default/bin/nix-daemon --daemon
+KillMode=process
+LimitNOFILE=1048576
