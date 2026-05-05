@@ -10,6 +10,8 @@ PKG_URL="https://github.com/systemd/systemd-stable/archive/v${PKG_VERSION}.tar.g
 PKG_DEPENDS_TARGET="toolchain libcap kmod util-linux libidn2 Python3:host Jinja2:host pcre2 zstd libgcrypt openssl"
 PKG_LONGDESC="A system and session manager for Linux, compatible with SysV and LSB init scripts."
 
+NIX_NSPAWN_SUPPORT="${NIX_NSPAWN_SUPPORT:-no}"
+
 PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Drootprefix=/usr \
                        -Dsplit-usr=false \
@@ -157,9 +159,11 @@ post_makeinstall_target() {
   # adjust systemd-hwdb-update (we have read-only /etc).
   sed '/^ConditionNeedsUpdate=.*$/d' -i ${INSTALL}/usr/lib/systemd/system/systemd-hwdb-update.service
 
-  # remove nspawn
-  safe_remove ${INSTALL}/usr/bin/systemd-nspawn
-  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-nspawn@.service
+  # remove nspawn unless explicitly preserved for Layer 9 proof images
+  if [ "${NIX_NSPAWN_SUPPORT}" != "yes" ]; then
+    safe_remove ${INSTALL}/usr/bin/systemd-nspawn
+    safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-nspawn@.service
+  fi
 
   # remove timedatectl
   safe_remove ${INSTALL}/usr/bin/timedatectl
