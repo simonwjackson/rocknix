@@ -231,7 +231,7 @@ Failure/fallback matrix:
 - A Layer 9-enabled image should include `/usr/bin/systemd-nspawn`.
 - A Layer 9-disabled image should preserve current behavior and remove nspawn.
 
-- [ ] **Unit 2: Define Layer 9 guest rootfs contract and safety boundaries**
+- [x] **Unit 2: Define Layer 9 guest rootfs contract and safety boundaries**
 
 **Goal:** Document the expected guest layout, allowed bind mounts, prohibited host surfaces, and cleanup boundaries before any hardware run.
 
