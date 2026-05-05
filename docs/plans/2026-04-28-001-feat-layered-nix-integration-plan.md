@@ -450,7 +450,7 @@ flowchart TB
 
 **Implementation note (2026-05-05):** Implemented as `nix-layer-activate` with a line-oriented activation manifest, ownership metadata under `/storage/.config/nix-integration/layer6`, `nixctl user-env` dispatch, `nix-doctor` Layer 6 checks, temp-surface runtime smoke, and opt-in hardware smoke/reboot verification. Initial managed surfaces are `/storage/bin` and `/storage/.config/profile.d`; autostart/systemd remain deferred.
 
-- [ ] **Unit 8: Layer 7 — Nix-managed apps and UI experiments**
+- [x] **Unit 8: Layer 7 — Nix-managed apps and UI experiments**
 
 **Goal:** Validate whether Nix can supply useful user-facing apps or custom UI dependencies on ROCKNIX.
 
@@ -482,6 +482,8 @@ flowchart TB
 
 **Verification:**
 - At least one real user-facing app or custom UI dependency can be installed and launched through Nix.
+
+**Implementation note (2026-05-05):** Implemented with `docs/plans/2026-05-05-003-feat-nix-layer-7-app-ui-experiments-plan.md`, a browser-like Layer 6 launcher fixture, Layer 7 status/doctor readiness checks, CI-safe temp-surface smoke coverage, and opt-in hardware validation. Validated on `thor` with `nixpkgs#chromium`: readiness smoke passed, a Sway-launched Chromium window appeared as `about:blank - Chromium`, the app binary resolved from `/nix/store`, Crashpad/config/cache were isolated under Layer 7 experiment roots, reboot verification passed, and the launcher deactivated cleanly.
 
 - [ ] **Unit 9: Layer 8 — Experimental nix-daemon mode**
 

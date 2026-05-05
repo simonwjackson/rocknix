@@ -38,6 +38,14 @@ NIX_LAYER6_STATE_DIR="${NIX_LAYER6_STATE_DIR:-/storage/.config/nix-integration/l
 NIX_LAYER6_BIN_DIR="${NIX_LAYER6_BIN_DIR:-/storage/bin}"
 NIX_LAYER6_PROFILE_D_DIR="${NIX_LAYER6_PROFILE_D_DIR:-/storage/.config/profile.d}"
 NIX_LAYER6_ACTIVATE="${NIX_LAYER6_ACTIVATE:-}"
+NIX_LAYER7_APP_NAME="${NIX_LAYER7_APP_NAME:-browser}"
+NIX_LAYER7_APP_BIN="${NIX_LAYER7_APP_BIN:-chromium}"
+NIX_LAYER7_APP_BIN_PATH="${NIX_LAYER7_APP_BIN_PATH:-}"
+NIX_LAYER7_LAUNCHER_NAME="${NIX_LAYER7_LAUNCHER_NAME:-rocknix-layer7-browser}"
+NIX_LAYER7_PROFILE_SNIPPET="${NIX_LAYER7_PROFILE_SNIPPET:-999-rocknix-layer7-browser}"
+NIX_LAYER7_APP_STATE_DIR="${NIX_LAYER7_APP_STATE_DIR:-${NIX_USER_HOME}/.local/share/nix-apps/layer7/${NIX_LAYER7_APP_NAME}}"
+NIX_LAYER7_APP_CONFIG_DIR="${NIX_LAYER7_APP_CONFIG_DIR:-${NIX_USER_HOME}/.config/nix-apps/layer7/${NIX_LAYER7_APP_NAME}}"
+NIX_LAYER7_APP_CACHE_DIR="${NIX_LAYER7_APP_CACHE_DIR:-${NIX_USER_HOME}/.cache/nix-apps/layer7/${NIX_LAYER7_APP_NAME}}"
 
 # ---- SSL ------------------------------------------------------------------
 # Pre-set for the upstream installer so it skips its cacert derivation install
@@ -78,6 +86,8 @@ Environment overrides (defaults shown):
   NIX_USER_CONFIG_DIR    ${NIX_USER_CONFIG_DIR}
   NIX_CACHE_DIR          ${NIX_CACHE_DIR}
   NIX_LAYER6_STATE_DIR   ${NIX_LAYER6_STATE_DIR}
+  NIX_LAYER7_APP_BIN     ${NIX_LAYER7_APP_BIN}
+  NIX_LAYER7_APP_STATE_DIR ${NIX_LAYER7_APP_STATE_DIR}
   NIX_TARBALL_URL        ${NIX_TARBALL_URL}
   NIX_TARBALL_SHA256     ${NIX_TARBALL_SHA256}
   NIX_FORCE              Set to 1 to override safety checks (rare)
@@ -425,6 +435,113 @@ print_layer6_status() {
   fi
 }
 
+layer6_owns_target() {
+  target=$1
+  owned="${NIX_LAYER6_STATE_DIR}/owned-files"
+  [ -f "${owned}" ] || return 1
+  awk -F'|' -v target="${target}" '$1 == target {found=1} END {exit !found}' "${owned}"
+}
+
+layer7_launcher_path() {
+  echo "${NIX_LAYER6_BIN_DIR}/${NIX_LAYER7_LAUNCHER_NAME}"
+}
+
+layer7_profile_snippet_path() {
+  echo "${NIX_LAYER6_PROFILE_D_DIR}/${NIX_LAYER7_PROFILE_SNIPPET}"
+}
+
+layer7_resolved_app_binary() {
+  if [ -n "${NIX_LAYER7_APP_BIN_PATH}" ]; then
+    [ -x "${NIX_LAYER7_APP_BIN_PATH}" ] || return 1
+    echo "${NIX_LAYER7_APP_BIN_PATH}"
+    return 0
+  fi
+  if [ -x "${NIX_USER_PROFILE_BIN}/${NIX_LAYER7_APP_BIN}" ]; then
+    echo "${NIX_USER_PROFILE_BIN}/${NIX_LAYER7_APP_BIN}"
+    return 0
+  fi
+  if have "${NIX_LAYER7_APP_BIN}"; then
+    command -v "${NIX_LAYER7_APP_BIN}"
+    return 0
+  fi
+  return 1
+}
+
+layer7_binary_is_nix_backed() {
+  candidate=$1
+  real=$(canonical_path "${candidate}")
+  case "${candidate}" in
+    ${NIX_USER_PROFILE_BIN}/*) return 0 ;;
+  esac
+  case "${real}" in
+    ${NIX_INSTALL_ROOT}/store/*|/storage/.nix-root/store/*) return 0 ;;
+  esac
+  return 1
+}
+
+layer7_path_safe() {
+  case "$1" in
+    ${NIX_USER_HOME}/.local/share/nix-apps/layer7/*|${NIX_USER_HOME}/.config/nix-apps/layer7/*|${NIX_USER_HOME}/.cache/nix-apps/layer7/*|/storage/.local/share/nix-apps/layer7/*|/storage/.config/nix-apps/layer7/*|/storage/.cache/nix-apps/layer7/*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+print_layer7_status() {
+  echo "Layer 7 (app/UI experiment) status"
+  echo "------------------------------------"
+  echo "  app:      ${NIX_LAYER7_APP_NAME}"
+  echo "  expected: ${NIX_LAYER7_APP_BIN}"
+
+  if app_bin=$(layer7_resolved_app_binary); then
+    real=$(canonical_path "${app_bin}")
+    echo "  binary:   ${app_bin}"
+    echo "  realpath: ${real}"
+    if layer7_binary_is_nix_backed "${app_bin}"; then
+      echo "  origin:   Nix profile/store"
+    else
+      echo "  origin:   unsafe/non-Nix"
+    fi
+  else
+    echo "  binary:   missing (install with standard nix profile first)"
+    echo "  origin:   unavailable"
+  fi
+
+  launcher=$(layer7_launcher_path)
+  if [ -x "${launcher}" ]; then
+    if layer6_owns_target "${launcher}"; then
+      echo "  launcher: active and Layer 6-owned: ${launcher}"
+    else
+      echo "  launcher: present but not Layer 6-owned: ${launcher}"
+    fi
+  else
+    echo "  launcher: inactive: ${launcher}"
+  fi
+
+  snippet=$(layer7_profile_snippet_path)
+  if [ -f "${snippet}" ]; then
+    if layer6_owns_target "${snippet}"; then
+      echo "  profile:  active and Layer 6-owned: ${snippet}"
+    else
+      echo "  profile:  present but not Layer 6-owned: ${snippet}"
+    fi
+  else
+    echo "  profile:  inactive: ${snippet}"
+  fi
+
+  echo "  state:    ${NIX_LAYER7_APP_STATE_DIR}"
+  echo "  config:   ${NIX_LAYER7_APP_CONFIG_DIR}"
+  echo "  cache:    ${NIX_LAYER7_APP_CACHE_DIR}"
+  if layer7_path_safe "${NIX_LAYER7_APP_STATE_DIR}" && layer7_path_safe "${NIX_LAYER7_APP_CONFIG_DIR}" && layer7_path_safe "${NIX_LAYER7_APP_CACHE_DIR}"; then
+    echo "  paths ok: yes"
+  else
+    echo "  paths ok: no (outside Layer 7 experiment roots)"
+  fi
+}
+
 # ---- Subcommands -----------------------------------------------------------
 
 cmd_status() {
@@ -454,6 +571,8 @@ cmd_status() {
   print_layer5_profile_status
   echo ""
   print_layer6_status
+  echo ""
+  print_layer7_status
   echo ""
   if [ -x /storage/apps/nix-portable/nix-portable ]; then
     echo "Layer 1/2 (nix-portable) status"

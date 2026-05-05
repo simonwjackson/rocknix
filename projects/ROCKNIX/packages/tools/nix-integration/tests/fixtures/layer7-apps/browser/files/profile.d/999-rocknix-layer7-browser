@@ -1,0 +1,11 @@
+# ROCKNIX Nix Layer 7 browser experiment defaults.
+# Sourced by interactive shells after ROCKNIX base profile.d snippets.
+
+: "${ROCKNIX_LAYER7_BROWSER_APP:=chromium}"
+: "${ROCKNIX_LAYER7_BROWSER_STATE_DIR:=${HOME:-/storage}/.local/share/nix-apps/layer7/browser}"
+: "${ROCKNIX_LAYER7_BROWSER_CONFIG_DIR:=${HOME:-/storage}/.config/nix-apps/layer7/browser}"
+: "${ROCKNIX_LAYER7_BROWSER_CACHE_DIR:=${HOME:-/storage}/.cache/nix-apps/layer7/browser}"
+export ROCKNIX_LAYER7_BROWSER_APP
+export ROCKNIX_LAYER7_BROWSER_STATE_DIR
+export ROCKNIX_LAYER7_BROWSER_CONFIG_DIR
+export ROCKNIX_LAYER7_BROWSER_CACHE_DIR
