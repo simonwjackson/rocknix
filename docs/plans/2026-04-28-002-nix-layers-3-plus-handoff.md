@@ -752,6 +752,33 @@ LAYER8_SMOKE=1: stopped at preflight
 
 Decision: keep the Layer 8 repo controls, but do not activate daemon mode on current SM8550 images. Full daemon validation requires an image built with `NIX_DAEMON_SUPPORT=yes` and non-conflicting `nixbld` identities.
 
+## Proposed future layers after Layer 8
+
+These are directional only. They are not implemented and not validated. Each should get its own plan before execution. They preserve the same invariant: ROCKNIX remains the host OS and owns boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
+
+- **Layer 9: NixOS/nspawn guest proof**
+  - Goal: run a storage-backed NixOS-ish guest under `systemd-nspawn` with its own `nix-daemon`.
+  - Boundary: manual start only; no boot autostart; no host service ownership.
+  - Stop rule: any impact on SSH, Sway, EmulationStation, Steam/FEX, host updates, or recovery.
+
+- **Layer 10: managed guest operations**
+  - Goal: `nixctl guest status/start/stop/shell/update/rollback`, resource controls, health checks.
+  - Boundary: guest must be easy to stop, delete, throttle, and keep idle during gameplay.
+
+- **Layer 11: guest-backed app/service bridges**
+  - Goal: opt-in host launchers, ports entries, or socket bridges that call selected guest services/apps.
+  - Boundary: ROCKNIX must remain usable with guest stopped; bridges are reversible.
+
+- **Layer 12: declarative host/guest profiles**
+  - Goal: reproducible profiles declaring packages, guest services, bridges, launchers, resource limits.
+  - Boundary: profiles manage Nix/guest/user-space only; never ROMs, saves, Steam/FEX state, boot, firmware, or base packages.
+
+- **Layer 13: curated capability catalog**
+  - Goal: `nixctl catalog enable dev-toolbox` and similar; hardware-validated workflows.
+  - Boundary: catalog items must be curated, smoke-tested, and hardware-scoped; not arbitrary internet flakes as root.
+
+Full NixOS replacement remains outside this layered path unless a later requirements/planning pass deliberately reopens hardware ownership. The blocker is not whether Nix can run; it is whether NixOS can safely replace ROCKNIX's device enablement, boot/update flow, graphics/input/audio stack, and Steam/FEX behavior.
+
 ## Cross-layer tooling to add
 
 The remaining layers need a single status/control tool.
