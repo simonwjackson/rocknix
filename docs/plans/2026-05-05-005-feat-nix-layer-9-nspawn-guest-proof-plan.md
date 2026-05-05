@@ -197,7 +197,7 @@ Failure/fallback matrix:
 
 ## Implementation Units
 
-- [ ] **Unit 1: Gate systemd-nspawn preservation at image build time**
+- [x] **Unit 1: Gate systemd-nspawn preservation at image build time**
 
 **Goal:** Make `systemd-nspawn` available in fork images only when Layer 9 support is explicitly enabled.
 
