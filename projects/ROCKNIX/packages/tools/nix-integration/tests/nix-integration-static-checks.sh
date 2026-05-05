@@ -36,11 +36,20 @@ grep -q 'mkdir -p ${INSTALL}/nix' "${PKG_DIR}/package.mk" || fail "package.mk do
 grep -q 'enable_service nix-storage-setup.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable nix-storage-setup.service"
 grep -q 'enable_service nix.mount' "${PKG_DIR}/package.mk" || fail "package.mk does not enable nix.mount"
 
-[ -f "${PKG_DIR}/profile.d/085-nix-integration.conf" ] || fail "missing profile integration"
-sh -n "${PKG_DIR}/profile.d/085-nix-integration.conf" || fail "profile integration syntax failed"
-grep -q 'NP_RUNTIME="proot"' "${PKG_DIR}/profile.d/085-nix-integration.conf" || fail "profile does not default NP_RUNTIME to proot"
-grep -q '/nix/var/nix/profiles/default/bin' "${PKG_DIR}/profile.d/085-nix-integration.conf" || fail "profile.d missing Layer 4 PATH prefix (/nix/var/nix/profiles/default/bin)"
-grep -q '\.nix-profile/bin' "${PKG_DIR}/profile.d/085-nix-integration.conf" || fail "profile.d missing Layer 5 PATH prefix (~/.nix-profile/bin)"
+PROFILE_SNIPPET="998-nix-integration.conf"
+[ -f "${PKG_DIR}/profile.d/${PROFILE_SNIPPET}" ] || fail "missing profile integration"
+sh -n "${PKG_DIR}/profile.d/${PROFILE_SNIPPET}" || fail "profile integration syntax failed"
+grep -q 'NP_RUNTIME="proot"' "${PKG_DIR}/profile.d/${PROFILE_SNIPPET}" || fail "profile does not default NP_RUNTIME to proot"
+grep -q '/nix/var/nix/profiles/default/bin' "${PKG_DIR}/profile.d/${PROFILE_SNIPPET}" || fail "profile.d missing Layer 4 PATH prefix (/nix/var/nix/profiles/default/bin)"
+grep -q '\.nix-profile/bin' "${PKG_DIR}/profile.d/${PROFILE_SNIPPET}" || fail "profile.d missing Layer 5 PATH prefix (~/.nix-profile/bin)"
+
+# ROCKNIX's /etc/profile.d/098-busybox resets PATH. The Nix profile snippet
+# must sort after it, or the Layer 4/5 PATH prefixes are clobbered in login
+# shells. This guards the exact issue found during first image validation.
+case "${PROFILE_SNIPPET}" in
+  99*|[1-9][0-9][0-9]*) ;;
+  *) fail "profile snippet must sort after 098-busybox so PATH is not reset later: ${PROFILE_SNIPPET}" ;;
+esac
 
 # Verify nixctl declares the canonical subcommands and pinned-version constants.
 grep -q 'NIX_VERSION_PINNED=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing NIX_VERSION_PINNED constant"

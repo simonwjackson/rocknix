@@ -72,7 +72,7 @@ Carried forward from the origin document. Stable IDs match the requirements doc.
 - **Existing nix-integration package**: `projects/ROCKNIX/packages/tools/nix-integration/` — Layer 4 extends this package, not a new one. Mirror its conventions throughout.
 - **`nix-portable-install` script** at `projects/ROCKNIX/packages/tools/nix-integration/scripts/nix-portable-install` (265 lines) — pattern for `nixctl install`: download with sha256 verification, atomic-ish install into `/storage`, idempotent re-runs, install/repair/remove/status subcommands, environment-variable overrides for every URL/path/version.
 - **`nix-doctor` script** at `projects/ROCKNIX/packages/tools/nix-integration/scripts/nix-doctor` — pattern for adding Layer 4 checks: extend with conditional checks that activate when real nix is detected on disk.
-- **`profile.d/085-nix-integration.conf`** — currently sets `NP_*` env vars and prepends `/storage/bin` to `$PATH`. Layer 4 modifies it to additionally prepend `/nix/var/nix/profiles/default/bin` and `${HOME}/.nix-profile/bin` ahead of `/storage/bin`.
+- **`profile.d/998-nix-integration.conf`** — currently sets `NP_*` env vars and prepends `/storage/bin` to `$PATH`. Layer 4 modifies it to additionally prepend `/nix/var/nix/profiles/default/bin` and `${HOME}/.nix-profile/bin` ahead of `/storage/bin`.
 - **`tests/nix-integration-static-checks.sh`** — pattern for static-check tests: shell syntax, executable bit, presence of expected files. Add `nixctl` and any new helper scripts.
 - **`tests/nix-integration-runtime-smoke.sh`** — pattern for runtime smoke tests on the device. Layer 4 adds an opt-in path that exercises the install/use/uninstall cycle.
 - **`package.mk` `post_install` hook** — pattern for shipping new scripts into `/usr/bin` at image build time. Layer 4 adds `nixctl` here.
@@ -97,7 +97,7 @@ Carried forward from the origin document. Stable IDs match the requirements doc.
 
 - **No `nixctl use portable|native` mode-switching command.** Brainstorm rejected this in favor of real-nix-as-primary on `$PATH`, with portable still callable explicitly via `/storage/bin/nix-portable`. Justification: the device has no production state worth a graceful rollback; reflash + `rm -rf /storage/.nix-root` is faster than maintaining a mode-switch abstraction. Supersedes `docs/plans/2026-04-28-002-nix-layers-3-plus-handoff.md` Layer 4 design.
 
-- **Profile.d edited at build time, not install time.** `/etc` is read-only at runtime. The PATH-ordering change must ship in the package via `085-nix-integration.conf`. The path entries `/nix/var/nix/profiles/default/bin` and `${HOME}/.nix-profile/bin` are present in `$PATH` even on devices where Layer 4 has never been installed; an empty bin directory is harmless — the shell finds nothing there and falls through to `/storage/bin` (portable wrappers).
+- **Profile.d edited at build time, not install time.** `/etc` is read-only at runtime. The PATH-ordering change must ship in the package via `998-nix-integration.conf`. The path entries `/nix/var/nix/profiles/default/bin` and `${HOME}/.nix-profile/bin` are present in `$PATH` even on devices where Layer 4 has never been installed; an empty bin directory is harmless — the shell finds nothing there and falls through to `/storage/bin` (portable wrappers).
 
 - **Sandbox empirical probe with documented fallback.** During install, run a small sandboxed build. If it succeeds, `nix.conf` gets `sandbox = true`; if it fails (kernel feature missing, bpf restriction, etc.), the installer logs the reason and writes `sandbox = false`. Both outcomes are valid Layer 4 installs. Building a robust priori check from the kernel config is more code than it is worth — the build either succeeds or it does not.
 
@@ -139,7 +139,7 @@ nixctl <verb>
   ├─ uninstall     → rm /nix/store/* /nix/var/* ~/.config/nix ~/.nix-{defexpr,profile,channels}
   └─ doctor        → delegates to nix-doctor with --layer4 flag
 
-profile.d/085-nix-integration.conf  (built into image, always present):
+profile.d/998-nix-integration.conf  (built into image, always present):
   PATH = ${HOME}/.nix-profile/bin : /nix/var/nix/profiles/default/bin : /storage/bin : ...
          ────────── L5 ─────────── ─────────── L4 ────────────── ─── L1/2 ──
   When neither L4 nor L5 is installed, the L4/L5 prefixes resolve to nothing
@@ -157,7 +157,7 @@ profile.d/085-nix-integration.conf  (built into image, always present):
 **Dependencies:** None
 
 **Files:**
-- Modify: `projects/ROCKNIX/packages/tools/nix-integration/profile.d/085-nix-integration.conf`
+- Modify: `projects/ROCKNIX/packages/tools/nix-integration/profile.d/998-nix-integration.conf`
 - Modify: `projects/ROCKNIX/packages/tools/nix-integration/package.mk`
 
 **Approach:**
@@ -165,7 +165,7 @@ profile.d/085-nix-integration.conf  (built into image, always present):
 - `package.mk`: add `cp ${PKG_DIR}/scripts/nixctl ${INSTALL}/usr/bin` and `chmod 0755 ${INSTALL}/usr/bin/nixctl` next to the existing entries for `nix-portable-install`/`-run`/`nix-doctor`.
 
 **Patterns to follow:**
-- Existing `case`-guard idiom in `085-nix-integration.conf` for the `/storage/bin` prepend.
+- Existing `case`-guard idiom in `998-nix-integration.conf` for the `/storage/bin` prepend.
 - Existing copy/chmod block in `package.mk`'s `post_install`.
 
 **Test scenarios:**
@@ -340,7 +340,7 @@ profile.d/085-nix-integration.conf  (built into image, always present):
 - Modify: `projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh`
 
 **Approach:**
-- **Static checks**: add `nixctl` to the existing `check_script` calls. Add an assertion that the new profile.d entries are present in `085-nix-integration.conf`. Add a syntax-check pass over `nixctl` (`sh -n`) and a usage-string presence check.
+- **Static checks**: add `nixctl` to the existing `check_script` calls. Add an assertion that the new profile.d entries are present in `998-nix-integration.conf`. Add a syntax-check pass over `nixctl` (`sh -n`) and a usage-string presence check.
 - **Runtime smoke** (opt-in, gated by an env var or flag like `LAYER4_SMOKE=1`):
   1. `nixctl status` → expects "not installed" if running on a clean device
   2. `nixctl install` → expects success
@@ -357,7 +357,7 @@ profile.d/085-nix-integration.conf  (built into image, always present):
 
 **Test scenarios:**
 - Static checks: pass on a clean repo; fail with a clear message if `nixctl` is missing, non-executable, or has a syntax error.
-- Static checks: fail with a clear message if `085-nix-integration.conf` is missing the new path entries.
+- Static checks: fail with a clear message if `998-nix-integration.conf` is missing the new path entries.
 - Runtime smoke: end-to-end install/use/uninstall cycle completes without manual intervention on a Layer 3 device.
 - Runtime smoke: emits a perf-comparison line ("real nix: Xs, portable: Ys") for human review without failing on the difference.
 
