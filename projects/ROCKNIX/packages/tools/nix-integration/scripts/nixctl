@@ -46,6 +46,12 @@ NIX_LAYER7_PROFILE_SNIPPET="${NIX_LAYER7_PROFILE_SNIPPET:-999-rocknix-layer7-bro
 NIX_LAYER7_APP_STATE_DIR="${NIX_LAYER7_APP_STATE_DIR:-${NIX_USER_HOME}/.local/share/nix-apps/layer7/${NIX_LAYER7_APP_NAME}}"
 NIX_LAYER7_APP_CONFIG_DIR="${NIX_LAYER7_APP_CONFIG_DIR:-${NIX_USER_HOME}/.config/nix-apps/layer7/${NIX_LAYER7_APP_NAME}}"
 NIX_LAYER7_APP_CACHE_DIR="${NIX_LAYER7_APP_CACHE_DIR:-${NIX_USER_HOME}/.cache/nix-apps/layer7/${NIX_LAYER7_APP_NAME}}"
+NIX_LAYER8_STATE_DIR="${NIX_LAYER8_STATE_DIR:-/storage/.config/nix-integration/layer8}"
+NIX_LAYER8_SYSTEMD_DIR="${NIX_LAYER8_SYSTEMD_DIR:-}"
+NIX_DAEMON_BIN="${NIX_DAEMON_BIN:-${NIX_DEFAULT_PROFILE_BIN}/nix-daemon}"
+NIX_DAEMON_SERVICE="${NIX_DAEMON_SERVICE:-nix-daemon.service}"
+NIX_DAEMON_SOCKET="${NIX_DAEMON_SOCKET:-nix-daemon.socket}"
+NIX_DAEMON_SOCKET_PATH="${NIX_DAEMON_SOCKET_PATH:-${NIX_INSTALL_ROOT}/var/nix/daemon-socket/socket}"
 
 # ---- SSL ------------------------------------------------------------------
 # Pre-set for the upstream installer so it skips its cacert derivation install
@@ -88,6 +94,7 @@ Environment overrides (defaults shown):
   NIX_LAYER6_STATE_DIR   ${NIX_LAYER6_STATE_DIR}
   NIX_LAYER7_APP_BIN     ${NIX_LAYER7_APP_BIN}
   NIX_LAYER7_APP_STATE_DIR ${NIX_LAYER7_APP_STATE_DIR}
+  NIX_LAYER8_STATE_DIR   ${NIX_LAYER8_STATE_DIR}
   NIX_TARBALL_URL        ${NIX_TARBALL_URL}
   NIX_TARBALL_SHA256     ${NIX_TARBALL_SHA256}
   NIX_FORCE              Set to 1 to override safety checks (rare)
@@ -490,6 +497,102 @@ layer7_path_safe() {
   esac
 }
 
+systemd_unit_path() {
+  unit=$1
+  dirs="${NIX_LAYER8_SYSTEMD_DIR} /storage/.config/system.d /usr/lib/systemd/system /etc/systemd/system"
+  for dir in ${dirs}; do
+    [ -n "${dir}" ] || continue
+    if [ -f "${dir}/${unit}" ]; then
+      echo "${dir}/${unit}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+nix_is_mounted() {
+  awk -v p="${NIX_INSTALL_ROOT}" '$2 == p {found=1} END {exit !found}' /proc/mounts 2>/dev/null
+}
+
+layer8_state() {
+  if [ -f "${NIX_LAYER8_STATE_DIR}/state" ]; then
+    awk 'NR==1 {print; exit}' "${NIX_LAYER8_STATE_DIR}/state"
+  else
+    echo inactive
+  fi
+}
+
+layer8_build_users_group() {
+  if [ ! -f "${NIX_USER_CONFIG_FILE}" ]; then
+    echo "(no nix.conf)"
+    return
+  fi
+  awk -F= '
+    /^[[:space:]]*build-users-group[[:space:]]*=/ {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+      print $2
+      found=1
+      exit
+    }
+    END { if (!found) print "(default)" }
+  ' "${NIX_USER_CONFIG_FILE}"
+}
+
+group_exists() {
+  group=$1
+  [ -n "${group}" ] || return 1
+  if have getent; then
+    getent group "${group}" >/dev/null 2>&1 && return 0
+  fi
+  awk -F: -v group="${group}" '$1 == group {found=1} END {exit !found}' /etc/group 2>/dev/null
+}
+
+layer8_eligibility() {
+  [ -d "${NIX_INSTALL_ROOT}" ] || { echo "unsupported: ${NIX_INSTALL_ROOT} directory missing"; return; }
+  nix_is_mounted || { echo "unsupported: ${NIX_INSTALL_ROOT} is not mounted"; return; }
+  detect_real_nix || { echo "unsupported: Layer 4 real Nix missing"; return; }
+  [ -x "${NIX_DAEMON_BIN}" ] || { echo "unsupported: nix-daemon binary missing: ${NIX_DAEMON_BIN}"; return; }
+  systemd_unit_path "${NIX_DAEMON_SOCKET}" >/dev/null 2>&1 || { echo "unsupported: ${NIX_DAEMON_SOCKET} unit missing"; return; }
+  systemd_unit_path "${NIX_DAEMON_SERVICE}" >/dev/null 2>&1 || { echo "unsupported: ${NIX_DAEMON_SERVICE} unit missing"; return; }
+  group=$(layer8_build_users_group)
+  case "${group}" in
+    ""|"(no nix.conf)") echo "unsupported: build-users-group is empty (single-user/root config)"; return ;;
+    "(default)") group=nixbld ;;
+  esac
+  group_exists "${group}" || { echo "unsupported: build-users-group '${group}' is not present"; return; }
+  echo "available: daemon prerequisites present"
+}
+
+systemctl_state() {
+  unit=$1
+  if have systemctl; then
+    systemctl is-active "${unit}" 2>/dev/null || true
+  else
+    echo unknown
+  fi
+}
+
+print_layer8_status() {
+  echo "Layer 8 (experimental daemon) status"
+  echo "--------------------------------------"
+  state=$(layer8_state)
+  eligibility=$(layer8_eligibility)
+  socket_unit=$(systemd_unit_path "${NIX_DAEMON_SOCKET}" 2>/dev/null || echo "missing")
+  service_unit=$(systemd_unit_path "${NIX_DAEMON_SERVICE}" 2>/dev/null || echo "missing")
+  build_group=$(layer8_build_users_group)
+
+  echo "  state:      ${state}"
+  echo "  eligible:   ${eligibility}"
+  echo "  daemon:     ${NIX_DAEMON_BIN}"
+  echo "  socket:     ${socket_unit}"
+  echo "  service:    ${service_unit}"
+  echo "  sock path:  ${NIX_DAEMON_SOCKET_PATH}"
+  echo "  build grp:  ${build_group}"
+  echo "  socket run: $(systemctl_state "${NIX_DAEMON_SOCKET}")"
+  echo "  service run: $(systemctl_state "${NIX_DAEMON_SERVICE}")"
+  echo "  fallback:   Layer 4 single-user/root Nix remains primary unless daemon is explicitly enabled"
+}
+
 print_layer7_status() {
   echo "Layer 7 (app/UI experiment) status"
   echo "------------------------------------"
@@ -573,6 +676,8 @@ cmd_status() {
   print_layer6_status
   echo ""
   print_layer7_status
+  echo ""
+  print_layer8_status
   echo ""
   if [ -x /storage/apps/nix-portable/nix-portable ]; then
     echo "Layer 1/2 (nix-portable) status"
