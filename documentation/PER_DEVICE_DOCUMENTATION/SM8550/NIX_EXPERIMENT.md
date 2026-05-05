@@ -313,7 +313,7 @@ If the build succeeds, sandbox works; you can leave the setting at `true`. If it
 
 ### Troubleshooting
 
-**`which nix` resolves to `/storage/bin/nix` (portable) instead of real nix.** The PATH change in profile.d/085-nix-integration.conf only takes effect on a fresh login shell. Run `hash -r` in your current shell, or open a new SSH session.
+**`which nix` resolves to `/storage/bin/nix` (portable) instead of real nix.** The PATH change in profile.d/998-nix-integration.conf only takes effect on a fresh login shell. Run `hash -r` in your current shell, or open a new SSH session.
 
 **`nix run` complains about missing `nixpkgs`.** You did not register a nixpkgs channel (intentional — Layer 4 install skips channel registration). Use flake URIs (`nixpkgs#hello`) or add a channel manually with `nix-channel --add https://channels.nixos.org/nixpkgs-unstable nixpkgs && nix-channel --update`.
 

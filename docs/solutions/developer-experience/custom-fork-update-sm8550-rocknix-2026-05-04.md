@@ -219,7 +219,7 @@ ssh $DEV '
   systemctl is-active nix-storage-setup.service nix.mount
   cat /proc/mounts | grep " /nix "
   ls -ld /storage/.nix-root /storage/.nix-root/store /storage/.nix-root/var/nix
-  ls /usr/bin/nix-portable-install /etc/profile.d/085-nix-integration.conf
+  ls /usr/bin/nix-portable-install /etc/profile.d/998-nix-integration.conf
   touch /nix/.layer3-validated && ls -la /nix/.layer3-validated  # persistence smoke
 '
 ```
