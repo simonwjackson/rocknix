@@ -96,6 +96,13 @@ grep -q 'standard `nix profile`' "${PKG_DIR}/docs/layer7-app-experiment-contract
 grep -q '/storage/.local/share/nix-apps/layer7' "${PKG_DIR}/docs/layer7-app-experiment-contract.md" || fail "Layer 7 contract missing safe app state root"
 grep -q '/storage/.cache/nix-apps/layer7' "${PKG_DIR}/docs/layer7-app-experiment-contract.md" || fail "Layer 7 contract missing safe app cache root"
 grep -q 'Nix-backed binary' "${PKG_DIR}/docs/layer7-app-experiment-contract.md" || fail "Layer 7 contract missing Nix-backed binary proof"
+[ -f "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" ] || fail "missing Layer 9 nspawn guest contract doc"
+grep -q '/storage/machines/rocknix-guest' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "Layer 9 contract missing guest root path"
+grep -q '/dev/dri' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "Layer 9 contract missing GPU passthrough prohibition"
+grep -q 'PipeWire' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "Layer 9 contract missing audio passthrough prohibition"
+grep -q '/dev/input' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "Layer 9 contract missing input passthrough prohibition"
+grep -q 'Fallback does' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "Layer 9 contract missing fallback boundary"
+grep -q 'Guest state can be stopped and removed without touching host Nix state' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "Layer 9 contract missing cleanup boundary"
 for sub in status install upgrade uninstall doctor user-env daemon; do
   # Subcommand can appear as 'sub)' (alone), 'sub|other)' (left of alt),
   # or '...|sub)' (right of alt). Match by requiring sub to be preceded by

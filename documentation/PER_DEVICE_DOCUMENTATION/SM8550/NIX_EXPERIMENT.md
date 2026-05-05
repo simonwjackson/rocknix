@@ -739,7 +739,14 @@ Keep/reject decision: Layer 8 stays in the repo as an opt-in capability. Activat
 
 ## Proposed future layers after Layer 8
 
-These are directional only. They are not implemented and not validated on SM8550. Each must get its own plan before any device work begins. ROCKNIX remains the host OS in every case and continues to own boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
+Layer 9 now has an implementation plan and guest contract:
+
+- Plan: `docs/plans/2026-05-05-005-feat-nix-layer-9-nspawn-guest-proof-plan.md`
+- Contract: `projects/ROCKNIX/packages/tools/nix-integration/docs/layer9-nspawn-guest-contract.md`
+
+The Layer 9 boundary is intentionally narrow: preserve `systemd-nspawn` in an opt-in image, stage a guest under `/storage/machines/rocknix-guest`, start it manually for proof, and stop/delete it without affecting host Nix. Fallback means ROCKNIX still boots, SSH remains available, and Layers 4/8 remain usable or recoverable; it does not mean lower layers provide the same NixOS guest capability.
+
+The remaining future layers below are directional only. They are not implemented and not validated on SM8550. Each must get its own plan before device work begins. ROCKNIX remains the host OS in every case and continues to own boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
 
 - **Layer 9: NixOS/nspawn guest proof.** Run a storage-backed NixOS-ish guest under `systemd-nspawn` with its own `nix-daemon`. Manual start only; no boot autostart; stop rule on any impact to SSH, Sway, EmulationStation, Steam/FEX, host updates, or recovery.
 - **Layer 10: managed guest operations.** Add `nixctl guest status/start/stop/shell/update/rollback`, resource controls, health checks. Guest must remain easy to stop, delete, throttle, and keep idle during gameplay.
