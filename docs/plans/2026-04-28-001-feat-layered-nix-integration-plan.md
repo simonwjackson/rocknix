@@ -147,6 +147,20 @@ This tree is a scope declaration, not a rigid implementation constraint. The imp
 | 7 | Nix-managed apps/UI experiments | Launch a real app or custom UI dependency from Nix | Real store preferred | Yes for best result | At least one useful app/UI experiment launches under ROCKNIX. |
 | 8 | Experimental daemon mode | Use `nix-daemon` if ROCKNIX supports it | Real `/nix` store plus daemon | Yes | Daemon works without impacting boot, SSH, UI, Steam/FEX, or Chromium. |
 
+### Proposed future layers after Layer 8
+
+These layers are directional only. They are not implemented, not validated, and should each receive their own plan before execution. They preserve the same invariant: ROCKNIX remains the host OS and owns boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
+
+| Layer | Proposed outcome | Example capability | Boundary / stop rule |
+|---|---|---|---|
+| 9 | NixOS/nspawn guest proof | Start a storage-backed NixOS-ish guest with its own `nix-daemon` | Manual start only at first; no boot autostart; stop if guest affects SSH, Sway, EmulationStation, Steam/FEX, or host updates. |
+| 10 | Managed guest operations | `nixctl guest status/start/stop/shell/update/rollback` plus resource limits | Guest must be easy to stop, delete, throttle, and keep idle during gameplay. |
+| 11 | Guest-backed app/service bridges | Host launchers or Ports entries that call selected guest services/apps | Bridges are opt-in and reversible; ROCKNIX must remain usable with guest stopped. |
+| 12 | Declarative host/guest profiles | Reproducible profiles declaring packages, guest services, bridges, launchers, and resource limits | Profiles may manage Nix/guest/user-space state only; never ROMs, saves, Steam/FEX state, boot, firmware, or base packages. |
+| 13 | Curated capability catalog | `nixctl catalog enable dev-toolbox` for hardware-validated workflows | Catalog items must be curated, smoke-tested, and hardware-scoped; not arbitrary internet flakes as root. |
+
+Full NixOS replacement remains outside this layered path unless a later requirements/planning pass deliberately reopens hardware ownership. The blocker is not whether Nix can run; it is whether NixOS can safely replace ROCKNIX's device enablement, boot/update flow, graphics/input/audio stack, and Steam/FEX behavior.
+
 Layer dependency graph:
 
 ```mermaid
@@ -160,6 +174,11 @@ flowchart TB
   L6[Layer 6: Nix-managed user environment]
   L7[Layer 7: Nix-managed apps/UI experiments]
   L8[Layer 8: experimental daemon mode]
+  L9[Layer 9: NixOS/nspawn guest proof]
+  L10[Layer 10: managed guest operations]
+  L11[Layer 11: guest-backed app/service bridges]
+  L12[Layer 12: declarative host/guest profiles]
+  L13[Layer 13: curated capability catalog]
 
   L0 --> L1
   L1 --> L2
@@ -171,6 +190,11 @@ flowchart TB
   L4 --> L8
   L8 --> L6
   L8 --> L7
+  L8 --> L9
+  L9 --> L10
+  L10 --> L11
+  L11 --> L12
+  L12 --> L13
 ```
 
 ## Success Metrics

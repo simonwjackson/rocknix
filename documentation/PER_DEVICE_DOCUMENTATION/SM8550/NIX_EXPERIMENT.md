@@ -705,3 +705,15 @@ FAIL: Layer 8 daemon preflight failed
 ```
 
 No Layer 8 state was left under `/storage/.config/nix-integration/layer8`. Current keep/reject decision: keep the Layer 8 diagnostics, units, and lifecycle controls in the repo, but No-Go daemon activation on current SM8550 images. Full daemon validation requires an image built with `NIX_DAEMON_SUPPORT=yes` and non-conflicting `nixbld` identities.
+
+## Proposed future layers after Layer 8
+
+These are directional only. They are not implemented and not validated on SM8550. Each must get its own plan before any device work begins. ROCKNIX remains the host OS in every case and continues to own boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
+
+- **Layer 9: NixOS/nspawn guest proof.** Run a storage-backed NixOS-ish guest under `systemd-nspawn` with its own `nix-daemon`. Manual start only; no boot autostart; stop rule on any impact to SSH, Sway, EmulationStation, Steam/FEX, host updates, or recovery.
+- **Layer 10: managed guest operations.** Add `nixctl guest status/start/stop/shell/update/rollback`, resource controls, health checks. Guest must remain easy to stop, delete, throttle, and keep idle during gameplay.
+- **Layer 11: guest-backed app/service bridges.** Opt-in host launchers or Ports entries that call selected guest services/apps. ROCKNIX must remain usable with guest stopped.
+- **Layer 12: declarative host/guest profiles.** Reproducible profiles describing packages, guest services, bridges, launchers, and resource limits. Never manage ROMs, saves, Steam/FEX state, boot, firmware, or base packages through them.
+- **Layer 13: curated capability catalog.** Hardware-validated, smoke-tested workflows exposed as `nixctl catalog enable <name>`. Not arbitrary internet flakes as root.
+
+Full NixOS on SM8550 is not on the layered path unless a future planning pass deliberately reopens hardware ownership. The blocker is not Nix viability; it is reproducing ROCKNIX's device enablement (Qualcomm boot/update flow, kernel/firmware, GPU/display, controllers/audio, FEX/Steam stack) without losing handheld reliability.
