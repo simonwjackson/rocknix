@@ -26,7 +26,7 @@ tags: [rocknix, nix, layer-8, daemon, systemd, sm8550]
 
 Layers 4-7 already provide practical Nix capability on ROCKNIX without a daemon: real `/nix`, standard single-user/root Nix, persistent profiles, reversible Layer 6 activation, and a Layer 7 Chromium app launch under Sway.
 
-Layer 8 tests whether host-side `nix-daemon` is safe enough to keep as an optional layer. The first hardware validation on `thor` reached a No-Go preflight result: the daemon binary exists, but the current image does not provide daemon build identities and the active Nix config is still the single-user/root fallback.
+Layer 8 tests whether host-side `nix-daemon` is safe enough to keep as an optional layer. The first hardware run on `thor` reached the safety gate as designed: an image without `NIX_DAEMON_SUPPORT=yes` lacks the `nixbld` group, so preflight refuses to enable daemon mode and leaves Layer 4 single-user/root Nix as the primary path. A second image built with `NIX_DAEMON_SUPPORT=yes` ships the `nixbld` group, ten `nixbld*` build users, and the `nix-daemon.socket`/`nix-daemon.service` units, which lets daemon mode pass preflight and run a real client-to-daemon proof.
 
 ## Guidance
 
@@ -67,6 +67,8 @@ A daemon that starts without the right identity model is worse than no daemon: i
 The important result from `thor` is that the safety gate worked. `nixctl` refused to enable daemon mode before any persistent daemon state was created.
 
 ## Examples
+
+### No-Go run on a non-daemon image
 
 On `thor`, with the Layer 8 scripts copied to `/tmp` and daemon units supplied as fixtures:
 
@@ -118,12 +120,57 @@ No daemon state was left behind:
 /storage/.config/nix-integration/layer8/state -> absent
 ```
 
+### Go run on a `NIX_DAEMON_SUPPORT=yes` image
+
+A second image built from `feat/nix-layer-8-daemon-mode` with `NIX_DAEMON_SUPPORT=yes` was applied to `thor`. After the update, daemon prerequisites were all present:
+
+```text
+nixbld:x:30000:
+nixbld1..nixbld10 in /etc/passwd
+/usr/lib/systemd/system/nix-daemon.socket  -> shipped, disabled
+/usr/lib/systemd/system/nix-daemon.service -> shipped, static
+/storage/.config/nix-daemon/nix.conf       -> build-users-group = nixbld, sandbox = true
+```
+
+Daemon enable + client proof:
+
+```text
+nixctl daemon preflight -> passed
+nixctl daemon enable    -> Created symlink ... sockets.target.wants/nix-daemon.socket
+NIX_REMOTE=daemon nix store ping ->
+  Store URL: daemon
+  Version:   2.34.7
+  Trusted:   1
+NIX_REMOTE=daemon nix run nixpkgs#hello -> Hello, world!
+```
+
+Reboot persistence:
+
+```text
+LAYER8_SMOKE=1 LAYER8_REBOOT_VERIFY=prepare ... -> nix-integration Layer 8 smoke prepared
+reboot                                          -> SSH back in ~30s
+nix-daemon.socket after reboot                  -> enabled, active
+LAYER8_SMOKE=1 LAYER8_REBOOT_VERIFY=verify  ... -> nix-integration Layer 8 reboot smoke passed
+```
+
+Cleanup after verify:
+
+```text
+/storage/.config/nix-integration/layer8/state -> absent
+nix-daemon.socket -> disabled, inactive
+/nix/var/nix/daemon-socket/socket -> removed (RemoveOnStop)
+nix-doctor --offline -> passed with 2 warning(s); Layer 8 checks OK; Layer 4-7 healthy
+```
+
+During the run, SSH stayed up, ROCKNIX kept booting normally, and Layer 4 single-user/root Nix remained available as the fallback after disable.
+
 ## When to Apply
 
-- Use the Layer 8 diagnostics when deciding whether to build an image with daemon support.
-- Keep using Layers 4-7 on current SM8550 images unless `NIX_DAEMON_SUPPORT=yes` was enabled at image build time and preflight passes.
+- Build images with `NIX_DAEMON_SUPPORT=yes` when daemon mode is wanted; the option ships build identities and units without enabling them by default.
+- Keep using Layers 4-7 on images built without daemon support; preflight will correctly refuse daemon mode there.
 - Treat a missing `nixbld` group or empty `build-users-group` as a No-Go for host daemon mode, not as something to patch at runtime.
-- If future daemon-enabled images pass preflight, then run `LAYER8_SMOKE=1` and reboot verification before documenting daemon mode as usable.
+- Keep the daemon's nix.conf separate from the Layer 4 user nix.conf. The daemon reads `/storage/.config/nix-daemon/nix.conf` (via `NIX_CONF_DIR` in the service unit), which preserves Layer 4 single-user/root behavior alongside daemon-mode behavior.
+- After enabling daemon mode, use `nixctl daemon disable` to return to Layer 4 fallback. The disable path stops units, removes Layer 8 metadata, and leaves `/nix`, profiles, and Layer 6/7 untouched.
 
 ## Related
 
