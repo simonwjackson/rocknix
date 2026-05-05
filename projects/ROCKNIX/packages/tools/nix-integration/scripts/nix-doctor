@@ -40,6 +40,10 @@ NIX_DAEMON_SERVICE="${NIX_DAEMON_SERVICE:-nix-daemon.service}"
 NIX_DAEMON_SOCKET="${NIX_DAEMON_SOCKET:-nix-daemon.socket}"
 NIX_DAEMON_SOCKET_PATH="${NIX_DAEMON_SOCKET_PATH:-${NIX_INSTALL_ROOT}/var/nix/daemon-socket/socket}"
 NIX_GROUP_FILE="${NIX_GROUP_FILE:-/etc/group}"
+NIX_LAYER9_STATE_DIR="${NIX_LAYER9_STATE_DIR:-/storage/.config/nix-integration/layer9}"
+NIX_LAYER9_NSPAWN_BIN="${NIX_LAYER9_NSPAWN_BIN:-/usr/bin/systemd-nspawn}"
+NIX_LAYER9_GUEST_ROOT="${NIX_LAYER9_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+NIX_LAYER9_SKIP_KERNEL_CHECK="${NIX_LAYER9_SKIP_KERNEL_CHECK:-0}"
 CHECK_NETWORK=1
 RUN_SMOKE=1
 RUN_DEV_SHELL_SMOKE=0
@@ -272,6 +276,58 @@ layer8_eligibility() {
   esac
   group_exists "${group}" || { echo "unsupported: build-users-group '${group}' is not present"; return; }
   echo "available: daemon prerequisites present"
+}
+
+layer9_kernel_ready() {
+  [ "${NIX_LAYER9_SKIP_KERNEL_CHECK}" = "1" ] && return 0
+  [ -e /proc/self/ns/mnt ] || return 1
+  [ -e /proc/self/ns/pid ] || return 1
+  [ -e /proc/self/ns/uts ] || return 1
+  [ -d /sys/fs/cgroup ] || return 1
+  return 0
+}
+
+layer9_guest_root_ready() {
+  [ -d "${NIX_LAYER9_GUEST_ROOT}" ] || return 1
+  [ -d "${NIX_LAYER9_GUEST_ROOT}/etc" ] || [ -d "${NIX_LAYER9_GUEST_ROOT}/usr" ] || [ -d "${NIX_LAYER9_GUEST_ROOT}/nix" ]
+}
+
+layer9_running() {
+  if [ -f "${NIX_LAYER9_STATE_DIR}/state" ]; then
+    state=$(awk 'NR==1 {print; exit}' "${NIX_LAYER9_STATE_DIR}/state")
+    [ "${state}" = "running" ] && return 0
+  fi
+  if have ps; then
+    ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${NIX_LAYER9_GUEST_ROOT}" >/dev/null 2>&1 && return 0
+  fi
+  return 1
+}
+
+layer9_state() {
+  [ -x "${NIX_LAYER9_NSPAWN_BIN}" ] || { echo unsupported; return; }
+  layer9_kernel_ready || { echo unsupported; return; }
+  layer9_running && { echo running; return; }
+  if [ -d "${NIX_LAYER9_GUEST_ROOT}" ]; then
+    if layer9_guest_root_ready; then
+      echo proof-ready
+    else
+      echo available
+    fi
+  else
+    echo available
+  fi
+}
+
+layer9_eligibility() {
+  [ -x "${NIX_LAYER9_NSPAWN_BIN}" ] || { echo "unsupported: systemd-nspawn missing: ${NIX_LAYER9_NSPAWN_BIN}"; return; }
+  layer9_kernel_ready || { echo "unsupported: namespace/cgroup prerequisites missing"; return; }
+  if [ ! -e "${NIX_LAYER9_GUEST_ROOT}" ]; then
+    echo "available: guest root missing: ${NIX_LAYER9_GUEST_ROOT}"
+    return
+  fi
+  [ -d "${NIX_LAYER9_GUEST_ROOT}" ] || { echo "unsupported: guest root is not a directory: ${NIX_LAYER9_GUEST_ROOT}"; return; }
+  layer9_guest_root_ready || { echo "available: guest root present but not proof-ready: ${NIX_LAYER9_GUEST_ROOT}"; return; }
+  echo "available: nspawn guest proof prerequisites present"
 }
 
 check_profile_command_conflicts() {
@@ -838,6 +894,66 @@ check_layer8() {
   ok "Layer 8 fallback: Layer 4 single-user/root Nix remains the primary recovery path"
 }
 
+check_layer9() {
+  state=$(layer9_state)
+  eligibility=$(layer9_eligibility)
+
+  case "${state}" in
+    unsupported)
+      warn "Layer 9 nspawn guest state: unsupported"
+      ;;
+    available)
+      ok "Layer 9 nspawn guest state: available"
+      ;;
+    proof-ready)
+      ok "Layer 9 nspawn guest state: proof-ready"
+      ;;
+    running)
+      warn "Layer 9 nspawn guest state: running; stop the manual guest after proof"
+      ;;
+    failed|partial)
+      fail_check "Layer 9 nspawn guest state is ${state}; stop/delete guest state or inspect ${NIX_LAYER9_STATE_DIR}"
+      ;;
+    rejected)
+      warn "Layer 9 nspawn guest state is rejected; keep using host Layers 4/8"
+      ;;
+    *)
+      warn "Layer 9 nspawn guest state has unexpected value: ${state}"
+      ;;
+  esac
+
+  case "${eligibility}" in
+    available:*) ok "Layer 9 nspawn eligibility: ${eligibility}" ;;
+    unsupported:*) warn "Layer 9 nspawn eligibility: ${eligibility}" ;;
+    *) warn "Layer 9 nspawn eligibility: ${eligibility}" ;;
+  esac
+
+  if [ -x "${NIX_LAYER9_NSPAWN_BIN}" ]; then
+    ok "Layer 9 systemd-nspawn binary present: ${NIX_LAYER9_NSPAWN_BIN}"
+  else
+    warn "Layer 9 systemd-nspawn binary missing: ${NIX_LAYER9_NSPAWN_BIN}"
+  fi
+
+  if [ -d "${NIX_LAYER9_GUEST_ROOT}" ]; then
+    ok "Layer 9 guest root exists: ${NIX_LAYER9_GUEST_ROOT}"
+    if layer9_guest_root_ready; then
+      ok "Layer 9 guest root has proof-ready shape"
+    else
+      warn "Layer 9 guest root exists but lacks expected etc/usr/nix directories"
+    fi
+  else
+    ok "Layer 9 guest root absent (stage rootfs before proof): ${NIX_LAYER9_GUEST_ROOT}"
+  fi
+
+  if layer9_running; then
+    warn "Layer 9 manual guest appears to be running"
+  else
+    ok "Layer 9 manual guest not running"
+  fi
+
+  ok "Layer 9 fallback: host Layers 4/8 remain the recovery path; guest cleanup must not touch host Nix state"
+}
+
 check_network() {
   if [ "${CHECK_NETWORK}" -eq 0 ]; then
     warn "network checks skipped"
@@ -875,6 +991,7 @@ check_layer5
 check_layer6
 check_layer7
 check_layer8
+check_layer9
 
 if [ "${FAILURES}" -eq 0 ]; then
   echo "nix-doctor: passed with ${WARNINGS} warning(s)"
