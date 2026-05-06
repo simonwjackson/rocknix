@@ -52,6 +52,8 @@ NIX_LAYER10_MEMORY_MAX="${NIX_LAYER10_MEMORY_MAX:-1G}"
 NIX_LAYER10_TASKS_MAX="${NIX_LAYER10_TASKS_MAX:-512}"
 NIX_LAYER11_STATE_DIR="${NIX_LAYER11_STATE_DIR:-/storage/.config/nix-integration/layer11}"
 NIX_LAYER11_BIN_DIR="${NIX_LAYER11_BIN_DIR:-/storage/bin}"
+NIX_LAYER12_STATE_DIR="${NIX_LAYER12_STATE_DIR:-/storage/.config/nix-integration/layer12}"
+NIX_LAYER12_DEFAULT_SSH_PORT="${NIX_LAYER12_DEFAULT_SSH_PORT:-2222}"
 CHECK_NETWORK=1
 FAILURES=0
 WARNINGS=0
@@ -467,6 +469,81 @@ layer11_eligibility() {
     invalid) echo "unsupported: Layer 10 guest root invalid" ;;
     failed|partial) echo "unsupported: Layer 10 guest state requires cleanup or repair" ;;
     *) echo "unsupported: Layer 10 guest state unknown" ;;
+  esac
+}
+
+
+layer12_service_dir() {
+  echo "${NIX_LAYER12_STATE_DIR}/ssh"
+}
+
+layer12_metadata_file() {
+  echo "$(layer12_service_dir)/metadata"
+}
+
+layer12_metadata_value() {
+  key=$1
+  layer11_metadata_value "${key}" "$(layer12_metadata_file)"
+}
+
+layer12_port_valid() {
+  port=$1
+  case "${port}" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "${port}" -ge 1024 ] 2>/dev/null || return 1
+  [ "${port}" -le 65535 ] 2>/dev/null || return 1
+  [ "${port}" -ne 22 ] 2>/dev/null || return 1
+  return 0
+}
+
+layer12_config_state() {
+  layer12_metadata_value state 2>/dev/null || echo unconfigured
+}
+
+layer12_ssh_port() {
+  layer12_metadata_value port 2>/dev/null || echo "${NIX_LAYER12_DEFAULT_SSH_PORT}"
+}
+
+layer12_authorized_keys() {
+  layer12_metadata_value authorized_keys 2>/dev/null || true
+}
+
+layer12_state() {
+  metadata=$(layer12_metadata_file)
+  [ -f "${metadata}" ] || { echo unconfigured; return; }
+  service=$(layer12_metadata_value service 2>/dev/null || true)
+  [ "${service}" = "ssh" ] || { echo failed; return; }
+  config_state=$(layer12_config_state)
+  case "${config_state}" in
+    disabled) echo disabled; return ;;
+    configured) ;;
+    *) echo failed; return ;;
+  esac
+  port=$(layer12_ssh_port)
+  layer12_port_valid "${port}" || { echo failed; return; }
+  keys=$(layer12_authorized_keys)
+  [ -n "${keys}" ] && [ -s "${keys}" ] || { echo failed; return; }
+  if layer10_running; then
+    echo running
+  elif [ "$(layer10_rootfs_mode)" = "bootable" ] && [ -f "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" ]; then
+    echo ready
+  else
+    echo configured
+  fi
+}
+
+layer12_eligibility() {
+  [ "$(layer10_rootfs_mode)" = "bootable" ] || { echo "unsupported: Layer 12 SSH requires Layer 10b bootable rootfs"; return; }
+  [ -f "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" ] || { echo "unsupported: Layer 12 SSH requires Layer 10b provenance"; return; }
+  grep -q '^sha256=' "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" 2>/dev/null || { echo "unsupported: Layer 10b provenance missing sha256"; return; }
+  state=$(layer12_state)
+  case "${state}" in
+    unconfigured) echo "available: Layer 12 guest SSH can be configured" ;;
+    disabled) echo "available: Layer 12 guest SSH metadata disabled" ;;
+    configured|ready|running) echo "available: Layer 12 guest SSH configured on port $(layer12_ssh_port)" ;;
+    failed) echo "unsupported: Layer 12 guest SSH metadata failed guardrails" ;;
+    *) echo "unsupported: Layer 12 guest SSH state unknown" ;;
   esac
 }
 
@@ -1070,6 +1147,76 @@ check_layer10() {
   ok "Layer 10 fallback: host SSH and Layers 4/8 remain the recovery path"
 }
 
+
+check_layer12() {
+  state=$(layer12_state)
+  eligibility=$(layer12_eligibility)
+  metadata=$(layer12_metadata_file)
+
+  ok "Layer 12 guest SSH state: ${state}"
+  ok "Layer 12 guest SSH state dir: ${NIX_LAYER12_STATE_DIR}"
+
+  case "${state}" in
+    unconfigured|disabled|configured|ready)
+      ;;
+    running)
+      warn "Layer 12 guest SSH appears to be running; stop the guest when finished"
+      ;;
+    failed)
+      fail_check "Layer 12 guest SSH metadata failed guardrails: ${metadata}"
+      ;;
+    *)
+      warn "Layer 12 guest SSH state has unexpected value: ${state}"
+      ;;
+  esac
+
+  case "${eligibility}" in
+    available:*) ok "Layer 12 guest SSH eligibility: ${eligibility}" ;;
+    unsupported:*) warn "Layer 12 guest SSH eligibility: ${eligibility}" ;;
+    *) warn "Layer 12 guest SSH eligibility: ${eligibility}" ;;
+  esac
+
+  if [ -f "${metadata}" ]; then
+    service=$(layer12_metadata_value service 2>/dev/null || true)
+    if [ "${service}" = "ssh" ]; then
+      ok "Layer 12 service metadata: ssh"
+    else
+      fail_check "Layer 12 service metadata has unexpected service: ${service:-missing}"
+    fi
+
+    port=$(layer12_ssh_port)
+    if [ "${port}" = "22" ]; then
+      fail_check "Layer 12 guest SSH must not bind host port 22"
+    elif layer12_port_valid "${port}"; then
+      ok "Layer 12 guest SSH port: ${port}"
+    else
+      fail_check "Layer 12 guest SSH port invalid: ${port}"
+    fi
+
+    keys=$(layer12_authorized_keys)
+    if [ -n "${keys}" ] && [ -s "${keys}" ]; then
+      ok "Layer 12 authorized keys present: ${keys}"
+    else
+      fail_check "Layer 12 authorized keys missing or empty: ${keys:-missing}"
+    fi
+
+    if layer12_metadata_value authorized_keys_sha256 >/dev/null 2>&1; then
+      ok "Layer 12 authorized keys checksum recorded"
+    else
+      fail_check "Layer 12 authorized keys checksum missing"
+    fi
+
+    if [ -f "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" ] && grep -q '^sha256=' "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" 2>/dev/null; then
+      ok "Layer 12 Layer 10b provenance dependency recorded"
+    else
+      fail_check "Layer 12 configured without Layer 10b provenance"
+    fi
+  fi
+
+  ok "Layer 12 auth policy: key-only guest SSH; password auth disabled in guest config"
+  ok "Layer 12 fallback: host SSH on port 22 remains the recovery path"
+}
+
 check_layer11() {
   eligibility=$(layer11_eligibility)
   bridge_count=$(layer11_bridge_count)
@@ -1155,6 +1302,7 @@ check_layer8
 check_layer9
 check_layer10
 check_layer11
+check_layer12
 
 if [ "${FAILURES}" -eq 0 ]; then
   echo "nix-doctor: passed with ${WARNINGS} warning(s)"

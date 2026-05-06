@@ -149,6 +149,17 @@ grep -q 'NIX_LAYER11_STATE_DIR=' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-do
 grep -q 'NIX_LAYER11_BIN_DIR=' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing fixtureable Layer 11 bin dir"
 grep -q 'check_layer11' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 11 checks"
 grep -q 'Layer 11 bridge eligibility' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 11 eligibility output"
+grep -q 'NIX_LAYER12_STATE_DIR=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing fixtureable Layer 12 state dir"
+grep -q 'NIX_LAYER12_STATE_DIR=' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing fixtureable Layer 12 state dir"
+grep -q 'Layer 12 (opt-in guest SSH) status' "${PKG_DIR}/scripts/nixctl" || fail "nixctl status missing Layer 12 section"
+grep -q 'cmd_guest_service' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 guest service dispatch"
+grep -q 'guest service enable ssh' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 SSH enable command"
+grep -q 'refusing unsafe port: ${port}' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 port guard"
+grep -q -- '--port=tcp:%s:22' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 alternate-port nspawn mapping"
+grep -q -- '--bind-ro=%s:%s' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 authorized-keys bind"
+grep -q 'check_layer12' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 12 checks"
+grep -q 'Layer 12 guest SSH eligibility' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 12 eligibility output"
+grep -q 'must not bind host port 22' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 12 port 22 guardrail"
 for sub in status install upgrade uninstall doctor user-env daemon guest bridge; do
   # Subcommand can appear as 'sub)' (alone), 'sub|other)' (left of alt),
   # or '...|sub)' (right of alt). Match by requiring sub to be preceded by
