@@ -1,10 +1,11 @@
 ---
 title: feat: Add Layer 11 one-shot guest-backed bridges
 type: feat
-status: implemented-pending-hardware-validation
+status: completed
 date: 2026-05-06
 origin: docs/plans/2026-05-06-001-feat-nix-layer-10-managed-guest-operations-plan.md
-implementation_status: implemented with static and fixture runtime coverage; hardware Go pending rebuilt image validation
+validated_on: 2026-05-06
+validation_scope: one-shot bridge hardware Go; persistent services and guest SSH deferred
 ---
 
 # feat: Add Layer 11 one-shot guest-backed bridges
@@ -17,7 +18,7 @@ This is intentionally smaller than the broader Layer 11 idea of guest-backed ser
 
 ## Implementation Status
 
-Implemented on branch `feat/nix-layer-11-one-shot-guest-bridges` with static and fixture runtime coverage. Hardware validation still requires a rebuilt SM8550 image that includes the Layer 11 `nixctl`/`nix-doctor` changes.
+Implemented on branch `feat/nix-layer-11-one-shot-guest-bridges` with static, fixture runtime, and SM8550 hardware coverage.
 
 Implemented command surface:
 
@@ -31,7 +32,7 @@ nixctl bridge remove <name>
 
 Fixture validation covers bridge status/preflight, unsafe names, owned install/reinstall, non-owned target conflict refusal, wrapper execution through fake `systemd-nspawn`, metadata cleanup, doctor reporting, and the opt-in `LAYER11_SMOKE=1` hardware smoke path.
 
-Hardware-Go remains pending. Until that passes, Layer 11 should be treated as implemented-but-not-device-approved.
+Hardware-Go passed for the one-shot bridge scope on `thor` with build `d5d5aa3b9812562495f2f94ebc88950f9c7d7d40`. Persistent services, guest SSH, autostart, graphics/audio/input, and bootable-guest-dependent bridges remain out of scope.
 
 ## Problem Frame
 
@@ -173,7 +174,7 @@ The exact serialization format is an implementation decision, but it must be lin
 - Remove deletes owned wrapper and metadata only.
 - Unsafe bridge names are rejected.
 
-### Unit 4: Add bridge run/test and hardware smoke *(complete; hardware execution pending rebuilt image)*
+### Unit 4: Add bridge run/test and hardware smoke *(complete; hardware validated on `thor`)*
 
 **Goal:** Validate that the installed bridge works as a host command and leaves no guest running.
 
@@ -193,7 +194,7 @@ The exact serialization format is an implementation decision, but it must be lin
 - Successful run leaves no `systemd-nspawn` process.
 - Smoke cleanup removes bridge wrapper and metadata.
 
-### Unit 5: Update docs and Layer 12 handoff *(complete for implementation; hardware Go/No-Go pending)*
+### Unit 5: Update docs and Layer 12 handoff *(complete; one-shot bridge Go)*
 
 **Goal:** Record validation evidence and define the next boundary.
 
@@ -215,7 +216,7 @@ The exact serialization format is an implementation decision, but it must be lin
 
 ## Hardware Validation Plan
 
-Use a rebuilt image that includes Layer 11 implementation. Before rebooting into updater on SM8550, repeat the ABL slot precheck.
+Hardware validation used a rebuilt image that includes the Layer 11 implementation. Before rebooting into updater on SM8550, the ABL slot precheck was repeated and both slots matched, so the bootloader flash path was skipped.
 
 Minimum proof on `thor`:
 
@@ -228,11 +229,27 @@ nix-doctor --offline
 nixctl bridge remove layer11-nix-version
 ```
 
-Expected bridge output:
+Hardware validation evidence (2026-05-06):
 
 ```text
-nix (Nix) 2.34.7
+GitHub Actions run: 25447891714
+Artifact: ROCKNIX-update-SM8550-20260506
+Installed BUILD_ID: d5d5aa3b9812562495f2f94ebc88950f9c7d7d40
+Installed BUILD_BRANCH: feat/nix-layer-11-one-shot-guest-bridges
+ABL precheck: abl_a MATCH, abl_b MATCH (no bootloader flash)
+Default bridge state: bridges: 0, eligible: available: Layer 10 one-shot guest execution ready
+Bridge installed: /storage/bin/layer11-nix-version
+Bridge output: nix (Nix) 2.34.7
+Post-run Layer 10 state: proof-ready, running: no
+nix-doctor --offline: passed with expected pre-existing warnings
+Bridge cleanup: wrapper and metadata removed; bridges: 0
+Packaged smoke script: not installed in image, so manual command sequence is the hardware evidence
 ```
+
+Go / No-Go decision:
+
+- Go: Layer 11 one-shot guest-backed bridges on SM8550/Odin2 Portal.
+- No-Go: persistent services, alternate-port guest SSH, autostart, graphics/audio/input passthrough, and bootable-guest-dependent bridges remain blocked until Layer 10 bootable lifecycle validation passes.
 
 No-Go conditions:
 
