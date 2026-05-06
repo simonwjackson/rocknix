@@ -205,6 +205,46 @@ NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
   "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer10-doctor-bootable.log || true
 grep -q 'Layer 10 guest lifecycle state: bootable-ready' /tmp/nix-layer10-doctor-bootable.log
 grep -q 'Layer 10 guest eligibility: available: bootable guest root ready for manual start' /tmp/nix-layer10-doctor-bootable.log
+mkdir -p "${TMP_DIR}/layer10-import-src/sbin"
+printf '#!/bin/sh\n' >"${TMP_DIR}/layer10-import-src/sbin/init"
+chmod 0755 "${TMP_DIR}/layer10-import-src/sbin/init"
+tar -cf "${TMP_DIR}/layer10-bootable.tar" -C "${TMP_DIR}/layer10-import-src" .
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+  "${PKG_DIR}/scripts/nixctl" guest import --bootable "${TMP_DIR}/layer10-bootable.tar" >/tmp/nix-layer10-import.log
+[ -x "${TMP_DIR}/layer10-import-root/sbin/init" ]
+grep -q 'bootable-ready' "${TMP_DIR}/layer10-import-state/state"
+grep -q '^sha256=' "${TMP_DIR}/layer10-import-state/rootfs-provenance"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-doctor-state" \
+NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
+  "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer10-import-doctor.log || true
+grep -q 'Layer 10 bootable provenance recorded' /tmp/nix-layer10-import-doctor.log
+if NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+  "${PKG_DIR}/scripts/nixctl" guest import --bootable "${TMP_DIR}/layer10-bootable.tar" >/tmp/nix-layer10-import-existing.log 2>&1; then
+  echo 'expected Layer 10 bootable import to refuse existing root' >&2
+  exit 1
+fi
+grep -q 'root already exists' /tmp/nix-layer10-import-existing.log
+if NIX_LAYER10_GUEST_ROOT="/storage" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-unsafe-state" \
+  "${PKG_DIR}/scripts/nixctl" guest import --bootable "${TMP_DIR}/layer10-bootable.tar" >/tmp/nix-layer10-import-unsafe.log 2>&1; then
+  echo 'expected Layer 10 bootable import to refuse unsafe root' >&2
+  exit 1
+fi
+grep -q 'refusing unsafe guest root' /tmp/nix-layer10-import-unsafe.log
+if NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-missing-root" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-missing-state" \
+  "${PKG_DIR}/scripts/nixctl" guest import --bootable "${TMP_DIR}/missing-layer10.tar" >/tmp/nix-layer10-import-missing.log 2>&1; then
+  echo 'expected Layer 10 bootable import to refuse missing artifact' >&2
+  exit 1
+fi
+grep -q 'artifact is not a regular file' /tmp/nix-layer10-import-missing.log
 mkdir -p "${TMP_DIR}/layer10-stale-state"
 printf 'running\n' >"${TMP_DIR}/layer10-stale-state/state"
 NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
