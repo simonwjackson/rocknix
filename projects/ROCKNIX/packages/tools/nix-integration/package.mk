@@ -29,6 +29,10 @@ post_install() {
     ${INSTALL}/usr/bin/nix-layer-activate \
     ${INSTALL}/usr/bin/nixctl
 
+  mkdir -p ${INSTALL}/usr/lib/nix-integration/tests
+  cp ${PKG_DIR}/tests/nix-integration-runtime-smoke.sh ${INSTALL}/usr/lib/nix-integration/tests
+  chmod 0755 ${INSTALL}/usr/lib/nix-integration/tests/nix-integration-runtime-smoke.sh
+
   enable_service nix-storage-setup.service
   enable_service nix.mount
 
