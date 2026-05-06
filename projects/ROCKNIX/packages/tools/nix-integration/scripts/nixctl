@@ -112,8 +112,9 @@ Subcommands:
   daemon <action>        Manage experimental Layer 8 nix-daemon mode.
                          Actions: status, preflight, enable, disable, rollback.
   guest <action>         Manage Layer 10 nspawn guest operations.
-                         Actions: status, preflight, init --proof, run <cmd>,
-                         shell, start, stop, cleanup [--yes].
+                         Actions: status, preflight, init --proof,
+                         import --bootable <artifact>, run <cmd>, shell,
+                         start, stop, cleanup [--yes].
   bridge <action>        Manage Layer 11 one-shot guest-backed bridges.
                          Actions: status, preflight <name>, install <name> -- <cmd>,
                          run <name>, remove <name>.
@@ -834,6 +835,13 @@ print_layer10_status() {
   echo "  guest root: ${NIX_LAYER10_GUEST_ROOT}"
   echo "  state dir:  ${NIX_LAYER10_STATE_DIR}"
   echo "  unit:       ${unit_path}"
+  if [ "${mode}" = "bootable" ]; then
+    if [ -f "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" ]; then
+      echo "  provenance: recorded"
+    else
+      echo "  provenance: missing"
+    fi
+  fi
   echo "  unit run:   $(systemctl_state "${NIX_LAYER10_UNIT_NAME}")"
   echo "  resources:  CPUWeight=${NIX_LAYER10_CPU_WEIGHT} IOWeight=${NIX_LAYER10_IO_WEIGHT} MemoryMax=${NIX_LAYER10_MEMORY_MAX} TasksMax=${NIX_LAYER10_TASKS_MAX}"
   if layer10_running; then
@@ -1419,7 +1427,12 @@ layer10_resolve_bash_bin() {
 
 cmd_guest_init() {
   mode=${1:-}
-  [ "${mode}" = "--proof" ] || fail "guest init currently supports only: --proof"
+  if [ "${mode}" = "--bootable" ]; then
+    shift || true
+    cmd_guest_import --bootable "$@"
+    return
+  fi
+  [ "${mode}" = "--proof" ] || fail "guest init currently supports only: --proof or --bootable <artifact>"
   [ ! -e "${NIX_LAYER10_GUEST_ROOT}" ] || fail "guest init: root already exists: ${NIX_LAYER10_GUEST_ROOT}; run guest cleanup --yes first"
   [ -x "${NIX_LAYER10_NIX_BIN}" ] || fail "guest init: real nix binary missing: ${NIX_LAYER10_NIX_BIN}"
   [ -x "${NIX_LAYER10_NIX_STORE_BIN}" ] || fail "guest init: nix-store binary missing: ${NIX_LAYER10_NIX_STORE_BIN}"
@@ -1579,6 +1592,93 @@ layer10_cleanup_state_path_safe() {
   return 1
 }
 
+layer10_archive_entry_safe() {
+  entry=$1
+  [ -n "${entry}" ] || return 1
+  case "${entry}" in
+    /*|../*|*/../*|..|*/..) return 1 ;;
+  esac
+  return 0
+}
+
+layer10_archive_safe() {
+  archive=$1
+  tar -tf "${archive}" 2>/dev/null | while IFS= read -r entry; do
+    layer10_archive_entry_safe "${entry}" || {
+      echo "unsafe archive entry: ${entry}" >&2
+      exit 1
+    }
+  done
+}
+
+layer10_extract_archive() {
+  archive=$1
+  dest=$2
+  case "${archive}" in
+    *.tar.zst|*.tzst)
+      if tar --help 2>/dev/null | grep -q -- '--zstd'; then
+        tar --zstd -xf "${archive}" -C "${dest}"
+      elif have zstd; then
+        zstd -dc "${archive}" | tar -xf - -C "${dest}"
+      else
+        fail "guest import: .tar.zst artifact requires tar --zstd or zstd"
+      fi
+      ;;
+    *.tar.xz|*.txz) tar -xJf "${archive}" -C "${dest}" ;;
+    *.tar.gz|*.tgz) tar -xzf "${archive}" -C "${dest}" ;;
+    *.tar.bz2|*.tbz2) tar -xjf "${archive}" -C "${dest}" ;;
+    *.tar) tar -xf "${archive}" -C "${dest}" ;;
+    *) fail "guest import: unsupported artifact type: ${archive}" ;;
+  esac
+}
+
+cmd_guest_import() {
+  mode=${1:-}
+  [ "${mode}" = "--bootable" ] || fail "guest import currently supports only: --bootable <artifact>"
+  shift || true
+  artifact=${1:-}
+  [ -n "${artifact}" ] || fail "guest import --bootable: missing artifact"
+  [ -f "${artifact}" ] || fail "guest import --bootable: artifact is not a regular file: ${artifact}"
+  [ ! -e "${NIX_LAYER10_GUEST_ROOT}" ] || fail "guest import --bootable: root already exists: ${NIX_LAYER10_GUEST_ROOT}; run guest cleanup --yes first"
+  layer10_cleanup_path_safe "${NIX_LAYER10_GUEST_ROOT}" || fail "guest import --bootable: refusing unsafe guest root: ${NIX_LAYER10_GUEST_ROOT}"
+  layer10_cleanup_state_path_safe "${NIX_LAYER10_STATE_DIR}" || fail "guest import --bootable: refusing unsafe state dir: ${NIX_LAYER10_STATE_DIR}"
+  layer10_archive_safe "${artifact}" || fail "guest import --bootable: archive contains unsafe paths"
+
+  parent=${NIX_LAYER10_GUEST_ROOT%/*}
+  [ -n "${parent}" ] || parent=/
+  mkdir -p "${parent}"
+  tmp_root="${NIX_LAYER10_GUEST_ROOT}.tmp.$$"
+  rm -rf "${tmp_root}" 2>/dev/null || true
+  mkdir -p "${tmp_root}"
+  if ! layer10_extract_archive "${artifact}" "${tmp_root}"; then
+    rm -rf "${tmp_root}" 2>/dev/null || true
+    fail "guest import --bootable: extraction failed"
+  fi
+
+  if NIX_LAYER10_GUEST_ROOT="${tmp_root}" layer10_rootfs_mode | grep -q '^bootable$'; then
+    :
+  else
+    rm -rf "${tmp_root}" 2>/dev/null || true
+    fail "guest import --bootable: extracted artifact is not a bootable rootfs"
+  fi
+
+  mkdir -p "${NIX_LAYER10_STATE_DIR}"
+  mv "${tmp_root}" "${NIX_LAYER10_GUEST_ROOT}"
+  artifact_sha=$(sha256_of "${artifact}")
+  provenance="${NIX_LAYER10_STATE_DIR}/rootfs-provenance"
+  {
+    printf 'mode=bootable\n'
+    printf 'source=%s\n' "${artifact##*/}"
+    printf 'source_path=%s\n' "$(canonical_path "${artifact}")"
+    printf 'sha256=%s\n' "${artifact_sha}"
+    printf 'guest_root=%s\n' "${NIX_LAYER10_GUEST_ROOT}"
+    date -u '+imported_at=%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf 'imported_at=unknown\n'
+  } >"${provenance}"
+  layer10_write_state bootable-ready
+  info "Layer 10 bootable rootfs imported: ${NIX_LAYER10_GUEST_ROOT}"
+  note "sha256: ${artifact_sha}"
+}
+
 cmd_guest_cleanup() {
   assume_yes=0
   while [ $# -gt 0 ]; do
@@ -1612,7 +1712,7 @@ cmd_guest_cleanup() {
 }
 
 cmd_guest() {
-  [ $# -gt 0 ] || fail "guest: missing action (status, preflight, init, run, shell, start, stop, cleanup)"
+  [ $# -gt 0 ] || fail "guest: missing action (status, preflight, init, import, run, shell, start, stop, cleanup)"
   action=$1
   shift
   case "${action}" in
@@ -1624,6 +1724,9 @@ cmd_guest() {
       ;;
     init)
       cmd_guest_init "$@"
+      ;;
+    import)
+      cmd_guest_import "$@"
       ;;
     run)
       cmd_guest_run "$@"

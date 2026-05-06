@@ -1022,6 +1022,15 @@ check_layer10() {
     ok "Layer 10 guest root absent: ${NIX_LAYER10_GUEST_ROOT}"
   fi
 
+  if [ "${mode}" = "bootable" ]; then
+    provenance="${NIX_LAYER10_STATE_DIR}/rootfs-provenance"
+    if [ -f "${provenance}" ] && grep -q '^sha256=' "${provenance}" 2>/dev/null; then
+      ok "Layer 10 bootable provenance recorded: ${provenance}"
+    else
+      warn "Layer 10 bootable provenance missing: ${provenance}"
+    fi
+  fi
+
   if layer10_running; then
     warn "Layer 10 guest appears to be running"
   else
