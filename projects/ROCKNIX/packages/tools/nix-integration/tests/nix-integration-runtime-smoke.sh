@@ -283,6 +283,18 @@ NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
   "${PKG_DIR}/scripts/nixctl" guest service status >/tmp/nix-layer12-status-ready.log
 grep -q 'state:      ready' /tmp/nix-layer12-status-ready.log
 grep -q 'port:       2222' /tmp/nix-layer12-status-ready.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-doctor-state" \
+NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
+  "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer12-doctor.log || true
+grep -q 'Layer 12 guest SSH state: ready' /tmp/nix-layer12-doctor.log
+grep -q 'Layer 12 guest SSH port: 2222' /tmp/nix-layer12-doctor.log
+grep -q 'Layer 12 authorized keys checksum recorded' /tmp/nix-layer12-doctor.log
 NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
   "${PKG_DIR}/scripts/nixctl" guest service disable ssh >/tmp/nix-layer12-disable.log
 grep -q 'Layer 12 guest SSH disabled' /tmp/nix-layer12-disable.log
