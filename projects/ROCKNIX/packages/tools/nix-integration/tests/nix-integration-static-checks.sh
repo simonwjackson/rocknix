@@ -160,6 +160,8 @@ grep -q -- '--bind-ro=%s:%s' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing
 grep -q 'check_layer12' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 12 checks"
 grep -q 'Layer 12 guest SSH eligibility' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 12 eligibility output"
 grep -q 'must not bind host port 22' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 12 port 22 guardrail"
+grep -q 'LAYER12_SMOKE=ssh' "${PKG_DIR}/tests/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 12 SSH mode"
+grep -q 'Layer 12 guest SSH did not return nix version' "${PKG_DIR}/tests/nix-integration-runtime-smoke.sh" || fail "Layer 12 smoke must execute a real SSH command"
 for sub in status install upgrade uninstall doctor user-env daemon guest bridge; do
   # Subcommand can appear as 'sub)' (alone), 'sub|other)' (left of alt),
   # or '...|sub)' (right of alt). Match by requiring sub to be preceded by

@@ -1,7 +1,7 @@
 ---
 title: feat: Add Layer 12 opt-in guest SSH service
 type: feat
-status: active
+status: implemented-pending-hardware-validation
 date: 2026-05-06
 origin: docs/plans/2026-05-06-003-feat-nix-layer-10b-bootable-rootfs-plan.md
 ---
