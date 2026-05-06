@@ -1161,6 +1161,7 @@ L10_MODE="${LAYER10_SMOKE:-proof}"
 L10_NSPAWN="${LAYER10_NSPAWN_BIN:-${NIX_LAYER10_NSPAWN_BIN:-/usr/bin/systemd-nspawn}}"
 L10_ROOT="${LAYER10_GUEST_ROOT:-${NIX_LAYER10_GUEST_ROOT:-/storage/machines/rocknix-guest}}"
 L10_STATE="${LAYER10_STATE_DIR:-${NIX_LAYER10_STATE_DIR:-/storage/.config/nix-integration/layer10}}"
+L10_PROVENANCE="${L10_STATE}/rootfs-provenance"
 L10_TIMEOUT="${LAYER10_TIMEOUT:-45}"
 L10_PROOF_COMMAND="${LAYER10_PROOF_COMMAND:-printf 'layer10-guest-proof\\n'; if command -v nix >/dev/null 2>&1; then nix --version; fi}"
 rm -f "${L10_LOG}"
@@ -1217,6 +1218,11 @@ case "${L10_MODE}" in
       || { echo 'FAIL: Layer 10 guest proof marker missing' >&2; exit 1; }
     ;;
   bootable)
+    log10 'pre-flight: bootable provenance'
+    [ -f "${L10_PROVENANCE}" ] || { echo "FAIL: Layer 10 bootable smoke requires provenance metadata at ${L10_PROVENANCE}" >&2; exit 1; }
+    grep -q '^sha256=' "${L10_PROVENANCE}" \
+      || { echo "FAIL: Layer 10 bootable provenance missing sha256: ${L10_PROVENANCE}" >&2; exit 1; }
+    log10 "provenance: $(grep '^sha256=' "${L10_PROVENANCE}" | head -1)"
     log10 'start: manual bootable guest start'
     NIX_LAYER10_NSPAWN_BIN="${L10_NSPAWN}" \
     NIX_LAYER10_GUEST_ROOT="${L10_ROOT}" \
