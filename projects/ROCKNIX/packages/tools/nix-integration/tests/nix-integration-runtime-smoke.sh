@@ -227,6 +227,76 @@ NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-doctor-state" \
 NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
   "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer10-import-doctor.log || true
 grep -q 'Layer 10 bootable provenance recorded' /tmp/nix-layer10-import-doctor.log
+mkdir -p "${TMP_DIR}/storage-keys"
+printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILayer12RuntimeSmokeKey layer12-smoke\n' >"${TMP_DIR}/storage-keys/authorized_keys"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service status >/tmp/nix-layer12-status-unconfigured.log
+grep -q 'Layer 12 (opt-in guest SSH) status' /tmp/nix-layer12-status-unconfigured.log
+grep -q 'state:      unconfigured' /tmp/nix-layer12-status-unconfigured.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service preflight ssh >/tmp/nix-layer12-preflight.log
+grep -q 'Layer 12 guest SSH preflight passed' /tmp/nix-layer12-preflight.log
+if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+  NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+  NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service enable ssh --port 2222 >/tmp/nix-layer12-enable-missing-keys.log 2>&1; then
+  echo 'expected Layer 12 SSH enable to require authorized keys' >&2
+  exit 1
+fi
+grep -q -- '--authorized-keys is required' /tmp/nix-layer12-enable-missing-keys.log
+if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+  NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+  NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service enable ssh --port 22 --authorized-keys "${TMP_DIR}/storage-keys/authorized_keys" >/tmp/nix-layer12-enable-port22.log 2>&1; then
+  echo 'expected Layer 12 SSH enable to refuse port 22' >&2
+  exit 1
+fi
+grep -q 'refusing unsafe port: 22' /tmp/nix-layer12-enable-port22.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service enable ssh --port 2222 --authorized-keys "${TMP_DIR}/storage-keys/authorized_keys" >/tmp/nix-layer12-enable.log
+grep -q 'Layer 12 guest SSH configured on host port 2222' /tmp/nix-layer12-enable.log
+grep -q '^service=ssh' "${TMP_DIR}/layer12-state/ssh/metadata"
+grep -q '^state=configured' "${TMP_DIR}/layer12-state/ssh/metadata"
+grep -q '^port=2222' "${TMP_DIR}/layer12-state/ssh/metadata"
+grep -q '^authorized_keys_sha256=' "${TMP_DIR}/layer12-state/ssh/metadata"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service status >/tmp/nix-layer12-status-ready.log
+grep -q 'state:      ready' /tmp/nix-layer12-status-ready.log
+grep -q 'port:       2222' /tmp/nix-layer12-status-ready.log
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service disable ssh >/tmp/nix-layer12-disable.log
+grep -q 'Layer 12 guest SSH disabled' /tmp/nix-layer12-disable.log
+grep -q '^state=disabled' "${TMP_DIR}/layer12-state/ssh/metadata"
+if NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service remove ssh >/tmp/nix-layer12-remove-without-yes.log 2>&1; then
+  echo 'expected Layer 12 SSH remove to require --yes' >&2
+  exit 1
+fi
+grep -q 'without --yes' /tmp/nix-layer12-remove-without-yes.log
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service remove ssh --yes >/tmp/nix-layer12-remove.log
+grep -q 'Layer 12 guest SSH metadata removed' /tmp/nix-layer12-remove.log
+[ ! -e "${TMP_DIR}/layer12-state/ssh" ]
 mkdir -p "${TMP_DIR}/layer10-import-symlink-src/sbin" "${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin"
 printf '#!/bin/sh\n' >"${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin/init"
 chmod 0755 "${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin/init"

@@ -78,6 +78,9 @@ NIX_LAYER10_BASH_BIN="${NIX_LAYER10_BASH_BIN:-}"
 NIX_LAYER11_STATE_DIR="${NIX_LAYER11_STATE_DIR:-/storage/.config/nix-integration/layer11}"
 NIX_LAYER11_BIN_DIR="${NIX_LAYER11_BIN_DIR:-/storage/bin}"
 NIX_LAYER11_NIXCTL_BIN="${NIX_LAYER11_NIXCTL_BIN:-/usr/bin/nixctl}"
+NIX_LAYER12_STATE_DIR="${NIX_LAYER12_STATE_DIR:-/storage/.config/nix-integration/layer12}"
+NIX_LAYER12_DEFAULT_SSH_PORT="${NIX_LAYER12_DEFAULT_SSH_PORT:-2222}"
+NIX_LAYER12_AUTHORIZED_KEYS_DEST="${NIX_LAYER12_AUTHORIZED_KEYS_DEST:-/etc/ssh/authorized_keys.d/root}"
 
 # ---- SSL ------------------------------------------------------------------
 # Pre-set for the upstream installer so it skips its cacert derivation install
@@ -115,7 +118,7 @@ Subcommands:
   guest <action>         Manage Layer 10 nspawn guest operations.
                          Actions: status, preflight, init --proof,
                          import --bootable <artifact>, run <cmd>, shell,
-                         start, stop, cleanup [--yes].
+                         start, stop, cleanup [--yes], service <action>.
   bridge <action>        Manage Layer 11 one-shot guest-backed bridges.
                          Actions: status, preflight <name>, install <name> -- <cmd>,
                          run <name>, remove <name>.
@@ -142,6 +145,8 @@ Environment overrides (defaults shown):
   NIX_LAYER11_STATE_DIR  ${NIX_LAYER11_STATE_DIR}
   NIX_LAYER11_BIN_DIR    ${NIX_LAYER11_BIN_DIR}
   NIX_LAYER11_NIXCTL_BIN ${NIX_LAYER11_NIXCTL_BIN}
+  NIX_LAYER12_STATE_DIR  ${NIX_LAYER12_STATE_DIR}
+  NIX_LAYER12_DEFAULT_SSH_PORT ${NIX_LAYER12_DEFAULT_SSH_PORT}
   NIX_TARBALL_URL        ${NIX_TARBALL_URL}
   NIX_TARBALL_SHA256     ${NIX_TARBALL_SHA256}
   NIX_FORCE              Set to 1 to override safety checks (rare)
@@ -982,6 +987,128 @@ print_layer11_status() {
   echo "  fallback:   host SSH remains the recovery path; bridges must leave Layer 10 stopped"
 }
 
+
+layer12_service_dir() {
+  echo "${NIX_LAYER12_STATE_DIR}/ssh"
+}
+
+layer12_metadata_file() {
+  echo "$(layer12_service_dir)/metadata"
+}
+
+layer12_state_path_safe() {
+  path=$1
+  real=$(canonical_path "${path}")
+  case "${real}" in
+    /storage/.config/nix-integration/layer12|/tmp/*/layer12-*) return 0 ;;
+  esac
+  return 1
+}
+
+layer12_authorized_keys_path_safe() {
+  path=$1
+  case "${path}" in
+    *[[:space:]]*) return 1 ;;
+  esac
+  real=$(canonical_path "${path}")
+  case "${real}" in
+    /storage/*|/tmp/*) return 0 ;;
+  esac
+  return 1
+}
+
+layer12_port_valid() {
+  port=$1
+  case "${port}" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "${port}" -ge 1024 ] 2>/dev/null || return 1
+  [ "${port}" -le 65535 ] 2>/dev/null || return 1
+  [ "${port}" -ne 22 ] 2>/dev/null || return 1
+  return 0
+}
+
+layer12_metadata_value() {
+  key=$1
+  metadata=$(layer12_metadata_file)
+  layer11_metadata_value "${key}" "${metadata}"
+}
+
+layer12_config_state() {
+  layer12_metadata_value state 2>/dev/null || echo unconfigured
+}
+
+layer12_configured() {
+  [ "$(layer12_config_state)" = "configured" ] || return 1
+  [ "$(layer12_metadata_value service 2>/dev/null || true)" = "ssh" ] || return 1
+}
+
+layer12_ssh_port() {
+  layer12_metadata_value port 2>/dev/null || echo "${NIX_LAYER12_DEFAULT_SSH_PORT}"
+}
+
+layer12_authorized_keys() {
+  layer12_metadata_value authorized_keys 2>/dev/null || true
+}
+
+layer12_state() {
+  metadata=$(layer12_metadata_file)
+  [ -f "${metadata}" ] || { echo unconfigured; return; }
+  service=$(layer12_metadata_value service 2>/dev/null || true)
+  [ "${service}" = "ssh" ] || { echo failed; return; }
+  config_state=$(layer12_config_state)
+  case "${config_state}" in
+    disabled) echo disabled; return ;;
+    configured) ;;
+    *) echo failed; return ;;
+  esac
+  port=$(layer12_ssh_port)
+  layer12_port_valid "${port}" || { echo failed; return; }
+  keys=$(layer12_authorized_keys)
+  [ -n "${keys}" ] && [ -s "${keys}" ] || { echo failed; return; }
+  if layer10_running; then
+    echo running
+  elif [ "$(layer10_rootfs_mode)" = "bootable" ] && [ -f "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" ]; then
+    echo ready
+  else
+    echo configured
+  fi
+}
+
+layer12_eligibility() {
+  layer12_state_path_safe "${NIX_LAYER12_STATE_DIR}" || { echo "unsupported: unsafe Layer 12 state dir: ${NIX_LAYER12_STATE_DIR}"; return; }
+  [ "$(layer10_rootfs_mode)" = "bootable" ] || { echo "unsupported: Layer 12 SSH requires Layer 10b bootable rootfs"; return; }
+  [ -f "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" ] || { echo "unsupported: Layer 12 SSH requires Layer 10b provenance"; return; }
+  grep -q '^sha256=' "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" 2>/dev/null || { echo "unsupported: Layer 10b provenance missing sha256"; return; }
+  state=$(layer12_state)
+  case "${state}" in
+    unconfigured) echo "available: Layer 12 guest SSH can be configured" ;;
+    disabled) echo "available: Layer 12 guest SSH metadata disabled" ;;
+    configured|ready|running) echo "available: Layer 12 guest SSH configured on port $(layer12_ssh_port)" ;;
+    failed) echo "unsupported: Layer 12 guest SSH metadata failed guardrails" ;;
+    *) echo "unsupported: Layer 12 guest SSH state unknown" ;;
+  esac
+}
+
+print_layer12_status() {
+  echo "Layer 12 (opt-in guest SSH) status"
+  echo "------------------------------------"
+  echo "  state:      $(layer12_state)"
+  echo "  state dir:  ${NIX_LAYER12_STATE_DIR}"
+  echo "  eligible:   $(layer12_eligibility)"
+  echo "  service:    ssh"
+  echo "  port:       $(layer12_ssh_port)"
+  keys=$(layer12_authorized_keys)
+  if [ -n "${keys}" ]; then
+    echo "  keys:       ${keys}"
+  else
+    echo "  keys:       unconfigured"
+  fi
+  echo "  host ssh:   port 22 reserved for ROCKNIX recovery"
+  echo "  auth:       key-only; password auth disabled in guest"
+  echo "  autostart:  disabled by contract"
+}
+
 print_layer7_status() {
   echo "Layer 7 (app/UI experiment) status"
   echo "------------------------------------"
@@ -1073,6 +1200,8 @@ cmd_status() {
   print_layer10_status
   echo ""
   print_layer11_status
+  echo ""
+  print_layer12_status
   echo ""
 }
 
@@ -1777,8 +1906,137 @@ cmd_guest_cleanup() {
   info "Layer 10 guest state cleaned"
 }
 
+
+cmd_guest_service_status() {
+  print_layer12_status
+}
+
+cmd_guest_service_preflight() {
+  service=${1:-}
+  [ "${service}" = "ssh" ] || fail "guest service preflight: supported service: ssh"
+  eligibility=$(layer12_eligibility)
+  case "${eligibility}" in
+    available:*)
+      info "Layer 12 guest SSH preflight passed"
+      note "${eligibility}"
+      ;;
+    *)
+      fail "guest service preflight failed: ${eligibility}"
+      ;;
+  esac
+}
+
+cmd_guest_service_enable() {
+  service=${1:-}
+  [ "${service}" = "ssh" ] || fail "guest service enable: supported service: ssh"
+  shift || true
+  port="${NIX_LAYER12_DEFAULT_SSH_PORT}"
+  keys=
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --port)
+        shift
+        port=${1:-}
+        [ -n "${port}" ] || fail "guest service enable ssh: --port requires a value"
+        shift
+        ;;
+      --authorized-keys)
+        shift
+        keys=${1:-}
+        [ -n "${keys}" ] || fail "guest service enable ssh: --authorized-keys requires a value"
+        shift
+        ;;
+      *)
+        fail "guest service enable ssh: unknown argument: $1"
+        ;;
+    esac
+  done
+
+  layer12_state_path_safe "${NIX_LAYER12_STATE_DIR}" || fail "guest service enable ssh: refusing unsafe state dir: ${NIX_LAYER12_STATE_DIR}"
+  [ "$(layer10_rootfs_mode)" = "bootable" ] || fail "guest service enable ssh: Layer 10b bootable rootfs required"
+  [ -f "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" ] || fail "guest service enable ssh: Layer 10b provenance required"
+  grep -q '^sha256=' "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" 2>/dev/null || fail "guest service enable ssh: Layer 10b provenance missing sha256"
+  layer12_port_valid "${port}" || fail "guest service enable ssh: refusing unsafe port: ${port} (use alternate non-privileged port, not 22)"
+  [ -n "${keys}" ] || fail "guest service enable ssh: --authorized-keys is required"
+  layer12_authorized_keys_path_safe "${keys}" || fail "guest service enable ssh: refusing unsafe authorized-keys path: ${keys}"
+  [ -f "${keys}" ] || fail "guest service enable ssh: authorized-keys file missing: ${keys}"
+  [ -s "${keys}" ] || fail "guest service enable ssh: authorized-keys file is empty: ${keys}"
+
+  key_sha=$(sha256_of "${keys}")
+  service_dir=$(layer12_service_dir)
+  metadata=$(layer12_metadata_file)
+  mkdir -p "${service_dir}"
+  {
+    printf 'service=ssh\n'
+    printf 'state=configured\n'
+    printf 'port=%s\n' "${port}"
+    printf 'authorized_keys=%s\n' "$(canonical_path "${keys}")"
+    printf 'authorized_keys_sha256=%s\n' "${key_sha}"
+    printf 'guest_root=%s\n' "${NIX_LAYER10_GUEST_ROOT}"
+    printf 'layer10_provenance=%s\n' "${NIX_LAYER10_STATE_DIR}/rootfs-provenance"
+    date -u '+configured_at=%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf 'configured_at=unknown\n'
+  } >"${metadata}"
+  info "Layer 12 guest SSH configured on host port ${port}"
+  note "authorized_keys_sha256: ${key_sha}"
+}
+
+cmd_guest_service_disable() {
+  service=${1:-}
+  [ "${service}" = "ssh" ] || fail "guest service disable: supported service: ssh"
+  metadata=$(layer12_metadata_file)
+  [ -f "${metadata}" ] || fail "guest service disable ssh: metadata missing"
+  tmp="${metadata}.tmp.$$"
+  awk -F= '$1 != "state" {print}' "${metadata}" >"${tmp}"
+  printf 'state=disabled\n' >>"${tmp}"
+  mv -f "${tmp}" "${metadata}"
+  info "Layer 12 guest SSH disabled"
+}
+
+cmd_guest_service_remove() {
+  service=${1:-}
+  [ "${service}" = "ssh" ] || fail "guest service remove: supported service: ssh"
+  shift || true
+  assume_yes=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --yes|-y) assume_yes=1; shift ;;
+      *) fail "guest service remove ssh: unknown argument: $1" ;;
+    esac
+  done
+  [ "${assume_yes}" -eq 1 ] || fail "guest service remove ssh: refusing to remove metadata without --yes"
+  layer12_state_path_safe "${NIX_LAYER12_STATE_DIR}" || fail "guest service remove ssh: refusing unsafe state dir: ${NIX_LAYER12_STATE_DIR}"
+  rm -rf "$(layer12_service_dir)"
+  info "Layer 12 guest SSH metadata removed"
+}
+
+cmd_guest_service() {
+  [ $# -gt 0 ] || fail "guest service: missing action (status, preflight, enable, disable, remove)"
+  action=$1
+  shift
+  case "${action}" in
+    status)
+      cmd_guest_service_status "$@"
+      ;;
+    preflight|plan)
+      cmd_guest_service_preflight "$@"
+      ;;
+    enable)
+      cmd_guest_service_enable "$@"
+      ;;
+    disable)
+      cmd_guest_service_disable "$@"
+      ;;
+    remove)
+      cmd_guest_service_remove "$@"
+      ;;
+    *)
+      fail "guest service: unknown action: ${action}"
+      ;;
+  esac
+}
+
 cmd_guest() {
-  [ $# -gt 0 ] || fail "guest: missing action (status, preflight, init, import, run, shell, start, stop, cleanup)"
+  [ $# -gt 0 ] || fail "guest: missing action (status, preflight, init, import, run, shell, start, stop, cleanup, service)"
   action=$1
   shift
   case "${action}" in
@@ -1808,6 +2066,9 @@ cmd_guest() {
       ;;
     cleanup)
       cmd_guest_cleanup "$@"
+      ;;
+    service)
+      cmd_guest_service "$@"
       ;;
     *)
       fail "guest: unknown action: ${action}"
