@@ -227,6 +227,16 @@ NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-doctor-state" \
 NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
   "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer10-import-doctor.log || true
 grep -q 'Layer 10 bootable provenance recorded' /tmp/nix-layer10-import-doctor.log
+mkdir -p "${TMP_DIR}/layer10-import-symlink-src/sbin" "${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin"
+printf '#!/bin/sh\n' >"${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin/init"
+chmod 0755 "${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin/init"
+ln -s /nix/store/fake-systemd/bin/init "${TMP_DIR}/layer10-import-symlink-src/sbin/init"
+tar -cf "${TMP_DIR}/layer10-bootable-symlink.tar" -C "${TMP_DIR}/layer10-import-symlink-src" .
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-symlink-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-symlink-state" \
+  "${PKG_DIR}/scripts/nixctl" guest import --bootable "${TMP_DIR}/layer10-bootable-symlink.tar" >/tmp/nix-layer10-import-symlink.log
+[ -L "${TMP_DIR}/layer10-import-symlink-root/sbin/init" ]
+grep -q 'bootable-ready' "${TMP_DIR}/layer10-import-symlink-state/state"
 tar -czf "${TMP_DIR}/layer10-bootable.tar.gz" -C "${TMP_DIR}/layer10-import-src" .
 NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-gzip-root" \
 NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-gzip-state" \

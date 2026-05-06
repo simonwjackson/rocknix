@@ -346,6 +346,20 @@ layer10_kernel_ready() {
   layer9_kernel_ready
 }
 
+layer10_root_executable() {
+  rel=$1
+  path="${NIX_LAYER10_GUEST_ROOT}/${rel}"
+  [ -x "${path}" ] && return 0
+  if [ -L "${path}" ]; then
+    target=$(readlink "${path}" 2>/dev/null || true)
+    case "${target}" in
+      /nix/store/*) [ -x "${NIX_LAYER10_GUEST_ROOT}${target}" ] && return 0 ;;
+      *) ;;
+    esac
+  fi
+  return 1
+}
+
 layer10_rootfs_mode() {
   if [ ! -e "${NIX_LAYER10_GUEST_ROOT}" ]; then
     echo absent
@@ -355,10 +369,10 @@ layer10_rootfs_mode() {
     echo invalid
     return
   fi
-  if [ -x "${NIX_LAYER10_GUEST_ROOT}/sbin/init" ] || \
-     [ -x "${NIX_LAYER10_GUEST_ROOT}/init" ] || \
-     [ -x "${NIX_LAYER10_GUEST_ROOT}/usr/lib/systemd/systemd" ] || \
-     [ -x "${NIX_LAYER10_GUEST_ROOT}/lib/systemd/systemd" ]; then
+  if layer10_root_executable sbin/init || \
+     layer10_root_executable init || \
+     layer10_root_executable usr/lib/systemd/systemd || \
+     layer10_root_executable lib/systemd/systemd; then
     echo bootable
     return
   fi
