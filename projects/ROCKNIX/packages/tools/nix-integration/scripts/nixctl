@@ -1708,12 +1708,15 @@ cmd_guest_start() {
   cmd_guest_preflight
   mode=$(layer10_rootfs_mode)
   [ "${mode}" = "bootable" ] || fail "guest start: rootfs mode is ${mode}; start requires bootable rootfs (use guest run/shell for proof roots)"
-  if layer12_configured; then
-    cmd_guest_service_preflight ssh
-  fi
   if layer10_running; then
+    if layer12_configured; then
+      fail "guest start: guest is already running; stop it before applying Layer 12 SSH metadata"
+    fi
     info "Layer 10 guest already running"
     return 0
+  fi
+  if layer12_configured; then
+    cmd_guest_service_preflight ssh
   fi
   systemctl_available || fail "guest start requires systemctl"
   unit_path=$(layer10_write_unit)

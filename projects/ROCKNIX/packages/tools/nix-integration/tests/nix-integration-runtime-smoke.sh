@@ -485,6 +485,20 @@ grep -q -- '--private-network' "${TMP_DIR}/layer12-systemd/rocknix-guest.service
 grep -q -- '--port=tcp:2222:22' "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
 grep -q -- "--bind-ro=${TMP_DIR}/layer12-start-keys/authorized_keys:/etc/ssh/authorized_keys.d/root" "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
 ! grep -q -- '--port=tcp:22:22' "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
+if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+  NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+  NIX_LAYER10_SYSTEMD_DIR="${TMP_DIR}/layer12-systemd" \
+  NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-start-state" \
+  NIX_SYSTEMCTL="${FAKE_LAYER10_SYSTEMCTL}" \
+  NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer12.log" \
+  NIX_SYSTEMCTL_PID="${TMP_DIR}/systemctl-layer12.pid" \
+  "${PKG_DIR}/scripts/nixctl" guest start >/tmp/nix-layer12-start-while-running.log 2>&1; then
+  echo 'expected Layer 12 start to refuse already-running guest' >&2
+  exit 1
+fi
+grep -q 'already running' /tmp/nix-layer12-start-while-running.log
 NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
 NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
 NIX_LAYER10_SYSTEMD_DIR="${TMP_DIR}/layer12-systemd" \
