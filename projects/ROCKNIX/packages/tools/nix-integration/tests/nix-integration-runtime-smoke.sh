@@ -449,6 +449,37 @@ NIX_SYSTEMCTL_PID="${TMP_DIR}/systemctl-layer10.pid" \
   "${PKG_DIR}/scripts/nixctl" guest stop >/tmp/nix-layer10-stop.log
 grep -q '^stop rocknix-guest.service' "${TMP_DIR}/systemctl-layer10.log"
 grep -q 'stopped' "${TMP_DIR}/layer10-start-state/state"
+mkdir -p "${TMP_DIR}/layer12-start-keys"
+printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILayer12StartSmokeKey layer12-start\n' >"${TMP_DIR}/layer12-start-keys/authorized_keys"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-start-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service enable ssh --port 2222 --authorized-keys "${TMP_DIR}/layer12-start-keys/authorized_keys" >/tmp/nix-layer12-start-enable.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SYSTEMD_DIR="${TMP_DIR}/layer12-systemd" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-start-state" \
+NIX_SYSTEMCTL="${FAKE_LAYER10_SYSTEMCTL}" \
+NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer12.log" \
+NIX_SYSTEMCTL_PID="${TMP_DIR}/systemctl-layer12.pid" \
+  "${PKG_DIR}/scripts/nixctl" guest start >/tmp/nix-layer12-start.log
+[ -f "${TMP_DIR}/layer12-systemd/rocknix-guest.service" ]
+grep -q -- '--private-network' "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
+grep -q -- '--port=tcp:2222:22' "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
+grep -q -- "--bind-ro=${TMP_DIR}/layer12-start-keys/authorized_keys:/etc/ssh/authorized_keys.d/root" "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
+! grep -q -- '--port=tcp:22:22' "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SYSTEMD_DIR="${TMP_DIR}/layer12-systemd" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_SYSTEMCTL="${FAKE_LAYER10_SYSTEMCTL}" \
+NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer12.log" \
+NIX_SYSTEMCTL_PID="${TMP_DIR}/systemctl-layer12.pid" \
+  "${PKG_DIR}/scripts/nixctl" guest stop >/tmp/nix-layer12-stop.log
 mkdir -p "${TMP_DIR}/nix/store/fake-nix/bin" "${TMP_DIR}/nix/store/fake-nix-store/bin" "${TMP_DIR}/nix/store/fake-bash/bin"
 printf '#!/bin/sh\necho nix-fake\n' >"${TMP_DIR}/nix/store/fake-nix/bin/nix"
 cat >"${TMP_DIR}/nix/store/fake-nix-store/bin/nix-store" <<EOF
