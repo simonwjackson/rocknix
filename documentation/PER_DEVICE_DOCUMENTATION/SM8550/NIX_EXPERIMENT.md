@@ -653,6 +653,15 @@ fallback: host Layers 4/8 remain the recovery path; guest cleanup must not touch
 
 Keep/reject decision: Layer 9 is Go for the bounded manual proof. Proceed to Layer 10 only with a separate plan for lifecycle commands, resource controls, freeze/thaw policy, and explicit no-autostart behavior.
 
+Layer 10 now has an implementation plan and lifecycle contract:
+
+- Plan: `docs/plans/2026-05-06-001-feat-nix-layer-10-managed-guest-operations-plan.md`
+- Contract: `projects/ROCKNIX/packages/tools/nix-integration/docs/layer10-guest-lifecycle-contract.md`
+
+The Layer 10 boundary separates proof roots from bootable roots. The Layer 9 minimal nix+bash rootfs supports bounded `nixctl guest run` / `nixctl guest shell` style operations, but `nixctl guest start` must refuse it as non-bootable. Long-running guest start/stop is only for a bootable container-style rootfs, remains manual, uses standalone `systemd-nspawn --register=no`, and must not enable a unit by default.
+
+Layer 10 still does not own host SSH, Sway, EmulationStation, Steam/FEX, update, ROM/save state, GPU, audio, or input. Those remain ROCKNIX-owned or later bridge-layer work.
+
 The remaining future layers below are directional only. They are not implemented and not validated on SM8550. Each must get its own plan before device work begins. ROCKNIX remains the host OS in every case and continues to own boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
 
 - **Layer 9: NixOS/nspawn guest proof.** Run a storage-backed NixOS-ish guest under `systemd-nspawn` with its own `nix-daemon`. Manual start only; no boot autostart; stop rule on any impact to SSH, Sway, EmulationStation, Steam/FEX, host updates, or recovery.

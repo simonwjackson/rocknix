@@ -112,6 +112,17 @@ grep -q 'PipeWire' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "La
 grep -q '/dev/input' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "Layer 9 contract missing input passthrough prohibition"
 grep -q 'Fallback does' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "Layer 9 contract missing fallback boundary"
 grep -q 'Guest state can be stopped and removed without touching host Nix state' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "Layer 9 contract missing cleanup boundary"
+[ -f "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" ] || fail "missing Layer 10 guest lifecycle contract doc"
+grep -q '/storage/.config/nix-integration/layer10' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing state dir path"
+grep -q '/storage/machines/rocknix-guest' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing guest root path"
+grep -q -- '--register=no' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing no-machined nspawn flag"
+grep -q 'machinectl' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing no machinectl dependency"
+grep -q 'proof' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing proof rootfs mode"
+grep -q 'bootable' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing bootable rootfs mode"
+grep -q 'must not call `systemctl enable`' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing no-autostart policy"
+grep -q '/dev/dri' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing GPU passthrough prohibition"
+grep -q 'PipeWire' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing audio passthrough prohibition"
+grep -q '/dev/input' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing input passthrough prohibition"
 for sub in status install upgrade uninstall doctor user-env daemon; do
   # Subcommand can appear as 'sub)' (alone), 'sub|other)' (left of alt),
   # or '...|sub)' (right of alt). Match by requiring sub to be preceded by
