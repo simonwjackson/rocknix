@@ -65,6 +65,11 @@ NIX_LAYER10_NSPAWN_BIN="${NIX_LAYER10_NSPAWN_BIN:-${NIX_LAYER9_NSPAWN_BIN}}"
 NIX_LAYER10_UNIT_NAME="${NIX_LAYER10_UNIT_NAME:-rocknix-guest.service}"
 NIX_LAYER10_SYSTEMD_DIR="${NIX_LAYER10_SYSTEMD_DIR:-}"
 NIX_LAYER10_SKIP_KERNEL_CHECK="${NIX_LAYER10_SKIP_KERNEL_CHECK:-${NIX_LAYER9_SKIP_KERNEL_CHECK}}"
+NIX_LAYER10_TIMEOUT="${NIX_LAYER10_TIMEOUT:-45}"
+NIX_LAYER10_LOG="${NIX_LAYER10_LOG:-/tmp/nix-integration-layer10-guest.log}"
+NIX_LAYER10_NIX_BIN="${NIX_LAYER10_NIX_BIN:-${NIX_DEFAULT_PROFILE_BIN}/nix}"
+NIX_LAYER10_NIX_STORE_BIN="${NIX_LAYER10_NIX_STORE_BIN:-${NIX_DEFAULT_PROFILE_BIN}/nix-store}"
+NIX_LAYER10_BASH_BIN="${NIX_LAYER10_BASH_BIN:-}"
 
 # ---- SSL ------------------------------------------------------------------
 # Pre-set for the upstream installer so it skips its cacert derivation install
@@ -100,7 +105,8 @@ Subcommands:
   daemon <action>        Manage experimental Layer 8 nix-daemon mode.
                          Actions: status, preflight, enable, disable, rollback.
   guest <action>         Manage Layer 10 nspawn guest operations.
-                         Actions: status, preflight.
+                         Actions: status, preflight, init --proof, run <cmd>,
+                         shell, cleanup [--yes].
   help, -h, --help       This message.
 
 Environment overrides (defaults shown):
@@ -118,6 +124,7 @@ Environment overrides (defaults shown):
   NIX_LAYER10_STATE_DIR  ${NIX_LAYER10_STATE_DIR}
   NIX_LAYER10_GUEST_ROOT ${NIX_LAYER10_GUEST_ROOT}
   NIX_LAYER10_UNIT_NAME  ${NIX_LAYER10_UNIT_NAME}
+  NIX_LAYER10_TIMEOUT    ${NIX_LAYER10_TIMEOUT}
   NIX_TARBALL_URL        ${NIX_TARBALL_URL}
   NIX_TARBALL_SHA256     ${NIX_TARBALL_SHA256}
   NIX_FORCE              Set to 1 to override safety checks (rare)
@@ -1277,8 +1284,149 @@ cmd_guest_preflight() {
   esac
 }
 
+layer10_write_state() {
+  state=$1
+  mkdir -p "${NIX_LAYER10_STATE_DIR}"
+  printf '%s\n' "${state}" >"${NIX_LAYER10_STATE_DIR}/state"
+  date -u +%Y-%m-%dT%H:%M:%SZ >"${NIX_LAYER10_STATE_DIR}/updated-at" 2>/dev/null || true
+}
+
+layer10_resolve_bash_bin() {
+  if [ -n "${NIX_LAYER10_BASH_BIN}" ] && [ -x "${NIX_LAYER10_BASH_BIN}" ]; then
+    canonical_path "${NIX_LAYER10_BASH_BIN}"
+    return 0
+  fi
+  find "${NIX_INSTALL_ROOT}/store" -maxdepth 4 -type f -path '*/bin/bash' -perm /111 2>/dev/null | head -1
+}
+
+cmd_guest_init() {
+  mode=${1:-}
+  [ "${mode}" = "--proof" ] || fail "guest init currently supports only: --proof"
+  [ ! -e "${NIX_LAYER10_GUEST_ROOT}" ] || fail "guest init: root already exists: ${NIX_LAYER10_GUEST_ROOT}; run guest cleanup --yes first"
+  [ -x "${NIX_LAYER10_NIX_BIN}" ] || fail "guest init: real nix binary missing: ${NIX_LAYER10_NIX_BIN}"
+  [ -x "${NIX_LAYER10_NIX_STORE_BIN}" ] || fail "guest init: nix-store binary missing: ${NIX_LAYER10_NIX_STORE_BIN}"
+  bash_bin=$(layer10_resolve_bash_bin)
+  [ -n "${bash_bin}" ] && [ -x "${bash_bin}" ] || fail "guest init: could not find executable bash in ${NIX_INSTALL_ROOT}/store"
+
+  info "Staging proof rootfs at ${NIX_LAYER10_GUEST_ROOT}"
+  mkdir -p \
+    "${NIX_LAYER10_GUEST_ROOT}/bin" \
+    "${NIX_LAYER10_GUEST_ROOT}/usr/bin" \
+    "${NIX_LAYER10_GUEST_ROOT}/nix/store" \
+    "${NIX_LAYER10_GUEST_ROOT}/etc" \
+    "${NIX_LAYER10_GUEST_ROOT}/tmp" \
+    "${NIX_LAYER10_GUEST_ROOT}/proc" \
+    "${NIX_LAYER10_GUEST_ROOT}/sys" \
+    "${NIX_LAYER10_GUEST_ROOT}/dev"
+  chmod 1777 "${NIX_LAYER10_GUEST_ROOT}/tmp"
+  printf 'NAME=rocknix-layer10-proof\nID=rocknix-layer10-proof\n' >"${NIX_LAYER10_GUEST_ROOT}/etc/os-release"
+
+  refs_file="${NIX_LAYER10_GUEST_ROOT}/tmp/closure-refs"
+  "${NIX_LAYER10_NIX_STORE_BIN}" -qR "${NIX_LAYER10_NIX_BIN}" "${NIX_LAYER10_NIX_STORE_BIN}" "${bash_bin}" >"${refs_file}"
+  while IFS= read -r ref; do
+    [ -n "${ref}" ] || continue
+    [ -e "${ref}" ] || fail "guest init: closure ref missing: ${ref}"
+    cp -a "${ref}" "${NIX_LAYER10_GUEST_ROOT}/nix/store/"
+  done <"${refs_file}"
+  rm -f "${refs_file}"
+
+  ln -s "${bash_bin}" "${NIX_LAYER10_GUEST_ROOT}/bin/sh"
+  ln -s "${bash_bin}" "${NIX_LAYER10_GUEST_ROOT}/bin/bash"
+  ln -s "$(canonical_path "${NIX_LAYER10_NIX_BIN}")" "${NIX_LAYER10_GUEST_ROOT}/usr/bin/nix"
+  ln -s "$(canonical_path "${NIX_LAYER10_NIX_STORE_BIN}")" "${NIX_LAYER10_GUEST_ROOT}/usr/bin/nix-store"
+
+  layer10_write_state proof-ready
+  info "Layer 10 proof rootfs staged"
+}
+
+cmd_guest_run() {
+  [ $# -gt 0 ] || fail "guest run: missing command"
+  cmd_guest_preflight
+  mode=$(layer10_rootfs_mode)
+  case "${mode}" in
+    proof|bootable) ;;
+    *) fail "guest run: unsupported rootfs mode: ${mode}" ;;
+  esac
+  if layer10_running; then
+    fail "guest run: guest appears to be running; stop it before one-shot proof commands"
+  fi
+  mkdir -p "${NIX_LAYER10_STATE_DIR}"
+  info "Running one-shot Layer 10 guest command (${mode})"
+  layer10_write_state running
+  if have timeout; then
+    if timeout "${NIX_LAYER10_TIMEOUT}" "${NIX_LAYER10_NSPAWN_BIN}" --quiet --register=no --directory="${NIX_LAYER10_GUEST_ROOT}" "$@" >"${NIX_LAYER10_LOG}" 2>&1; then
+      layer10_write_state "${mode}-ready"
+      cat "${NIX_LAYER10_LOG}"
+      return 0
+    fi
+  else
+    if "${NIX_LAYER10_NSPAWN_BIN}" --quiet --register=no --directory="${NIX_LAYER10_GUEST_ROOT}" "$@" >"${NIX_LAYER10_LOG}" 2>&1; then
+      layer10_write_state "${mode}-ready"
+      cat "${NIX_LAYER10_LOG}"
+      return 0
+    fi
+  fi
+  layer10_write_state failed
+  cat "${NIX_LAYER10_LOG}" >&2 2>/dev/null || true
+  fail "guest run failed; state marked failed, log: ${NIX_LAYER10_LOG}"
+}
+
+cmd_guest_shell() {
+  cmd_guest_run /bin/sh "$@"
+}
+
+layer10_cleanup_path_safe() {
+  path=$1
+  real=$(canonical_path "${path}")
+  case "${real}" in
+    /storage/machines/*|/tmp/*/layer10-*) return 0 ;;
+  esac
+  return 1
+}
+
+layer10_cleanup_state_path_safe() {
+  path=$1
+  real=$(canonical_path "${path}")
+  case "${real}" in
+    /storage/.config/nix-integration/layer10|/tmp/*/layer10-*) return 0 ;;
+  esac
+  return 1
+}
+
+cmd_guest_cleanup() {
+  assume_yes=0
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --yes|-y) assume_yes=1; shift ;;
+      *) fail "guest cleanup: unknown argument: $1" ;;
+    esac
+  done
+
+  if layer10_running; then
+    fail "guest cleanup: guest appears to be running; stop it before cleanup"
+  fi
+  layer10_cleanup_path_safe "${NIX_LAYER10_GUEST_ROOT}" || fail "guest cleanup: refusing unsafe guest root: ${NIX_LAYER10_GUEST_ROOT}"
+  layer10_cleanup_state_path_safe "${NIX_LAYER10_STATE_DIR}" || fail "guest cleanup: refusing unsafe state dir: ${NIX_LAYER10_STATE_DIR}"
+
+  if [ "${assume_yes}" -ne 1 ]; then
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+      fail "guest cleanup: refusing to run non-interactively without --yes"
+    fi
+    printf 'About to remove Layer 10 guest root %s and state %s.\nContinue? [y/N] ' \
+      "${NIX_LAYER10_GUEST_ROOT}" "${NIX_LAYER10_STATE_DIR}"
+    read -r answer
+    case "${answer}" in
+      y|Y|yes|YES) ;;
+      *) info "Aborted."; return 1 ;;
+    esac
+  fi
+
+  rm -rf "${NIX_LAYER10_GUEST_ROOT}" "${NIX_LAYER10_STATE_DIR}" 2>/dev/null || true
+  info "Layer 10 guest state cleaned"
+}
+
 cmd_guest() {
-  [ $# -gt 0 ] || fail "guest: missing action (status, preflight)"
+  [ $# -gt 0 ] || fail "guest: missing action (status, preflight, init, run, shell, cleanup)"
   action=$1
   shift
   case "${action}" in
@@ -1288,8 +1436,20 @@ cmd_guest() {
     preflight|plan)
       cmd_guest_preflight "$@"
       ;;
+    init)
+      cmd_guest_init "$@"
+      ;;
+    run)
+      cmd_guest_run "$@"
+      ;;
+    shell)
+      cmd_guest_shell "$@"
+      ;;
+    cleanup)
+      cmd_guest_cleanup "$@"
+      ;;
     *)
-      fail "guest: unknown action for Layer 10 read-only phase: ${action}"
+      fail "guest: unknown action: ${action}"
       ;;
   esac
 }
