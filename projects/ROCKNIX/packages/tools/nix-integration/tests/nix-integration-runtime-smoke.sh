@@ -729,8 +729,13 @@ if [ "${LAYER11_SMOKE:-0}" = "1" ]; then
 else
   LAYER11_REQUESTED=0
 fi
+if [ "${LAYER12_SMOKE:-0}" = "ssh" ]; then
+  LAYER12_REQUESTED=1
+else
+  LAYER12_REQUESTED=0
+fi
 
-if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ]; then
+if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ] && [ "${LAYER12_REQUESTED}" != "1" ]; then
   printf 'nix-integration Layer 4 smoke: skipped (set LAYER4_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 5 smoke: skipped (set LAYER5_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 6 smoke: skipped (set LAYER6_SMOKE=1 to enable)\n'
@@ -739,6 +744,7 @@ if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LA
   printf 'nix-integration Layer 9 smoke: skipped (set LAYER9_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 10 smoke: skipped (set LAYER10_SMOKE=proof or bootable to enable)\n'
   printf 'nix-integration Layer 11 smoke: skipped (set LAYER11_SMOKE=1 to enable)\n'
+  printf 'nix-integration Layer 12 smoke: skipped (set LAYER12_SMOKE=ssh to enable)\n'
   exit 0
 fi
 
@@ -1108,7 +1114,7 @@ fi
 # Requires Layer 4 real Nix, image-time daemon build identities/config, and
 # opt-in daemon units. Default CI never starts systemd units.
 if [ "${LAYER8_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ]; then
+  if [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ] && [ "${LAYER12_REQUESTED}" != "1" ]; then
     exit 0
   fi
 else
@@ -1194,7 +1200,7 @@ fi
 # on hardware. Requires a Layer 9-enabled image and a pre-staged guest rootfs.
 # The smoke does not download or generate the rootfs and never enables a unit.
 if [ "${LAYER9_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ]; then
+  if [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ] && [ "${LAYER12_REQUESTED}" != "1" ]; then
     exit 0
   fi
 else
@@ -1279,7 +1285,7 @@ fi
 # start/stop with resource-bounded disabled unit generation. Default CI never
 # starts a real nspawn guest.
 if [ "${LAYER10_SMOKE:-0}" != "1" ] && [ "${LAYER10_SMOKE:-0}" != "proof" ] && [ "${LAYER10_SMOKE:-0}" != "bootable" ]; then
-  if [ "${LAYER11_REQUESTED}" != "1" ]; then
+  if [ "${LAYER11_REQUESTED}" != "1" ] && [ "${LAYER12_REQUESTED}" != "1" ]; then
     exit 0
   fi
 else
@@ -1403,8 +1409,10 @@ fi
 # hardware. Requires Layer 10 proof-mode readiness and removes the temporary
 # bridge before exiting.
 if [ "${LAYER11_SMOKE:-0}" != "1" ]; then
-  exit 0
-fi
+  if [ "${LAYER12_REQUESTED}" != "1" ]; then
+    exit 0
+  fi
+else
 
 L11_LOG=/tmp/nix-integration-layer11-smoke.log
 L11_NAME="${LAYER11_BRIDGE_NAME:-layer11-nix-version}"
@@ -1466,3 +1474,116 @@ NIX_LAYER11_BIN_DIR="${L11_BIN_DIR}" \
 
 printf 'nix-integration Layer 11 smoke passed\n'
 printf 'log: %s\n' "${L11_LOG}"
+fi
+
+# ---- Layer 12 device-side smoke (opt-in) -----------------------------------
+# Set LAYER12_SMOKE=ssh to validate key-only guest SSH on an alternate host
+# port. Requires a Layer 10b bootable root with provenance and an operator
+# supplied keypair whose public key appears in LAYER12_AUTHORIZED_KEYS.
+if [ "${LAYER12_SMOKE:-0}" != "ssh" ]; then
+  exit 0
+fi
+
+L12_LOG=/tmp/nix-integration-layer12-smoke.log
+L12_ROOT="${LAYER12_GUEST_ROOT:-${NIX_LAYER10_GUEST_ROOT:-/storage/machines/rocknix-guest}}"
+L12_L10_STATE="${LAYER12_LAYER10_STATE_DIR:-${NIX_LAYER10_STATE_DIR:-/storage/.config/nix-integration/layer10}}"
+L12_STATE="${LAYER12_STATE_DIR:-${NIX_LAYER12_STATE_DIR:-/storage/.config/nix-integration/layer12}}"
+L12_PORT="${LAYER12_SSH_PORT:-2222}"
+L12_KEYS="${LAYER12_AUTHORIZED_KEYS:-/storage/.ssh/authorized_keys}"
+L12_IDENTITY="${LAYER12_SSH_IDENTITY:-/storage/.ssh/id_ed25519}"
+L12_HOST="${LAYER12_SSH_HOST:-127.0.0.1}"
+L12_TIMEOUT="${LAYER12_TIMEOUT:-30}"
+rm -f "${L12_LOG}"
+
+log12() {
+  printf '[layer12-smoke] %s\n' "$*"
+  printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" >>"${L12_LOG}"
+}
+
+layer12_guest_running() {
+  ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${L12_ROOT}" >/dev/null 2>&1
+}
+
+layer12_stop_guest() {
+  NIX_LAYER10_GUEST_ROOT="${L12_ROOT}" \
+  NIX_LAYER10_STATE_DIR="${L12_L10_STATE}" \
+    "${NIXCTL}" guest stop >>"${L12_LOG}" 2>&1 || true
+}
+
+[ -f "${L12_L10_STATE}/rootfs-provenance" ] \
+  || { echo "FAIL: Layer 12 smoke requires Layer 10b provenance at ${L12_L10_STATE}/rootfs-provenance" >&2; exit 1; }
+grep -q '^sha256=' "${L12_L10_STATE}/rootfs-provenance" \
+  || { echo 'FAIL: Layer 12 smoke requires Layer 10b provenance sha256' >&2; exit 1; }
+[ -s "${L12_KEYS}" ] \
+  || { echo "FAIL: Layer 12 smoke requires authorized keys at ${L12_KEYS}" >&2; exit 1; }
+[ -s "${L12_IDENTITY}" ] \
+  || { echo "FAIL: Layer 12 smoke requires SSH identity at ${L12_IDENTITY}" >&2; exit 1; }
+command -v ssh >/dev/null 2>&1 \
+  || { echo 'FAIL: Layer 12 smoke requires ssh client' >&2; exit 1; }
+
+case "${L12_PORT}" in
+  22) echo 'FAIL: Layer 12 smoke refuses host port 22' >&2; exit 1 ;;
+esac
+
+log12 'pre-flight: Layer 12 guest SSH diagnostics'
+NIX_LAYER10_GUEST_ROOT="${L12_ROOT}" \
+NIX_LAYER10_STATE_DIR="${L12_L10_STATE}" \
+NIX_LAYER12_STATE_DIR="${L12_STATE}" \
+  "${NIXCTL}" guest service status >>"${L12_LOG}" 2>&1 \
+  || { echo 'FAIL: nixctl guest service status failed during Layer 12 preflight' >&2; exit 1; }
+
+log12 'configure: opt-in guest SSH metadata'
+NIX_LAYER10_GUEST_ROOT="${L12_ROOT}" \
+NIX_LAYER10_STATE_DIR="${L12_L10_STATE}" \
+NIX_LAYER12_STATE_DIR="${L12_STATE}" \
+  "${NIXCTL}" guest service enable ssh --port "${L12_PORT}" --authorized-keys "${L12_KEYS}" >>"${L12_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 12 guest SSH enable failed' >&2; exit 1; }
+
+log12 'start: bootable guest with SSH exposure'
+NIX_LAYER10_GUEST_ROOT="${L12_ROOT}" \
+NIX_LAYER10_STATE_DIR="${L12_L10_STATE}" \
+NIX_LAYER12_STATE_DIR="${L12_STATE}" \
+  "${NIXCTL}" guest start >>"${L12_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 12 guest start failed' >&2; layer12_stop_guest; exit 1; }
+
+log12 'ssh: execute guest nix version command'
+waited=0
+while [ "${waited}" -lt "${L12_TIMEOUT}" ]; do
+  if ssh -i "${L12_IDENTITY}" \
+      -o BatchMode=yes \
+      -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/tmp/nix-layer12-known-hosts \
+      -o ConnectTimeout=3 \
+      -p "${L12_PORT}" "root@${L12_HOST}" /usr/bin/nix --version >>"${L12_LOG}" 2>&1; then
+    break
+  fi
+  waited=$((waited + 3))
+  sleep 3
+done
+grep -q 'nix (Nix)' "${L12_LOG}" \
+  || { echo 'FAIL: Layer 12 guest SSH did not return nix version' >&2; layer12_stop_guest; exit 1; }
+
+log12 'stop: remove live SSH exposure'
+layer12_stop_guest
+sleep 1
+layer12_guest_running \
+  && { echo 'FAIL: Layer 12 guest process still running after stop' >&2; exit 1; }
+if ssh -i "${L12_IDENTITY}" \
+    -o BatchMode=yes \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/tmp/nix-layer12-known-hosts \
+    -o ConnectTimeout=3 \
+    -p "${L12_PORT}" "root@${L12_HOST}" /usr/bin/nix --version >>"${L12_LOG}" 2>&1; then
+  echo 'FAIL: Layer 12 guest SSH still reachable after guest stop' >&2
+  exit 1
+fi
+
+log12 'diagnostics: Layer 12 doctor remains readable'
+NIX_LAYER10_GUEST_ROOT="${L12_ROOT}" \
+NIX_LAYER10_STATE_DIR="${L12_L10_STATE}" \
+NIX_LAYER12_STATE_DIR="${L12_STATE}" \
+  "${DOCTOR}" --offline >>"${L12_LOG}" 2>&1 \
+  || { echo 'FAIL: nix-doctor failed after Layer 12 smoke' >&2; exit 1; }
+
+printf 'nix-integration Layer 12 smoke passed (ssh)\n'
+printf 'log: %s\n' "${L12_LOG}"

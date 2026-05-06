@@ -715,7 +715,28 @@ Post-proof status: Layer 10 restored to proof-ready, running: no
 
 Bootable-mode `nixctl guest start` / `stop` is implemented but not hardware-Go. Layer 10b adds the missing bootable rootfs path: a pinned NixOS/container-style aarch64 guest source under `projects/ROCKNIX/packages/tools/nix-integration/guest`, `nixctl guest import --bootable <artifact>` with sha256/provenance metadata, root-specific live nspawn evidence for `running`, and a packaged `LAYER10_SMOKE=bootable` helper that refuses to start without provenance. Hardware-Go still requires a rebuilt SM8550 image, a real imported bootable artifact, successful manual start/stop, no enabled unit after reboot, no residual guest process, and healthy host SSH/UI/Nix state. Do not treat proof-mode validation, fixture tests, or import success alone as evidence for long-running guest services, guest SSH, autostart, graphics/audio/input passthrough, or service supervision.
 
-Layer 12 is planned as the first opt-in guest service layer after Layer 10b: key-only guest SSH on an alternate host port, defaulting to `2222`. Layer 12 must not replace host SSH, bind port `22`, enable password authentication, ship default credentials, autostart the guest, or expose other services. Build pipelining may produce a Layer 12 image before Layer 10b hardware validation completes, but validation and Go/No-Go decisions must remain ordered: Layer 10b first, then Layer 12 on top.
+Layer 12 is implemented as the first opt-in guest service layer after Layer 10b: key-only guest SSH on an alternate host port, defaulting to `2222`. Layer 12 must not replace host SSH, bind port `22`, enable password authentication, ship default credentials, autostart the guest, or expose other services. Build pipelining may produce a Layer 12 image before Layer 10b hardware validation completes, but validation and Go/No-Go decisions must remain ordered: Layer 10b first, then Layer 12 on top.
+
+Layer 12 operator flow after Layer 10b import:
+
+```text
+nixctl guest service status
+nixctl guest service enable ssh --port 2222 --authorized-keys /storage/.ssh/authorized_keys
+nixctl guest start
+ssh -p 2222 root@thor /usr/bin/nix --version
+nixctl guest stop
+```
+
+Layer 12 hardware smoke helper:
+
+```text
+LAYER12_SMOKE=ssh \
+LAYER12_AUTHORIZED_KEYS=/storage/.ssh/authorized_keys \
+LAYER12_SSH_IDENTITY=/storage/.ssh/id_ed25519 \
+/usr/lib/nix-integration/tests/nix-integration-runtime-smoke.sh
+```
+
+Layer 12 remains pending hardware validation until the Layer 10b image is validated first, then the Layer 12 image proves key-only SSH, clean stop, no port 22 binding, no autostart after reboot, and host SSH continuity.
 
 A narrow Layer 11 live prototype was also performed: a temporary `/storage/bin/layer11-proof` host bridge invoked `nixctl guest run /usr/bin/nix --version`, returned `nix (Nix) 2.34.7`, left Layer 10 at `running: no`, and was deleted. This proves the one-shot bridge shape only; it is not a Go for persistent Layer 11 services.
 
