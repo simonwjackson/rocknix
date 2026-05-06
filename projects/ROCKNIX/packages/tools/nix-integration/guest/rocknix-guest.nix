@@ -8,7 +8,7 @@
 
   services.openssh.enable = false;
 
-  users.mutableUsers = false;
+  users.mutableUsers = true;
   users.users.root.hashedPassword = "!";
 
   environment.systemPackages = with pkgs; [
