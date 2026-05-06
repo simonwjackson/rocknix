@@ -106,6 +106,7 @@ grep -q 'cmd_guest_import' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing L
 grep -q 'guest import --bootable' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10b import command text"
 grep -q 'rootfs-provenance' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10b provenance metadata"
 grep -q 'archive contains unsafe paths' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10b archive safety guard"
+grep -q 'layer10_list_archive' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10b compression-aware archive listing"
 grep -q 'cmd_guest_run' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10 guest run"
 grep -q 'cmd_guest_shell' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10 guest shell"
 grep -q 'cmd_guest_start' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10 guest start"

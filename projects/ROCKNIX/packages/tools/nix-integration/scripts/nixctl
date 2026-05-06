@@ -1626,14 +1626,41 @@ layer10_archive_entry_safe() {
   return 0
 }
 
+layer10_list_archive() {
+  archive=$1
+  case "${archive}" in
+    *.tar.zst|*.tzst)
+      if tar --help 2>/dev/null | grep -q -- '--zstd'; then
+        tar --zstd -tf "${archive}"
+      elif have zstd; then
+        zstd -dc "${archive}" | tar -tf -
+      else
+        fail "guest import: .tar.zst artifact requires tar --zstd or zstd"
+      fi
+      ;;
+    *.tar.xz|*.txz) tar -tJf "${archive}" ;;
+    *.tar.gz|*.tgz) tar -tzf "${archive}" ;;
+    *.tar.bz2|*.tbz2) tar -tjf "${archive}" ;;
+    *.tar) tar -tf "${archive}" ;;
+    *) fail "guest import: unsupported artifact type: ${archive}" ;;
+  esac
+}
+
 layer10_archive_safe() {
   archive=$1
-  tar -tf "${archive}" 2>/dev/null | while IFS= read -r entry; do
+  tmp_list="/tmp/nix-layer10-archive-list.$$"
+  if ! layer10_list_archive "${archive}" >"${tmp_list}" 2>/dev/null; then
+    rm -f "${tmp_list}" 2>/dev/null || true
+    return 1
+  fi
+  while IFS= read -r entry; do
     layer10_archive_entry_safe "${entry}" || {
       echo "unsafe archive entry: ${entry}" >&2
-      exit 1
+      rm -f "${tmp_list}" 2>/dev/null || true
+      return 1
     }
-  done
+  done <"${tmp_list}"
+  rm -f "${tmp_list}" 2>/dev/null || true
 }
 
 layer10_extract_archive() {

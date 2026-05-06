@@ -227,6 +227,12 @@ NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-doctor-state" \
 NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
   "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer10-import-doctor.log || true
 grep -q 'Layer 10 bootable provenance recorded' /tmp/nix-layer10-import-doctor.log
+tar -czf "${TMP_DIR}/layer10-bootable.tar.gz" -C "${TMP_DIR}/layer10-import-src" .
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-gzip-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-gzip-state" \
+  "${PKG_DIR}/scripts/nixctl" guest import --bootable "${TMP_DIR}/layer10-bootable.tar.gz" >/tmp/nix-layer10-import-gzip.log
+[ -x "${TMP_DIR}/layer10-import-gzip-root/sbin/init" ]
+grep -q '^sha256=' "${TMP_DIR}/layer10-import-gzip-state/rootfs-provenance"
 if NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
   NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
   "${PKG_DIR}/scripts/nixctl" guest import --bootable "${TMP_DIR}/layer10-bootable.tar" >/tmp/nix-layer10-import-existing.log 2>&1; then
