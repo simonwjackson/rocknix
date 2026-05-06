@@ -196,7 +196,7 @@ flowchart TB
 
 ## Implementation Units
 
-- [ ] **Unit 1: Define Layer 10 lifecycle contract**
+- [x] **Unit 1: Define Layer 10 lifecycle contract**
 
 **Goal:** Create the contract that distinguishes proof versus bootable roots, allowed commands, state ownership, resource policy, and forbidden surfaces before implementation expands the lifecycle surface.
 
