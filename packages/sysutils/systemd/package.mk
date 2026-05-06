@@ -11,8 +11,6 @@ PKG_URL="https://github.com/systemd/systemd/archive/v${PKG_VERSION}.tar.gz"
 PKG_DEPENDS_TARGET="meson:host ninja:host gcc:host libcap kmod util-linux entropy libidn2 wait-time-sync Jinja2:host"
 PKG_LONGDESC="A system and session manager for Linux, compatible with SysV and LSB init scripts."
 
-NIX_NSPAWN_SUPPORT="${NIX_NSPAWN_SUPPORT:-no}"
-
 PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Dsplit-bin=true \
                        -Dtty-gid=5 \
@@ -161,11 +159,9 @@ post_makeinstall_target() {
   safe_remove ${INSTALL}/usr/bin/systemd-creds
   safe_remove ${INSTALL}/usr/lib/tmpfiles.d/credstore.conf
 
-  # remove nspawn unless explicitly preserved for Layer 9 proof images
-  if [ "${NIX_NSPAWN_SUPPORT}" != "yes" ]; then
-    safe_remove ${INSTALL}/usr/bin/systemd-nspawn
-    safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-nspawn@.service
-  fi
+  # remove nspawn
+  safe_remove ${INSTALL}/usr/bin/systemd-nspawn
+  safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-nspawn@.service
 
   # remove timedatectl
   safe_remove ${INSTALL}/usr/bin/timedatectl

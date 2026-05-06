@@ -853,7 +853,7 @@ grep -q 'Layer 9 nspawn guest state' "${L9_LOG}" \
   || { echo 'FAIL: nix-doctor did not report Layer 9 state' >&2; exit 1; }
 
 log9 'start: bounded systemd-nspawn guest proof command'
-timeout "${L9_TIMEOUT}" "${L9_NSPAWN}" --quiet --directory="${L9_ROOT}" /bin/sh -lc "${L9_PROOF_COMMAND}" >>"${L9_LOG}" 2>&1 \
+timeout "${L9_TIMEOUT}" "${L9_NSPAWN}" --quiet --register=no --directory="${L9_ROOT}" /bin/sh -lc "${L9_PROOF_COMMAND}" >>"${L9_LOG}" 2>&1 \
   || { echo 'FAIL: Layer 9 nspawn proof command failed' >&2; layer9_guest_running && pkill -f "systemd-nspawn.*${L9_ROOT}" 2>/dev/null || true; exit 1; }
 grep -q 'layer9-guest-proof' "${L9_LOG}" \
   || { echo 'FAIL: Layer 9 guest proof marker missing' >&2; exit 1; }
