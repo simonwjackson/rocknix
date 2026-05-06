@@ -155,6 +155,7 @@ grep -q 'Layer 12 (opt-in guest SSH) status' "${PKG_DIR}/scripts/nixctl" || fail
 grep -q 'cmd_guest_service' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 guest service dispatch"
 grep -q 'guest service enable ssh' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 SSH enable command"
 grep -q 'refusing unsafe port: ${port}' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 port guard"
+grep -q -- '--private-network' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing private networking for bootable guest"
 grep -q -- '--port=tcp:%s:22' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 alternate-port nspawn mapping"
 grep -q -- '--bind-ro=%s:%s' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 authorized-keys bind"
 grep -q 'check_layer12' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 12 checks"
