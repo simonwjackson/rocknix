@@ -124,11 +124,13 @@ grep -q 'cmd_bridge' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 1
 grep -q 'Layer 11 bridge preflight passed' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 11 bridge preflight"
 grep -q 'cmd_bridge_install' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 11 bridge install"
 grep -q 'cmd_bridge_remove' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 11 bridge remove"
+grep -q 'cmd_bridge_run' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 11 bridge run"
 grep -q 'target exists and is not owned by Layer 11' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 11 conflict refusal"
 grep -q 'refusing unsafe target path' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 11 unsafe target guard"
 grep -q 'bridge run' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 11 wrapper run path"
 grep -q 'NIX_LAYER11_STATE_DIR=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing fixtureable Layer 11 state dir"
 grep -q 'NIX_LAYER11_BIN_DIR=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing fixtureable Layer 11 bin dir"
+grep -q 'NIX_LAYER11_NIXCTL_BIN=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing fixtureable Layer 11 nixctl bin"
 grep -q 'NIX_LAYER11_STATE_DIR=' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing fixtureable Layer 11 state dir"
 grep -q 'NIX_LAYER11_BIN_DIR=' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing fixtureable Layer 11 bin dir"
 grep -q 'check_layer11' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 11 checks"
@@ -237,5 +239,9 @@ grep -q 'LAYER10_SMOKE' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail
 grep -q 'guest run' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 10 proof guest run path"
 grep -q 'guest start' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 10 bootable start path"
 grep -q 'nix-integration Layer 10 smoke passed' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 10 success marker"
+grep -q 'LAYER11_SMOKE' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 11 opt-in flag"
+grep -q 'bridge install' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 11 bridge install path"
+grep -q 'bridge run' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 11 bridge run path"
+grep -q 'nix-integration Layer 11 smoke passed' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 11 success marker"
 
 printf 'nix-integration static checks passed\n'
