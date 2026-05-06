@@ -100,6 +100,7 @@ grep -q 'NIX_LAYER9_SKIP_KERNEL_CHECK=' "${PKG_DIR}/scripts/nix-doctor" || fail 
 grep -q 'Layer 10 (managed nspawn guest operations) status' "${PKG_DIR}/scripts/nixctl" || fail "nixctl status missing Layer 10 section"
 grep -q 'cmd_guest' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10 guest dispatch"
 grep -q 'layer10_rootfs_mode' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10 rootfs mode detection"
+grep -q 'layer10_root_executable' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10 guest-local executable detection"
 grep -q 'Layer 10 guest preflight passed' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10 guest preflight"
 grep -q 'cmd_guest_init' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10 guest proof init"
 grep -q 'cmd_guest_import' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10b bootable import"
