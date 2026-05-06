@@ -36,6 +36,7 @@ NIX_USER_CONFIG_FILE="${NIX_USER_CONFIG_FILE:-${NIX_USER_CONFIG_DIR}/nix.conf}"
 NIX_CACHE_DIR="${NIX_CACHE_DIR:-/storage/.cache/nix-install}"
 NIX_LAYER6_STATE_DIR="${NIX_LAYER6_STATE_DIR:-/storage/.config/nix-integration/layer6}"
 NIX_LAYER6_BIN_DIR="${NIX_LAYER6_BIN_DIR:-/storage/bin}"
+NIX_WRAPPER_DIR="${NIX_WRAPPER_DIR:-/storage/bin}"
 NIX_LAYER6_PROFILE_D_DIR="${NIX_LAYER6_PROFILE_D_DIR:-/storage/.config/profile.d}"
 NIX_LAYER6_ACTIVATE="${NIX_LAYER6_ACTIVATE:-}"
 NIX_LAYER7_APP_NAME="${NIX_LAYER7_APP_NAME:-browser}"
@@ -114,9 +115,8 @@ After install, profile.d puts ${NIX_USER_PROFILE_BIN} and
 ${NIX_DEFAULT_PROFILE_BIN} on \$PATH ahead of /storage/bin, so 'nix' and
 profile-installed CLI tools resolve to real Nix/profile binaries in any login
 shell. Layer 6 user-env activation manages declared storage-local files only;
-standard 'nix profile' remains the package install/remove interface. The
-nix-portable wrappers under /storage/bin remain available; invoke them
-explicitly via /storage/bin/nix-portable when needed.
+standard 'nix profile' remains the package install/remove interface. Layer 4
+real Nix owns unqualified commands such as nix, nix-store, and nix-daemon.
 
 Recovery: if real Nix breaks, 'nixctl uninstall' removes it cleanly. As a
 last resort, 'rm -rf /storage/.nix-root && reboot' restores the Layer 3
@@ -255,6 +255,22 @@ detect_real_nix() {
   return 1
 }
 
+cleanup_legacy_portable_wrappers() {
+  for wrapper in nix nix-shell nix-run nix-dev-shell nix-portable; do
+    path="${NIX_WRAPPER_DIR}/${wrapper}"
+    if [ -f "${path}" ] && grep -q 'nix-portable' "${path}" 2>/dev/null; then
+      rm -f "${path}"
+      note "removed legacy portable wrapper: ${path}"
+    fi
+  done
+
+  path="${NIX_WRAPPER_DIR}/nix-daemon"
+  if [ -f "${path}" ] && grep -q '/storage/bin/nix daemon' "${path}" 2>/dev/null; then
+    rm -f "${path}"
+    note "removed unsafe legacy portable daemon wrapper: ${path}"
+  fi
+}
+
 # Read the sandbox setting from nix.conf without invoking nix. Returns the
 # value (true|false|relaxed|<unset>) on stdout, or "(no nix.conf)" if the
 # file is missing.
@@ -312,7 +328,7 @@ report_path_resolution() {
         echo "real nix (${nix_path})"
         ;;
       /storage/bin/nix)
-        echo "portable wrapper (${nix_path})"
+        echo "stale legacy portable wrapper (${nix_path})"
         ;;
       *)
         echo "other: ${nix_path}"
@@ -770,12 +786,6 @@ cmd_status() {
   echo ""
   print_layer9_status
   echo ""
-  if [ -x /storage/apps/nix-portable/nix-portable ]; then
-    echo "Layer 1/2 (nix-portable) status"
-    echo "-------------------------------"
-    echo "  installed: /storage/apps/nix-portable/nix-portable"
-    echo "  invoke explicitly via /storage/bin/nix-portable"
-  fi
 }
 
 cmd_install() {
@@ -784,6 +794,7 @@ cmd_install() {
     current=$("${NIX_BIN}" --version 2>/dev/null | awk '{print $NF}' | head -1 || true)
     if [ "${current}" = "${NIX_VERSION}" ]; then
       info "Nix ${NIX_VERSION} is already installed at ${NIX_BIN}"
+      cleanup_legacy_portable_wrappers
       info "Re-run with NIX_FORCE=1 to reinstall, or use 'nixctl upgrade --version <X.Y.Z>' to switch versions"
       if [ "${NIX_FORCE:-}" != "1" ]; then
         return 0
@@ -871,6 +882,8 @@ cmd_install() {
   info "Final smoke: ${NIX_BIN} --version"
   "${NIX_BIN}" --version || fail "final smoke failed"
 
+  cleanup_legacy_portable_wrappers
+
   info "Layer 4 install complete"
   note "Open a fresh shell or run 'hash -r' so \$PATH picks up the new nix binary"
   note "Try: nix run nixpkgs#hello"
@@ -943,8 +956,8 @@ substrate. Removes:
   \${HOME}/.nix-profile (symlink)
   \${HOME}/.nix-channels
 
-Leaves the Layer 3 bind mount itself intact. The nix-portable wrappers
-under /storage/bin (Layers 1/2) are untouched.
+Leaves the Layer 3 bind mount itself intact. Unqualified Nix commands belong
+to Layer 4 and should disappear after uninstall.
 
 For non-interactive use (scripts, smoke tests), pass --yes.
 EOF
@@ -1019,11 +1032,9 @@ EOF
   rm -f "${HOME:-/storage}/.nix-profile" 2>&1 || true
   rm -f "${HOME:-/storage}/.nix-channels" 2>&1 || true
 
-  # Layer 3 substrate (bind mount) is intact; Layer 1/2 (nix-portable) is
-  # untouched.
+  # Layer 3 substrate (bind mount) is intact.
   info "Layer 4 uninstall complete"
   note "Layer 3 bind mount remains active: ${NIX_INSTALL_ROOT}"
-  note "Layer 1/2 portable wrappers remain at /storage/bin/nix-portable*"
   note "To reinstall Layer 4, run: ${0##*/} install"
 }
 

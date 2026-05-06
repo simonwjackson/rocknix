@@ -4,14 +4,9 @@
 
 set -u
 
-NIX_PORTABLE_DIR="${NIX_PORTABLE_DIR:-/storage/apps/nix-portable}"
-NIX_PORTABLE_BIN="${NIX_PORTABLE_BIN:-${NIX_PORTABLE_DIR}/nix-portable}"
-NIX_PORTABLE_RUNNER="${NIX_PORTABLE_RUNNER:-${NIX_PORTABLE_DIR}/bin/nix-portable-run}"
-NIX_DOCTOR="${NIX_DOCTOR:-${NIX_PORTABLE_DIR}/bin/nix-doctor}"
 NIX_WRAPPER_DIR="${NIX_WRAPPER_DIR:-/storage/bin}"
-NIX_PORTABLE_REQUIRED_MB="${NIX_PORTABLE_REQUIRED_MB:-512}"
-NP_LOCATION="${NP_LOCATION:-/storage}"
-NP_RUNTIME="${NP_RUNTIME:-proot}"
+NIX_STORAGE_ROOT="${NIX_STORAGE_ROOT:-/storage}"
+NIX_STORAGE_REQUIRED_MB="${NIX_STORAGE_REQUIRED_MB:-1024}"
 
 # ---- Layer 3 / Layer 4 paths ---------------------------------------------
 NIX_INSTALL_ROOT="${NIX_INSTALL_ROOT:-/nix}"
@@ -45,27 +40,17 @@ NIX_LAYER9_NSPAWN_BIN="${NIX_LAYER9_NSPAWN_BIN:-/usr/bin/systemd-nspawn}"
 NIX_LAYER9_GUEST_ROOT="${NIX_LAYER9_GUEST_ROOT:-/storage/machines/rocknix-guest}"
 NIX_LAYER9_SKIP_KERNEL_CHECK="${NIX_LAYER9_SKIP_KERNEL_CHECK:-0}"
 CHECK_NETWORK=1
-RUN_SMOKE=1
-RUN_DEV_SHELL_SMOKE=0
-NIX_DEV_SHELL_SMOKE_PACKAGE="${NIX_DEV_SHELL_SMOKE_PACKAGE:-nixpkgs#jq}"
-NIX_DEV_SHELL_SMOKE_COMMAND="${NIX_DEV_SHELL_SMOKE_COMMAND:-jq --version}"
 FAILURES=0
 WARNINGS=0
 
 usage() {
   cat <<EOF
-Usage: ${0##*/} [--offline] [--no-smoke] [--dev-shell-smoke]
+Usage: ${0##*/} [--offline]
 
-Checks the ROCKNIX storage-only nix-portable layer.
+Checks the custom-image Nix integration substrate and installed real Nix layers.
 
 Options:
   --offline          Skip network checks.
-  --no-smoke         Skip running 'nix --version'.
-  --dev-shell-smoke  Also run a practical 'nix shell' smoke command.
-
-Dev shell smoke defaults can be overridden with:
-  NIX_DEV_SHELL_SMOKE_PACKAGE=${NIX_DEV_SHELL_SMOKE_PACKAGE}
-  NIX_DEV_SHELL_SMOKE_COMMAND='${NIX_DEV_SHELL_SMOKE_COMMAND}'
 EOF
 }
 
@@ -74,11 +59,8 @@ while [ $# -gt 0 ]; do
     --offline)
       CHECK_NETWORK=0
       ;;
-    --no-smoke)
-      RUN_SMOKE=0
-      ;;
-    --dev-shell-smoke)
-      RUN_DEV_SHELL_SMOKE=1
+    --no-smoke|--dev-shell-smoke)
+      echo "WARN: $1 is deprecated; image-first checks do not use portable Nix smoke tests"
       ;;
     -h|--help)
       usage
@@ -385,117 +367,32 @@ check_root_model() {
 }
 
 check_storage() {
-  if [ -d "${NP_LOCATION}" ]; then
-    ok "storage location exists: ${NP_LOCATION}"
+  if [ -d "${NIX_STORAGE_ROOT}" ]; then
+    ok "storage root exists: ${NIX_STORAGE_ROOT}"
   else
-    fail_check "storage location missing: ${NP_LOCATION}"
+    fail_check "storage root missing: ${NIX_STORAGE_ROOT}"
     return
   fi
 
-  if [ -w "${NP_LOCATION}" ]; then
-    ok "storage location is writable: ${NP_LOCATION}"
+  if [ -w "${NIX_STORAGE_ROOT}" ]; then
+    ok "storage root is writable: ${NIX_STORAGE_ROOT}"
   else
-    fail_check "storage location is not writable: ${NP_LOCATION}"
+    fail_check "storage root is not writable: ${NIX_STORAGE_ROOT}"
   fi
 
-  available_mb=$(df -m "${NP_LOCATION}" 2>/dev/null | awk 'NR==2 {print $4}')
+  available_mb=$(df -m "${NIX_STORAGE_ROOT}" 2>/dev/null | awk 'NR==2 {print $4}')
   case "${available_mb}" in
     ''|*[!0-9]*)
-      fail_check "could not determine free space for ${NP_LOCATION}"
+      fail_check "could not determine free space for ${NIX_STORAGE_ROOT}"
       ;;
     *)
-      if [ "${available_mb}" -ge "${NIX_PORTABLE_REQUIRED_MB}" ]; then
-        ok "storage free space ${available_mb}MB >= ${NIX_PORTABLE_REQUIRED_MB}MB"
+      if [ "${available_mb}" -ge "${NIX_STORAGE_REQUIRED_MB}" ]; then
+        ok "storage free space ${available_mb}MB >= ${NIX_STORAGE_REQUIRED_MB}MB"
       else
-        fail_check "storage free space ${available_mb}MB < ${NIX_PORTABLE_REQUIRED_MB}MB"
+        fail_check "storage free space ${available_mb}MB < ${NIX_STORAGE_REQUIRED_MB}MB"
       fi
       ;;
   esac
-}
-
-check_artifact() {
-  if [ -x "${NIX_PORTABLE_BIN}" ]; then
-    ok "nix-portable executable exists: ${NIX_PORTABLE_BIN}"
-  else
-    fail_check "nix-portable missing or not executable: ${NIX_PORTABLE_BIN}"
-    return
-  fi
-
-  if [ -f "${NIX_PORTABLE_BIN}.sha256" ]; then
-    expected=$(awk 'NR==1 {print $1}' "${NIX_PORTABLE_BIN}.sha256")
-    if actual=$(sha256_file "${NIX_PORTABLE_BIN}"); then
-      if [ "${actual}" = "${expected}" ]; then
-        ok "nix-portable checksum matches recorded sha256"
-      else
-        fail_check "nix-portable checksum mismatch: expected ${expected}, got ${actual}"
-      fi
-    else
-      fail_check "sha256sum or openssl is required to verify nix-portable"
-    fi
-  else
-    fail_check "missing checksum metadata: ${NIX_PORTABLE_BIN}.sha256"
-  fi
-}
-
-check_wrappers() {
-  if [ -x "${NIX_PORTABLE_RUNNER}" ]; then
-    ok "runner exists: ${NIX_PORTABLE_RUNNER}"
-  else
-    fail_check "runner missing or not executable: ${NIX_PORTABLE_RUNNER}"
-  fi
-
-  if [ -x "${NIX_DOCTOR}" ]; then
-    ok "doctor exists: ${NIX_DOCTOR}"
-  else
-    warn "doctor helper is not installed in storage: ${NIX_DOCTOR}"
-  fi
-
-  for wrapper in nix nix-shell nix-run nix-dev-shell nix-doctor; do
-    if [ -x "${NIX_WRAPPER_DIR}/${wrapper}" ]; then
-      ok "wrapper exists: ${NIX_WRAPPER_DIR}/${wrapper}"
-    else
-      fail_check "wrapper missing or not executable: ${NIX_WRAPPER_DIR}/${wrapper}"
-    fi
-  done
-}
-
-check_runtime() {
-  if [ "${NP_RUNTIME}" = "proot" ]; then
-    ok "NP_RUNTIME is proot"
-  else
-    warn "NP_RUNTIME is '${NP_RUNTIME}', but ROCKNIX SM8550 currently requires proot"
-  fi
-
-  if [ "${RUN_SMOKE}" -eq 1 ]; then
-    if [ -x "${NIX_WRAPPER_DIR}/nix" ]; then
-      if output=$(NP_RUNTIME="${NP_RUNTIME}" NP_LOCATION="${NP_LOCATION}" "${NIX_WRAPPER_DIR}/nix" --version 2>&1); then
-        ok "nix smoke command succeeded: ${output}"
-      else
-        fail_check "nix smoke command failed: ${output}"
-      fi
-    else
-      fail_check "cannot run smoke command because ${NIX_WRAPPER_DIR}/nix is missing"
-    fi
-  else
-    warn "nix smoke command skipped"
-  fi
-}
-
-check_dev_shell() {
-  if [ "${RUN_DEV_SHELL_SMOKE}" -eq 0 ]; then
-    return
-  fi
-
-  if [ ! -x "${NIX_WRAPPER_DIR}/nix" ]; then
-    fail_check "cannot run dev shell smoke because ${NIX_WRAPPER_DIR}/nix is missing"
-    return
-  fi
-
-  if output=$(NP_RUNTIME="${NP_RUNTIME}" NP_LOCATION="${NP_LOCATION}" "${NIX_WRAPPER_DIR}/nix" shell "${NIX_DEV_SHELL_SMOKE_PACKAGE}" --command sh -c "${NIX_DEV_SHELL_SMOKE_COMMAND}" 2>&1); then
-    ok "dev shell smoke command succeeded: ${output}"
-  else
-    fail_check "dev shell smoke command failed for ${NIX_DEV_SHELL_SMOKE_PACKAGE}: ${output}"
-  fi
 }
 
 # Layer 3: report whether /nix is the storage-backed bind mount expected by
@@ -513,9 +410,7 @@ check_layer3_mount() {
   fi
 }
 
-# Layer 4: only runs the new checks when real Nix is actually installed.
-# When absent, this is a no-op and the doctor output is unchanged from the
-# Layer 1/2/3 baseline.
+# Layer 4: only runs the real-Nix checks when real Nix is actually installed.
 check_layer4() {
   layer4_nix="${NIX_DEFAULT_PROFILE_BIN}/nix"
   if [ ! -x "${layer4_nix}" ]; then
@@ -524,21 +419,11 @@ check_layer4() {
 
   ok "Layer 4 detected: real Nix at ${layer4_nix}"
 
-  # nix --version with explicit path; verify no proot in the process tree of
-  # the spawned nix.
+  # nix --version with explicit path.
   if version_output=$("${layer4_nix}" --version 2>&1); then
     ok "real nix --version: ${version_output}"
   else
     fail_check "real nix --version failed: ${version_output}"
-  fi
-
-  # Verify nothing in the process tree calls into nix-portable. Spawn a
-  # short-lived nix and inspect its parent chain. This is best-effort -- if
-  # /proc is restricted or pgrep is unavailable, fall back to grep-of-self.
-  if pid_in_tree=$(pgrep -f nix-portable 2>/dev/null | head -1); then
-    if [ -n "${pid_in_tree}" ]; then
-      warn "a nix-portable process is currently running (pid ${pid_in_tree}); not necessarily wrong, but worth noting"
-    fi
   fi
 
   # User config: nix.conf existence and parseable sandbox setting.
@@ -577,16 +462,15 @@ check_layer4() {
   fi
 
   # Shell PATH agreement: which nix should resolve to the real nix once
-  # profile.d is sourced. On a fresh nixctl install via SSH (without
-  # 'hash -r' or a fresh shell), this may still resolve to the portable
-  # wrapper. WARN, do not fail.
+  # profile.d is sourced. A /storage/bin/nix result is stale legacy state from
+  # older images. WARN, do not fail.
   if path_nix=$(command -v nix 2>/dev/null); then
     case "${path_nix}" in
       "${NIX_DEFAULT_PROFILE_BIN}/nix"|"${NIX_USER_PROFILE_LINK}/bin/nix")
         ok "\$PATH 'nix' resolves to real nix: ${path_nix}"
         ;;
       "${NIX_WRAPPER_DIR}/nix")
-        warn "\$PATH 'nix' resolves to portable wrapper (${path_nix}); open a fresh shell or run 'hash -r'"
+        warn "\$PATH 'nix' resolves to stale legacy wrapper (${path_nix}); run nixctl install, then hash -r"
         ;;
       *)
         warn "\$PATH 'nix' resolves to unexpected path: ${path_nix}"
@@ -638,7 +522,7 @@ check_layer5() {
 
   check_profile_command_conflicts
 
-  available_mb=$(df -m "${NP_LOCATION}" 2>/dev/null | awk 'NR==2 {print $4}')
+  available_mb=$(df -m "${NIX_STORAGE_ROOT}" 2>/dev/null | awk 'NR==2 {print $4}')
   case "${available_mb}" in
     ''|*[!0-9]*) ;;
     *)
@@ -980,10 +864,6 @@ check_network() {
 check_architecture
 check_root_model
 check_storage
-check_artifact
-check_wrappers
-check_runtime
-check_dev_shell
 check_network
 check_layer3_mount
 check_layer4

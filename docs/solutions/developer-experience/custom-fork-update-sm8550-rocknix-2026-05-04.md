@@ -219,7 +219,7 @@ ssh $DEV '
   systemctl is-active nix-storage-setup.service nix.mount
   cat /proc/mounts | grep " /nix "
   ls -ld /storage/.nix-root /storage/.nix-root/store /storage/.nix-root/var/nix
-  ls /usr/bin/nix-portable-install /usr/bin/nixctl /usr/bin/nix-doctor /etc/profile.d/998-nix-integration.conf
+  ls /usr/bin/nixctl /usr/bin/nix-doctor /usr/bin/nix-layer-activate /etc/profile.d/998-nix-integration.conf
   touch /nix/.layer3-validated && ls -la /nix/.layer3-validated  # persistence smoke
   . /etc/profile
   case "$PATH" in /storage/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/storage/bin:*) echo "PATH integration OK" ;; *) echo "PATH integration unexpected: $PATH"; exit 1 ;; esac

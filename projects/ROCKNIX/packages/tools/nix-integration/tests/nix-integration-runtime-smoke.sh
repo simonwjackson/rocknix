@@ -9,50 +9,8 @@ PKG_DIR=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "${TMP_DIR}"' EXIT INT TERM
 
-FAKE_ARTIFACT="${TMP_DIR}/nix-portable-aarch64"
-cat >"${FAKE_ARTIFACT}" <<'EOF'
-#!/bin/sh
-if [ "${1:-}" = "nix" ] && [ "${2:-}" = "--version" ]; then
-  echo "nix (Nix) smoke-test"
-  exit 0
-fi
-if [ "${1:-}" = "nix" ] && [ "${2:-}" = "run" ] && [ "${3:-}" = "nixpkgs#hello" ]; then
-  echo "Hello, world!"
-  exit 0
-fi
-if [ "${1:-}" = "nix-shell" ]; then
-  echo "nix-shell smoke-test"
-  exit 0
-fi
-if [ "${1:-}" = "nix" ] && [ "${2:-}" = "shell" ] && [ "${3:-}" = "nixpkgs#jq" ]; then
-  echo "jq-1.7 smoke-test"
-  exit 0
-fi
-if [ "${1:-}" = "nix" ] && [ "${2:-}" = "shell" ] && [ "${3:-}" = "nixpkgs#python3" ]; then
-  echo "Python 3 smoke-test"
-  exit 0
-fi
-if [ "${1:-}" = "nix" ] && [ "${2:-}" = "shell" ] && [ "${3:-}" = "nixpkgs#does-not-exist" ]; then
-  echo "error: package does not exist" >&2
-  exit 42
-fi
-echo "fake nix-portable called: $*"
-exit 0
-EOF
-chmod 0755 "${FAKE_ARTIFACT}"
-FAKE_SHA=$(sha256sum "${FAKE_ARTIFACT}" | awk '{print $1}')
-
-export NIX_PORTABLE_DIR="${TMP_DIR}/apps/nix-portable"
-export NIX_WRAPPER_DIR="${TMP_DIR}/bin"
-export NP_LOCATION="${TMP_DIR}/storage"
-export NIX_PORTABLE_URL="file://${FAKE_ARTIFACT}"
-export NIX_PORTABLE_SHA256="${FAKE_SHA}"
-export NIX_PORTABLE_REQUIRED_MB=1
-export NIX_PORTABLE_SKIP_ARCH_CHECK=1
-mkdir -p "${NP_LOCATION}"
-
 # Layer 5 profile contract: the profile.d snippet must expose the root Nix
-# profile before Layer 4 and portable paths, and must be idempotent.
+# profile before Layer 4 and storage-local user env paths, and must be idempotent.
 PROFILE_ENV="${TMP_DIR}/profile-env"
 HOME="${TMP_DIR}/home" PATH="/usr/bin:/usr/sbin" /bin/sh -c \
   '. "'"${PKG_DIR}/profile.d/998-nix-integration.conf"'"; . "'"${PKG_DIR}/profile.d/998-nix-integration.conf"'"; printf "%s\n" "$PATH"' \
@@ -66,29 +24,14 @@ case "${PROFILE_PATH}" in
   *".nix-profile/bin"*".nix-profile/bin"*) echo "FAIL: profile.d duplicated .nix-profile path" >&2; exit 1 ;;
 esac
 
-"${PKG_DIR}/scripts/nix-portable-install" install >/tmp/nix-portable-install-smoke.log
-"${NIX_WRAPPER_DIR}/nix" --version | grep -q 'nix (Nix) smoke-test'
-"${NIX_WRAPPER_DIR}/nix" run nixpkgs#hello | grep -q 'Hello, world!'
-"${NIX_WRAPPER_DIR}/nix-shell" -p jq | grep -q 'nix-shell smoke-test'
-"${NIX_WRAPPER_DIR}/nix-run" nixpkgs#hello | grep -q 'Hello, world!'
-"${NIX_WRAPPER_DIR}/nix" shell nixpkgs#jq --command jq --version | grep -q 'jq-1.7 smoke-test'
-"${NIX_WRAPPER_DIR}/nix-dev-shell" nixpkgs#python3 --command python3 --version | grep -q 'Python 3 smoke-test'
-if "${NIX_WRAPPER_DIR}/nix" shell nixpkgs#does-not-exist >/tmp/nix-dev-shell-error.log 2>&1; then
-  echo "expected missing dev-shell package to fail" >&2
-  exit 1
-fi
-grep -q 'package does not exist' /tmp/nix-dev-shell-error.log
-"${NIX_WRAPPER_DIR}/nix" --version | grep -q 'nix (Nix) smoke-test'
 mkdir -p "${TMP_DIR}/layer8-doctor-config"
 printf 'experimental-features = nix-command flakes\nbuild-users-group =\n' >"${TMP_DIR}/layer8-doctor-config/nix.conf"
 NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
 NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-doctor-state" \
 NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
-  "${PKG_DIR}/scripts/nix-doctor" --offline --dev-shell-smoke >/tmp/nix-doctor-smoke.log
+  "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-doctor-smoke.log || true
 grep -q 'Layer 8 daemon state: inactive' /tmp/nix-doctor-smoke.log
 grep -q 'Layer 8 daemon eligibility:' /tmp/nix-doctor-smoke.log
-NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
-  "${NIX_WRAPPER_DIR}/nix-doctor" --offline --dev-shell-smoke >/tmp/nix-doctor-wrapper-smoke.log
 "${PKG_DIR}/scripts/nixctl" status >/tmp/nix-layer8-nixctl-status.log
 grep -q 'Layer 8 (experimental daemon) status' /tmp/nix-layer8-nixctl-status.log
 grep -q 'fallback:   Layer 4 single-user/root Nix remains primary' /tmp/nix-layer8-nixctl-status.log
@@ -118,7 +61,7 @@ NIX_LAYER9_SKIP_KERNEL_CHECK=1 \
 NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
 NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-doctor-state" \
 NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
-  "${PKG_DIR}/scripts/nix-doctor" --offline --no-smoke >/tmp/nix-layer9-doctor-proof-ready.log
+  "${PKG_DIR}/scripts/nix-doctor" --offline --no-smoke >/tmp/nix-layer9-doctor-proof-ready.log || true
 grep -q 'Layer 9 nspawn guest state: proof-ready' /tmp/nix-layer9-doctor-proof-ready.log
 grep -q 'Layer 9 nspawn eligibility: available: nspawn guest proof prerequisites present' /tmp/nix-layer9-doctor-proof-ready.log
 NIX_LAYER9_NSPAWN_BIN="${TMP_DIR}/missing-nspawn" \
@@ -178,15 +121,9 @@ NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
 grep -q 'Layer 8 build-users-group exists: nixbld' /tmp/nix-layer8-build-group.log
 grep -q 'Layer 8 socket unit present: .*nix-daemon.socket' /tmp/nix-layer8-build-group.log
 grep -q 'Layer 8 service unit present: .*nix-daemon.service' /tmp/nix-layer8-build-group.log
-"${PKG_DIR}/scripts/nix-portable-install" status | grep -q 'nix-portable: installed'
 grep -q 'What=/storage/.nix-root' "${PKG_DIR}/system.d/nix.mount"
 grep -q 'Where=/nix' "${PKG_DIR}/system.d/nix.mount"
 grep -q 'Before=nix.mount' "${PKG_DIR}/system.d/nix-storage-setup.service"
-"${PKG_DIR}/scripts/nix-portable-install" remove >/tmp/nix-portable-remove-smoke.log
-[ ! -e "${NIX_WRAPPER_DIR}/nix" ]
-[ ! -e "${NIX_WRAPPER_DIR}/nix-dev-shell" ]
-[ ! -e "${NIX_WRAPPER_DIR}/nix-doctor" ]
-[ ! -d "${NIX_PORTABLE_DIR}" ]
 
 # Layer 6 activation engine smoke against temp surfaces (safe for default CI).
 L6_TMP="${TMP_DIR}/layer6"
@@ -211,12 +148,8 @@ NIX_LAYER6_STATE_DIR="${L6_TMP}/state" \
 NIX_LAYER6_BIN_DIR="${L6_TMP}/bin" \
 NIX_LAYER6_PROFILE_D_DIR="${L6_TMP}/profile.d" \
 NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
-NIX_PORTABLE_DIR="${NIX_PORTABLE_DIR}" \
-NIX_WRAPPER_DIR="${NIX_WRAPPER_DIR}" \
-NP_LOCATION="${NP_LOCATION}" \
-NIX_PORTABLE_REQUIRED_MB=1 \
-  "${PKG_DIR}/scripts/nix-doctor" --offline --no-smoke >/tmp/nix-layer6-doctor-smoke.log || true
-# Doctor may fail because the fake portable layer was removed; assert Layer 6 checks ran.
+  "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer6-doctor-smoke.log || true
+# Doctor may fail because Layer 4 is absent in default CI; assert Layer 6 checks ran.
 grep -q 'Layer 6 state: active' /tmp/nix-layer6-doctor-smoke.log
 printf 'user-file\n' >"${L6_TMP}/bin/rocknix-layer6-conflict"
 mkdir -p "${L6_TMP}/conflict-bundle/files/bin"
@@ -296,22 +229,14 @@ NIX_LAYER6_STATE_DIR="${L7_TMP}/state" \
 NIX_LAYER6_BIN_DIR="${L7_TMP}/bin" \
 NIX_LAYER6_PROFILE_D_DIR="${L7_TMP}/profile.d" \
 NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
-NIX_PORTABLE_DIR="${NIX_PORTABLE_DIR}" \
-NIX_WRAPPER_DIR="${NIX_WRAPPER_DIR}" \
-NP_LOCATION="${NP_LOCATION}" \
-NIX_PORTABLE_REQUIRED_MB=1 \
-  "${PKG_DIR}/scripts/nix-doctor" --offline --no-smoke >/tmp/nix-layer7-doctor-smoke.log || true
+  "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer7-doctor-smoke.log || true
 grep -q 'Layer 7 ready: launcher active with Nix-backed app binary' /tmp/nix-layer7-doctor-smoke.log
 if HOME="${L7_HOME}" \
   NIX_LAYER6_STATE_DIR="${L7_TMP}/state" \
   NIX_LAYER6_BIN_DIR="${L7_TMP}/bin" \
   NIX_LAYER6_PROFILE_D_DIR="${L7_TMP}/profile.d" \
   NIX_LAYER7_APP_STATE_DIR="/storage/games-internal/roms/steam" \
-  NIX_PORTABLE_DIR="${NIX_PORTABLE_DIR}" \
-  NIX_WRAPPER_DIR="${NIX_WRAPPER_DIR}" \
-  NP_LOCATION="${NP_LOCATION}" \
-  NIX_PORTABLE_REQUIRED_MB=1 \
-  "${PKG_DIR}/scripts/nix-doctor" --offline --no-smoke >/tmp/nix-layer7-unsafe-state.log 2>&1; then
+  "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer7-unsafe-state.log 2>&1; then
   echo 'expected Layer 7 unsafe state path doctor check to fail' >&2
   exit 1
 fi
@@ -345,8 +270,6 @@ fi
 
 # Device-side smokes use the real package script paths (not the fake-tarball
 # harness above), so reset the per-test environment.
-unset NIX_PORTABLE_DIR NIX_WRAPPER_DIR NP_LOCATION NIX_PORTABLE_URL
-unset NIX_PORTABLE_SHA256 NIX_PORTABLE_REQUIRED_MB NIX_PORTABLE_SKIP_ARCH_CHECK
 
 NIXCTL="${PKG_DIR}/scripts/nixctl"
 DOCTOR="${PKG_DIR}/scripts/nix-doctor"
@@ -374,12 +297,12 @@ NIX_BIN=/nix/var/nix/profiles/default/bin/nix
 "${NIX_BIN}" --version >>"${L4_LOG}" 2>&1
 "${NIX_BIN}" --version | grep -q 'nix (Nix) ' || { echo 'FAIL: nix --version output unexpected' >&2; exit 1; }
 
-log 'verify: process tree of nix has no nix-portable / proot ancestors'
+log 'verify: process tree of nix has no legacy portable/proot ancestors'
 ps_out=$("${NIX_BIN}" --version 2>&1; ps -ef 2>/dev/null || true)
 if printf '%s' "${ps_out}" | grep -qE 'nix-portable|proot'; then
   # Only an issue if those processes are CURRENT ancestors of nix; a parallel
-  # nix-portable session is fine. Best-effort check.
-  log 'note: nix-portable or proot present in ps output; ensure no parent chain'
+  echo 'FAIL: real Nix smoke saw legacy portable/proot process state' >&2
+  exit 1
 fi
 
 log 'compat-positive: nix-shell -p jq runs cleanly under real nix'
@@ -404,13 +327,9 @@ log 'idempotency: second uninstall is a clean no-op'
 "${NIXCTL}" uninstall --yes 2>&1 | grep -q 'Nothing to uninstall' \
   || { echo 'FAIL: idempotent uninstall did not report no-op' >&2; exit 1; }
 
-log 'R4 verification: portable wrapper still works after Layer 4 cycle'
-if [ -x /storage/bin/nix ]; then
-  /storage/bin/nix --version >>"${L4_LOG}" 2>&1 \
-    || { echo 'FAIL: portable wrapper broken after Layer 4 cycle' >&2; exit 1; }
-else
-  log 'note: /storage/bin/nix not present (portable not installed); skipping R4'
-fi
+log 'verify: legacy portable wrappers are absent after Layer 4 install'
+[ ! -e /storage/bin/nix-portable ] || { echo 'FAIL: legacy /storage/bin/nix-portable survived Layer 4 install' >&2; exit 1; }
+[ ! -e /storage/bin/nix ] || { echo 'FAIL: legacy /storage/bin/nix survived Layer 4 install' >&2; exit 1; }
 
 printf 'nix-integration Layer 4 smoke passed\n'
 printf 'log: %s\n' "${L4_LOG}"
