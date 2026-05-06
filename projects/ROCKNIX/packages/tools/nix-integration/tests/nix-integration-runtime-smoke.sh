@@ -86,6 +86,48 @@ NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
 NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
   "${PKG_DIR}/scripts/nixctl" guest preflight >/tmp/nix-layer10-proof-preflight.log
 grep -q 'Layer 10 guest preflight passed' /tmp/nix-layer10-proof-preflight.log
+mkdir -p "${TMP_DIR}/layer11-bin" "${TMP_DIR}/layer11-state"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-proof-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER11_BIN_DIR="${TMP_DIR}/layer11-bin" \
+NIX_LAYER11_STATE_DIR="${TMP_DIR}/layer11-state" \
+  "${PKG_DIR}/scripts/nixctl" bridge status >/tmp/nix-layer11-status.log
+grep -q 'Layer 11 (one-shot guest-backed bridges) status' /tmp/nix-layer11-status.log
+grep -q 'bridges:    0' /tmp/nix-layer11-status.log
+grep -q 'eligible:   available: Layer 10 one-shot guest execution ready' /tmp/nix-layer11-status.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-proof-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER11_BIN_DIR="${TMP_DIR}/layer11-bin" \
+NIX_LAYER11_STATE_DIR="${TMP_DIR}/layer11-state" \
+  "${PKG_DIR}/scripts/nixctl" bridge preflight layer11-smoke >/tmp/nix-layer11-preflight.log
+grep -q 'Layer 11 bridge preflight passed: layer11-smoke' /tmp/nix-layer11-preflight.log
+if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+  NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-proof-root" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
+  NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  NIX_LAYER11_BIN_DIR="${TMP_DIR}/layer11-bin" \
+  NIX_LAYER11_STATE_DIR="${TMP_DIR}/layer11-state" \
+  "${PKG_DIR}/scripts/nixctl" bridge preflight '../bad' >/tmp/nix-layer11-bad-name.log 2>&1; then
+  echo 'expected Layer 11 preflight to reject unsafe bridge name' >&2
+  exit 1
+fi
+grep -q 'unsafe bridge name' /tmp/nix-layer11-bad-name.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-proof-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER11_BIN_DIR="${TMP_DIR}/layer11-bin" \
+NIX_LAYER11_STATE_DIR="${TMP_DIR}/layer11-state" \
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-doctor-state" \
+NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
+  "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer11-doctor.log || true
+grep -q 'Layer 11 installed bridge count: 0' /tmp/nix-layer11-doctor.log
+grep -q 'Layer 11 bridge eligibility: available: Layer 10 one-shot guest execution ready' /tmp/nix-layer11-doctor.log
 mkdir -p "${TMP_DIR}/layer10-boot-root/sbin"
 printf '#!/bin/sh\n' >"${TMP_DIR}/layer10-boot-root/sbin/init"
 chmod 0755 "${TMP_DIR}/layer10-boot-root/sbin/init"
