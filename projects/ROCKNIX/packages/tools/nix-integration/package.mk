@@ -7,7 +7,7 @@ PKG_LICENSE="GPL-2.0"
 PKG_SITE="https://github.com/ROCKNIX/distribution"
 PKG_URL=""
 PKG_DEPENDS_TARGET="toolchain"
-PKG_LONGDESC="nix-integration: Experimental storage-only Nix tooling for ROCKNIX"
+PKG_LONGDESC="nix-integration: custom-image Nix tooling for ROCKNIX"
 PKG_TOOLCHAIN="manual"
 
 NIX_DAEMON_SUPPORT="${NIX_DAEMON_SUPPORT:-no}"
@@ -21,14 +21,10 @@ post_install() {
   chmod 0755 ${INSTALL}/nix
 
   mkdir -p ${INSTALL}/usr/bin
-  cp ${PKG_DIR}/scripts/nix-portable-install ${INSTALL}/usr/bin
-  cp ${PKG_DIR}/scripts/nix-portable-run ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/nix-doctor ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/nix-layer-activate ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/nixctl ${INSTALL}/usr/bin
   chmod 0755 \
-    ${INSTALL}/usr/bin/nix-portable-install \
-    ${INSTALL}/usr/bin/nix-portable-run \
     ${INSTALL}/usr/bin/nix-doctor \
     ${INSTALL}/usr/bin/nix-layer-activate \
     ${INSTALL}/usr/bin/nixctl
