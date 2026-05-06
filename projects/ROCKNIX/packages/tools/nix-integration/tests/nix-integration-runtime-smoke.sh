@@ -42,7 +42,10 @@ grep -q 'service:    .*nix-daemon.service' /tmp/nix-layer8-unit-status.log
 FAKE_NSPAWN="${TMP_DIR}/systemd-nspawn"
 cat >"${FAKE_NSPAWN}" <<'EOF'
 #!/bin/sh
-echo 'systemd-nspawn smoke-test'
+case " $* " in
+  *' --boot '*) sleep 300 ;;
+  *) echo 'systemd-nspawn smoke-test' ;;
+esac
 EOF
 chmod 0755 "${FAKE_NSPAWN}"
 mkdir -p "${TMP_DIR}/layer9-root/etc" "${TMP_DIR}/layer9-state"
@@ -265,14 +268,64 @@ FAKE_LAYER10_SYSTEMCTL="${TMP_DIR}/systemctl-layer10"
 cat >"${FAKE_LAYER10_SYSTEMCTL}" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >>"${NIX_SYSTEMCTL_LOG}"
+pid_file=${NIX_SYSTEMCTL_PID:-/tmp/nix-layer10-systemctl.pid}
 case "$1" in
-  is-active) echo inactive; exit 3 ;;
-  daemon-reload|start|stop) exit 0 ;;
+  is-active)
+    if [ -f "${pid_file}" ] && kill -0 "$(cat "${pid_file}")" 2>/dev/null; then
+      echo active
+      exit 0
+    fi
+    echo inactive
+    exit 3
+    ;;
+  daemon-reload) exit 0 ;;
+  start)
+    "${NIX_LAYER10_NSPAWN_BIN}" --boot --register=no --directory="${NIX_LAYER10_GUEST_ROOT}" >/dev/null 2>&1 &
+    echo $! >"${pid_file}"
+    exit 0
+    ;;
+  stop)
+    if [ -f "${pid_file}" ]; then
+      kill "$(cat "${pid_file}")" 2>/dev/null || true
+      rm -f "${pid_file}"
+    fi
+    exit 0
+    ;;
   enable) exit 99 ;;
   *) exit 0 ;;
 esac
 EOF
 chmod 0755 "${FAKE_LAYER10_SYSTEMCTL}"
+FAKE_LAYER10_ACTIVE_SYSTEMCTL="${TMP_DIR}/systemctl-layer10-active-no-process"
+cat >"${FAKE_LAYER10_ACTIVE_SYSTEMCTL}" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"${NIX_SYSTEMCTL_LOG}"
+case "$1" in
+  is-active) echo active; exit 0 ;;
+  daemon-reload|start|stop) exit 0 ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod 0755 "${FAKE_LAYER10_ACTIVE_SYSTEMCTL}"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-boot-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-active-no-process-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_SYSTEMCTL="${FAKE_LAYER10_ACTIVE_SYSTEMCTL}" \
+NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer10-active-no-process.log" \
+  "${PKG_DIR}/scripts/nixctl" guest status >/tmp/nix-layer10-active-no-process-status.log
+ grep -q 'state:      failed' /tmp/nix-layer10-active-no-process-status.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-boot-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-active-no-process-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_SYSTEMCTL="${FAKE_LAYER10_ACTIVE_SYSTEMCTL}" \
+NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer10-active-no-process.log" \
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-doctor-state" \
+NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
+  "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer10-active-no-process-doctor.log 2>&1 || true
+grep -q 'unit is active but no nspawn process references' /tmp/nix-layer10-active-no-process-doctor.log
 if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
   NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-proof-root" \
   NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-start-proof-state" \
@@ -291,6 +344,7 @@ NIX_LAYER10_SYSTEMD_DIR="${TMP_DIR}/layer10-systemd" \
 NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
 NIX_SYSTEMCTL="${FAKE_LAYER10_SYSTEMCTL}" \
 NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer10.log" \
+NIX_SYSTEMCTL_PID="${TMP_DIR}/systemctl-layer10.pid" \
   "${PKG_DIR}/scripts/nixctl" guest start >/tmp/nix-layer10-start.log
 [ -f "${TMP_DIR}/layer10-systemd/rocknix-guest.service" ]
 grep -q -- '--register=no' "${TMP_DIR}/layer10-systemd/rocknix-guest.service"
@@ -305,6 +359,7 @@ NIX_LAYER10_SYSTEMD_DIR="${TMP_DIR}/layer10-systemd" \
 NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
 NIX_SYSTEMCTL="${FAKE_LAYER10_SYSTEMCTL}" \
 NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer10.log" \
+NIX_SYSTEMCTL_PID="${TMP_DIR}/systemctl-layer10.pid" \
   "${PKG_DIR}/scripts/nixctl" guest stop >/tmp/nix-layer10-stop.log
 grep -q '^stop rocknix-guest.service' "${TMP_DIR}/systemctl-layer10.log"
 grep -q 'stopped' "${TMP_DIR}/layer10-start-state/state"

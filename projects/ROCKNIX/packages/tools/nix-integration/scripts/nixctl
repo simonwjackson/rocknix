@@ -66,6 +66,7 @@ NIX_LAYER10_UNIT_NAME="${NIX_LAYER10_UNIT_NAME:-rocknix-guest.service}"
 NIX_LAYER10_SYSTEMD_DIR="${NIX_LAYER10_SYSTEMD_DIR:-}"
 NIX_LAYER10_SKIP_KERNEL_CHECK="${NIX_LAYER10_SKIP_KERNEL_CHECK:-${NIX_LAYER9_SKIP_KERNEL_CHECK}}"
 NIX_LAYER10_TIMEOUT="${NIX_LAYER10_TIMEOUT:-45}"
+NIX_LAYER10_START_WAIT="${NIX_LAYER10_START_WAIT:-5}"
 NIX_LAYER10_LOG="${NIX_LAYER10_LOG:-/tmp/nix-integration-layer10-guest.log}"
 NIX_LAYER10_CPU_WEIGHT="${NIX_LAYER10_CPU_WEIGHT:-1}"
 NIX_LAYER10_IO_WEIGHT="${NIX_LAYER10_IO_WEIGHT:-1}"
@@ -136,6 +137,7 @@ Environment overrides (defaults shown):
   NIX_LAYER10_GUEST_ROOT ${NIX_LAYER10_GUEST_ROOT}
   NIX_LAYER10_UNIT_NAME  ${NIX_LAYER10_UNIT_NAME}
   NIX_LAYER10_TIMEOUT    ${NIX_LAYER10_TIMEOUT}
+  NIX_LAYER10_START_WAIT ${NIX_LAYER10_START_WAIT}
   NIX_LAYER10_MEMORY_MAX ${NIX_LAYER10_MEMORY_MAX}
   NIX_LAYER11_STATE_DIR  ${NIX_LAYER11_STATE_DIR}
   NIX_LAYER11_BIN_DIR    ${NIX_LAYER11_BIN_DIR}
@@ -781,12 +783,20 @@ layer10_unit_path() {
   return 1
 }
 
+layer10_unit_active() {
+  systemctl_available || return 1
+  [ "$(systemctl_state "${NIX_LAYER10_UNIT_NAME}")" = "active" ]
+}
+
+layer10_process_running() {
+  have ps || return 1
+  ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${NIX_LAYER10_GUEST_ROOT}" >/dev/null 2>&1
+}
+
 layer10_running() {
-  if systemctl_available; then
-    [ "$(systemctl_state "${NIX_LAYER10_UNIT_NAME}")" = "active" ] && return 0
-  fi
-  if have ps; then
-    ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${NIX_LAYER10_GUEST_ROOT}" >/dev/null 2>&1 && return 0
+  layer10_process_running && return 0
+  if ! have ps; then
+    layer10_unit_active && return 0
   fi
   return 1
 }
@@ -795,6 +805,10 @@ layer10_state() {
   [ -x "${NIX_LAYER10_NSPAWN_BIN}" ] || { echo unsupported; return; }
   layer10_kernel_ready || { echo unsupported; return; }
   layer10_running && { echo running; return; }
+  if have ps && layer10_unit_active; then
+    echo failed
+    return
+  fi
   case "$(layer10_state_value)" in
     running) echo failed; return ;;
     failed|partial) echo failed; return ;;
@@ -1552,8 +1566,19 @@ cmd_guest_start() {
   "${NIX_SYSTEMCTL}" daemon-reload >/dev/null 2>&1 || true
   layer10_write_state starting
   if "${NIX_SYSTEMCTL}" start "${NIX_LAYER10_UNIT_NAME}"; then
-    layer10_write_state running
-    info "Layer 10 guest started: ${NIX_LAYER10_UNIT_NAME}"
+    waited=0
+    while [ "${waited}" -lt "${NIX_LAYER10_START_WAIT}" ]; do
+      layer10_running && break
+      waited=$((waited + 1))
+      sleep 1
+    done
+    if layer10_running; then
+      layer10_write_state running
+      info "Layer 10 guest started: ${NIX_LAYER10_UNIT_NAME}"
+    else
+      layer10_write_state failed
+      fail "guest start failed: no nspawn process references ${NIX_LAYER10_GUEST_ROOT}; state marked failed"
+    fi
   else
     layer10_write_state failed
     fail "guest start failed; state marked failed"
