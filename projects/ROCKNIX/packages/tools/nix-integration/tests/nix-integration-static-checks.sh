@@ -210,5 +210,9 @@ grep -q 'systemd-nspawn guest proof' "${SCRIPT_DIR}/nix-integration-runtime-smok
 grep -q -- '--register=no' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke must run nspawn without machined registration"
 grep -q 'layer9-guest-proof' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 9 proof marker"
 grep -q 'nix-integration Layer 9 smoke passed' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 9 success marker"
+grep -q 'LAYER10_SMOKE' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 10 opt-in flag"
+grep -q 'guest run' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 10 proof guest run path"
+grep -q 'guest start' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 10 bootable start path"
+grep -q 'nix-integration Layer 10 smoke passed' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 10 success marker"
 
 printf 'nix-integration static checks passed\n'

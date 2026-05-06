@@ -388,13 +388,20 @@ printf 'nix-integration runtime smoke passed\n'
 #   - network reachability to releases.nixos.org and cache.nixos.org
 #   - >= 1 GB free on /storage
 # Not run in default CI; intended for manual validation on hardware.
-if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ]; then
+if [ "${LAYER10_SMOKE:-0}" = "1" ] || [ "${LAYER10_SMOKE:-0}" = "proof" ] || [ "${LAYER10_SMOKE:-0}" = "bootable" ]; then
+  LAYER10_REQUESTED=1
+else
+  LAYER10_REQUESTED=0
+fi
+
+if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ]; then
   printf 'nix-integration Layer 4 smoke: skipped (set LAYER4_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 5 smoke: skipped (set LAYER5_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 6 smoke: skipped (set LAYER6_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 7 smoke: skipped (set LAYER7_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 8 smoke: skipped (set LAYER8_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 9 smoke: skipped (set LAYER9_SMOKE=1 to enable)\n'
+  printf 'nix-integration Layer 10 smoke: skipped (set LAYER10_SMOKE=proof or bootable to enable)\n'
   exit 0
 fi
 
@@ -470,7 +477,7 @@ fi
 # hardware. Requires Layer 4 real Nix to already be installed. The default
 # package is nixpkgs#hello because it is small and low-conflict.
 if [ "${LAYER5_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ]; then
+  if [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ]; then
     exit 0
   fi
 else
@@ -555,7 +562,7 @@ fi
 # Set LAYER6_SMOKE=1 to validate managed storage-local user-environment
 # activation on hardware. Requires Layer 4/5 shell integration to be healthy.
 if [ "${LAYER6_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ]; then
+  if [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ]; then
     exit 0
   fi
 else
@@ -664,7 +671,7 @@ fi
 # visual confirmation remains operator-observed because CI cannot inspect the
 # handheld screen.
 if [ "${LAYER7_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ]; then
+  if [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ]; then
     exit 0
   fi
 else
@@ -764,7 +771,7 @@ fi
 # Requires Layer 4 real Nix, image-time daemon build identities/config, and
 # opt-in daemon units. Default CI never starts systemd units.
 if [ "${LAYER8_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER9_SMOKE:-0}" != "1" ]; then
+  if [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ]; then
     exit 0
   fi
 else
@@ -850,8 +857,10 @@ fi
 # on hardware. Requires a Layer 9-enabled image and a pre-staged guest rootfs.
 # The smoke does not download or generate the rootfs and never enables a unit.
 if [ "${LAYER9_SMOKE:-0}" != "1" ]; then
-  exit 0
-fi
+  if [ "${LAYER10_REQUESTED}" != "1" ]; then
+    exit 0
+  fi
+else
 
 L9_LOG=/tmp/nix-integration-layer9-smoke.log
 L9_NSPAWN="${LAYER9_NSPAWN_BIN:-${NIX_LAYER9_NSPAWN_BIN:-/usr/bin/systemd-nspawn}}"
@@ -925,3 +934,120 @@ NIX_LAYER9_GUEST_ROOT="${L9_ROOT}" \
 
 printf 'nix-integration Layer 9 smoke passed\n'
 printf 'log: %s\n' "${L9_LOG}"
+fi
+
+# ---- Layer 10 device-side smoke (opt-in) -----------------------------------
+# Set LAYER10_SMOKE=proof to validate proof-mode run/shell operations on
+# hardware. Set LAYER10_SMOKE=bootable to validate manual bootable guest
+# start/stop with resource-bounded disabled unit generation. Default CI never
+# starts a real nspawn guest.
+if [ "${LAYER10_SMOKE:-0}" != "1" ] && [ "${LAYER10_SMOKE:-0}" != "proof" ] && [ "${LAYER10_SMOKE:-0}" != "bootable" ]; then
+  exit 0
+fi
+
+L10_LOG=/tmp/nix-integration-layer10-smoke.log
+L10_MODE="${LAYER10_SMOKE:-proof}"
+[ "${L10_MODE}" = "1" ] && L10_MODE=proof
+L10_NSPAWN="${LAYER10_NSPAWN_BIN:-${NIX_LAYER10_NSPAWN_BIN:-/usr/bin/systemd-nspawn}}"
+L10_ROOT="${LAYER10_GUEST_ROOT:-${NIX_LAYER10_GUEST_ROOT:-/storage/machines/rocknix-guest}}"
+L10_STATE="${LAYER10_STATE_DIR:-${NIX_LAYER10_STATE_DIR:-/storage/.config/nix-integration/layer10}}"
+L10_TIMEOUT="${LAYER10_TIMEOUT:-45}"
+L10_PROOF_COMMAND="${LAYER10_PROOF_COMMAND:-printf 'layer10-guest-proof\\n'; if command -v nix >/dev/null 2>&1; then nix --version; fi}"
+rm -f "${L10_LOG}"
+
+log10() {
+  printf '[layer10-smoke] %s\n' "$*"
+  printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" >>"${L10_LOG}"
+}
+
+layer10_guest_running() {
+  ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${L10_ROOT}" >/dev/null 2>&1
+}
+
+layer10_no_enabled_unit() {
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl is-enabled rocknix-guest.service >/dev/null 2>&1 && return 1
+    systemctl is-enabled systemd-nspawn@rocknix-guest.service >/dev/null 2>&1 && return 1
+  fi
+  return 0
+}
+
+[ -x "${L10_NSPAWN}" ] || { echo "FAIL: Layer 10 smoke requires executable systemd-nspawn at ${L10_NSPAWN}" >&2; exit 1; }
+[ -d "${L10_ROOT}" ] || { echo "FAIL: Layer 10 smoke requires staged guest rootfs at ${L10_ROOT}" >&2; exit 1; }
+layer10_no_enabled_unit \
+  || { echo 'FAIL: Layer 10 found an enabled guest unit before smoke' >&2; exit 1; }
+
+log10 'pre-flight: Layer 10 guest diagnostics'
+NIX_LAYER10_NSPAWN_BIN="${L10_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${L10_ROOT}" \
+NIX_LAYER10_STATE_DIR="${L10_STATE}" \
+  "${NIXCTL}" guest status >>"${L10_LOG}" 2>&1 \
+  || { echo 'FAIL: nixctl guest status failed during Layer 10 preflight' >&2; exit 1; }
+grep -q 'Layer 10 (managed nspawn guest operations) status' "${L10_LOG}" \
+  || { echo 'FAIL: nixctl guest status did not report Layer 10 section' >&2; exit 1; }
+NIX_LAYER10_NSPAWN_BIN="${L10_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${L10_ROOT}" \
+NIX_LAYER10_STATE_DIR="${L10_STATE}" \
+  "${DOCTOR}" --offline >>"${L10_LOG}" 2>&1 \
+  || { echo 'FAIL: nix-doctor failed during Layer 10 preflight' >&2; exit 1; }
+grep -q 'Layer 10 guest lifecycle state' "${L10_LOG}" \
+  || { echo 'FAIL: nix-doctor did not report Layer 10 lifecycle state' >&2; exit 1; }
+
+case "${L10_MODE}" in
+  proof)
+    log10 'proof: bounded nixctl guest run command'
+    NIX_LAYER10_NSPAWN_BIN="${L10_NSPAWN}" \
+    NIX_LAYER10_GUEST_ROOT="${L10_ROOT}" \
+    NIX_LAYER10_STATE_DIR="${L10_STATE}" \
+    NIX_LAYER10_TIMEOUT="${L10_TIMEOUT}" \
+    NIX_LAYER10_LOG="${L10_LOG}.guest" \
+      "${NIXCTL}" guest run /bin/sh -lc "${L10_PROOF_COMMAND}" >>"${L10_LOG}" 2>&1 \
+      || { echo 'FAIL: Layer 10 proof-mode guest run failed' >&2; layer10_guest_running && pkill -f "systemd-nspawn.*${L10_ROOT}" 2>/dev/null || true; exit 1; }
+    grep -q 'layer10-guest-proof' "${L10_LOG}" \
+      || { echo 'FAIL: Layer 10 guest proof marker missing' >&2; exit 1; }
+    ;;
+  bootable)
+    log10 'start: manual bootable guest start'
+    NIX_LAYER10_NSPAWN_BIN="${L10_NSPAWN}" \
+    NIX_LAYER10_GUEST_ROOT="${L10_ROOT}" \
+    NIX_LAYER10_STATE_DIR="${L10_STATE}" \
+      "${NIXCTL}" guest start >>"${L10_LOG}" 2>&1 \
+      || { echo 'FAIL: Layer 10 bootable guest start failed' >&2; exit 1; }
+    NIX_LAYER10_NSPAWN_BIN="${L10_NSPAWN}" \
+    NIX_LAYER10_GUEST_ROOT="${L10_ROOT}" \
+    NIX_LAYER10_STATE_DIR="${L10_STATE}" \
+      "${NIXCTL}" guest status >>"${L10_LOG}" 2>&1 \
+      || { echo 'FAIL: nixctl guest status failed after Layer 10 start' >&2; exit 1; }
+    grep -q 'state:      running' "${L10_LOG}" \
+      || { echo 'FAIL: Layer 10 status did not report running after start' >&2; exit 1; }
+    log10 'stop: manual bootable guest stop'
+    NIX_LAYER10_GUEST_ROOT="${L10_ROOT}" \
+    NIX_LAYER10_STATE_DIR="${L10_STATE}" \
+      "${NIXCTL}" guest stop >>"${L10_LOG}" 2>&1 \
+      || { echo 'FAIL: Layer 10 bootable guest stop failed' >&2; exit 1; }
+    ;;
+  *)
+    echo "FAIL: unknown LAYER10_SMOKE mode: ${L10_MODE}" >&2
+    exit 1
+    ;;
+esac
+
+log10 'cleanup: verify no guest process or enabled guest unit remains'
+if layer10_guest_running; then
+  pkill -f "systemd-nspawn.*${L10_ROOT}" 2>/dev/null || true
+  sleep 1
+fi
+layer10_guest_running \
+  && { echo 'FAIL: Layer 10 guest process still running after smoke' >&2; exit 1; }
+layer10_no_enabled_unit \
+  || { echo 'FAIL: Layer 10 found enabled guest unit after smoke' >&2; exit 1; }
+
+log10 'diagnostics: post-smoke host Layer 10 status remains readable'
+NIX_LAYER10_NSPAWN_BIN="${L10_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${L10_ROOT}" \
+NIX_LAYER10_STATE_DIR="${L10_STATE}" \
+  "${NIXCTL}" guest status >>"${L10_LOG}" 2>&1 \
+  || { echo 'FAIL: nixctl guest status failed after Layer 10 smoke' >&2; exit 1; }
+
+printf 'nix-integration Layer 10 smoke passed (%s)\n' "${L10_MODE}"
+printf 'log: %s\n' "${L10_LOG}"

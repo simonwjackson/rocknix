@@ -354,7 +354,7 @@ flowchart TB
 **Verification:**
 - A bootable guest can be manually started, inspected, stopped, and left disabled across reboot; proof roots are not misclassified as bootable guests.
 
-- [ ] **Unit 5: Add lifecycle hardware smoke modes**
+- [x] **Unit 5: Add lifecycle hardware smoke modes**
 
 **Goal:** Provide repeatable opt-in hardware validation for proof-mode one-shot operations and bootable guest start/stop without making default CI or boot depend on nspawn.
 
