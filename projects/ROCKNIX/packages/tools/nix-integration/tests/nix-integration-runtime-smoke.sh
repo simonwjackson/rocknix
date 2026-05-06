@@ -69,6 +69,51 @@ NIX_LAYER9_GUEST_ROOT="${TMP_DIR}/missing-root" \
 NIX_LAYER9_SKIP_KERNEL_CHECK=1 \
   "${PKG_DIR}/scripts/nixctl" status >/tmp/nix-layer9-unsupported-status.log
 grep -q 'state:      unsupported' /tmp/nix-layer9-unsupported-status.log
+mkdir -p "${TMP_DIR}/layer10-proof-root/nix" "${TMP_DIR}/layer10-proof-root/bin" "${TMP_DIR}/layer10-state"
+printf '#!/bin/sh\n' >"${TMP_DIR}/layer10-proof-root/bin/sh"
+chmod 0755 "${TMP_DIR}/layer10-proof-root/bin/sh"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-proof-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  "${PKG_DIR}/scripts/nixctl" guest status >/tmp/nix-layer10-proof-status.log
+grep -q 'Layer 10 (managed nspawn guest operations) status' /tmp/nix-layer10-proof-status.log
+grep -q 'state:      proof-ready' /tmp/nix-layer10-proof-status.log
+grep -q 'mode:       proof' /tmp/nix-layer10-proof-status.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-proof-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  "${PKG_DIR}/scripts/nixctl" guest preflight >/tmp/nix-layer10-proof-preflight.log
+grep -q 'Layer 10 guest preflight passed' /tmp/nix-layer10-proof-preflight.log
+mkdir -p "${TMP_DIR}/layer10-boot-root/sbin"
+printf '#!/bin/sh\n' >"${TMP_DIR}/layer10-boot-root/sbin/init"
+chmod 0755 "${TMP_DIR}/layer10-boot-root/sbin/init"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-boot-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  "${PKG_DIR}/scripts/nixctl" guest status >/tmp/nix-layer10-boot-status.log
+grep -q 'state:      bootable-ready' /tmp/nix-layer10-boot-status.log
+grep -q 'mode:       bootable' /tmp/nix-layer10-boot-status.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-boot-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-doctor-state" \
+NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
+  "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer10-doctor-bootable.log || true
+grep -q 'Layer 10 guest lifecycle state: bootable-ready' /tmp/nix-layer10-doctor-bootable.log
+grep -q 'Layer 10 guest eligibility: available: bootable guest root ready for manual start' /tmp/nix-layer10-doctor-bootable.log
+if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+  NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-missing-root" \
+  NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  "${PKG_DIR}/scripts/nixctl" guest preflight >/tmp/nix-layer10-missing-preflight.log 2>&1; then
+  echo 'expected Layer 10 preflight to fail with missing guest root' >&2
+  exit 1
+fi
+grep -q 'guest preflight failed: available: guest root missing' /tmp/nix-layer10-missing-preflight.log
 mkdir -p "${TMP_DIR}/layer8-empty-config"
 printf 'experimental-features = nix-command flakes\nbuild-users-group =\n' >"${TMP_DIR}/layer8-empty-config/nix.conf"
 if NIX_LAYER8_SYSTEMD_DIR="${PKG_DIR}/system.d" \

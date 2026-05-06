@@ -231,7 +231,7 @@ flowchart TB
 **Verification:**
 - Reviewers can tell what Layer 10 is allowed to manage, what it must refuse, and which rootfs modes support which commands before reading implementation code.
 
-- [ ] **Unit 2: Add read-only Layer 10 status and preflight**
+- [x] **Unit 2: Add read-only Layer 10 status and preflight**
 
 **Goal:** Extend `nixctl` and `nix-doctor` so operators can understand Layer 10 lifecycle readiness without starting, stopping, or deleting anything.
 
