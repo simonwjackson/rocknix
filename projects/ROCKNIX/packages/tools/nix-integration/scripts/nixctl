@@ -1688,6 +1688,14 @@ cmd_bridge_install() {
 
   command_line=$(layer11_command_line "$@") || fail "bridge install: could not encode guest command"
   mkdir -p "${NIX_LAYER11_BIN_DIR}" "${metadata_dir}"
+  {
+    printf 'name=%s\n' "${name}"
+    printf 'target=%s\n' "${target}"
+    printf 'guest_root=%s\n' "${NIX_LAYER10_GUEST_ROOT}"
+    date -u '+installed_at=%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf 'installed_at=unknown\n'
+  } >"${metadata}"
+  printf '%s\n' "${command_line}" >"${command_file}"
+
   tmp_target="${target}.tmp.$$"
   cat >"${tmp_target}" <<EOF
 #!/bin/sh
@@ -1696,14 +1704,6 @@ exec ${NIX_LAYER11_NIXCTL_BIN} bridge run ${name}
 EOF
   chmod 0755 "${tmp_target}"
   mv -f "${tmp_target}" "${target}"
-
-  {
-    printf 'name=%s\n' "${name}"
-    printf 'target=%s\n' "${target}"
-    printf 'guest_root=%s\n' "${NIX_LAYER10_GUEST_ROOT}"
-    date -u '+installed_at=%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf 'installed_at=unknown\n'
-  } >"${metadata}"
-  printf '%s\n' "${command_line}" >"${command_file}"
   info "Layer 11 bridge installed: ${target}"
 }
 
