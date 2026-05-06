@@ -1,6 +1,7 @@
 ---
 title: ROCKNIX Layer 9 systemd-nspawn guest proof
 date: 2026-05-06
+last_updated: 2026-05-06
 category: developer-experience
 module: ROCKNIX nix-integration
 problem_type: developer_experience
@@ -36,7 +37,7 @@ Preserve `systemd-nspawn` in the ROCKNIX systemd package override, not the globa
 projects/ROCKNIX/packages/sysutils/systemd/package.mk
 ```
 
-The initial patch accidentally changed `packages/sysutils/systemd/package.mk`. The image still booted and host Nix remained healthy, but `/usr/bin/systemd-nspawn` was missing because ROCKNIX uses its project override.
+The initial patch accidentally changed `packages/sysutils/systemd/package.mk`. The image still booted and host Nix remained healthy, but `/usr/bin/systemd-nspawn` was missing because ROCKNIX uses its project override. This is a safe failure mode — the host remains usable — but it costs a full CI build and device update cycle.
 
 Because ROCKNIX builds systemd with `machined=false`, standalone nspawn must avoid machined registration:
 
@@ -48,6 +49,14 @@ Without `--register=no`, the proof fails with:
 
 ```text
 Failed to register machine: The name org.freedesktop.machine1 was not provided by any .service files
+```
+
+Before building a validation image, make static checks assert the exact project override and runtime flag:
+
+```text
+projects/ROCKNIX/packages/sysutils/systemd/package.mk contains NIX_NSPAWN_SUPPORT
+projects/ROCKNIX/packages/sysutils/systemd/package.mk conditionally removes systemd-nspawn
+nix-integration-runtime-smoke.sh invokes systemd-nspawn with --register=no
 ```
 
 ## Why This Matters
@@ -119,6 +128,14 @@ Layer 9 (nspawn guest proof) status
 - Keep `--register=no` unless machined is deliberately added back to the image.
 - Do not add autostart, lifecycle commands, graphical passthrough, audio passthrough, or input passthrough in Layer 9.
 - Move to a separate Layer 10 plan before adding `nixctl guest` lifecycle, resource limits, freeze/thaw policy, or a persistent disabled unit.
+
+## Prevention
+
+- Patch project overrides first when ROCKNIX has one. For systemd on this branch, the active file is `projects/ROCKNIX/packages/sysutils/systemd/package.mk`, not the global `packages/sysutils/systemd/package.mk`.
+- Let static checks name project-specific package paths so the wrong-file patch fails locally before CI.
+- Treat `machined=false` as part of the nspawn contract. Standalone proof commands should include `--register=no`; `machinectl` and machined registration are not available.
+- Validate image support before staging guests: `/usr/bin/systemd-nspawn --version`, disabled `systemd-nspawn@rocknix-guest.service`, no nspawn processes, and `nix-doctor --offline` Layer 9 status.
+- Keep guest proof state removable: `/storage/machines/rocknix-guest` can be deleted without touching host `/nix`, profiles, Layer 6, or Layer 8.
 
 ## Related
 
