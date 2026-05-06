@@ -1,9 +1,10 @@
 ---
 title: feat: Add Layer 11 one-shot guest-backed bridges
 type: feat
-status: active
+status: implemented-pending-hardware-validation
 date: 2026-05-06
 origin: docs/plans/2026-05-06-001-feat-nix-layer-10-managed-guest-operations-plan.md
+implementation_status: implemented with static and fixture runtime coverage; hardware Go pending rebuilt image validation
 ---
 
 # feat: Add Layer 11 one-shot guest-backed bridges
@@ -13,6 +14,24 @@ origin: docs/plans/2026-05-06-001-feat-nix-layer-10-managed-guest-operations-pla
 Layer 11 should formalize the narrow bridge shape that was live-proven on `thor`: a host-owned entrypoint under `/storage` invokes a bounded guest command through Layer 10 proof-mode `nixctl guest run`, returns output to the host caller, and leaves no guest process running afterward.
 
 This is intentionally smaller than the broader Layer 11 idea of guest-backed services. It does not introduce long-running daemons, alternate-port guest SSH, graphics/audio/input passthrough, autostart, or dependency from ROCKNIX UI/SSH services to the guest. Those remain blocked until Layer 10 bootable `start`/`stop` and resource-bound lifecycle are hardware-validated with a real bootable rootfs.
+
+## Implementation Status
+
+Implemented on branch `feat/nix-layer-11-one-shot-guest-bridges` with static and fixture runtime coverage. Hardware validation still requires a rebuilt SM8550 image that includes the Layer 11 `nixctl`/`nix-doctor` changes.
+
+Implemented command surface:
+
+```text
+nixctl bridge status
+nixctl bridge preflight <name>
+nixctl bridge install <name> -- <guest-command...>
+nixctl bridge run <name>
+nixctl bridge remove <name>
+```
+
+Fixture validation covers bridge status/preflight, unsafe names, owned install/reinstall, non-owned target conflict refusal, wrapper execution through fake `systemd-nspawn`, metadata cleanup, doctor reporting, and the opt-in `LAYER11_SMOKE=1` hardware smoke path.
+
+Hardware-Go remains pending. Until that passes, Layer 11 should be treated as implemented-but-not-device-approved.
 
 ## Problem Frame
 
@@ -89,7 +108,7 @@ The exact serialization format is an implementation decision, but it must be lin
 
 ## Implementation Units
 
-### Unit 1: Define the Layer 11 bridge contract
+### Unit 1: Define the Layer 11 bridge contract *(complete)*
 
 **Goal:** Make the safety boundary explicit before adding commands.
 
@@ -108,7 +127,7 @@ The exact serialization format is an implementation decision, but it must be lin
 - Static checks confirm the contract doc is packaged.
 - Static checks reject accidental `systemctl enable`, guest SSH wording that implies support, or missing Layer 10 dependency notes.
 
-### Unit 2: Add read-only bridge status and preflight
+### Unit 2: Add read-only bridge status and preflight *(complete)*
 
 **Goal:** Let operators inspect bridge readiness without installing or running anything.
 
@@ -129,7 +148,7 @@ The exact serialization format is an implementation decision, but it must be lin
 - Layer 10 absent/invalid/running -> bridge preflight refuses with a clear message.
 - Stale bridge metadata with missing target -> doctor warns or fails consistently.
 
-### Unit 3: Implement bridge install/remove with ownership metadata
+### Unit 3: Implement bridge install/remove with ownership metadata *(complete)*
 
 **Goal:** Create and remove host bridge wrappers safely.
 
@@ -154,7 +173,7 @@ The exact serialization format is an implementation decision, but it must be lin
 - Remove deletes owned wrapper and metadata only.
 - Unsafe bridge names are rejected.
 
-### Unit 4: Add bridge run/test and hardware smoke
+### Unit 4: Add bridge run/test and hardware smoke *(complete; hardware execution pending rebuilt image)*
 
 **Goal:** Validate that the installed bridge works as a host command and leaves no guest running.
 
@@ -174,7 +193,7 @@ The exact serialization format is an implementation decision, but it must be lin
 - Successful run leaves no `systemd-nspawn` process.
 - Smoke cleanup removes bridge wrapper and metadata.
 
-### Unit 5: Update docs and Layer 12 handoff
+### Unit 5: Update docs and Layer 12 handoff *(complete for implementation; hardware Go/No-Go pending)*
 
 **Goal:** Record validation evidence and define the next boundary.
 
