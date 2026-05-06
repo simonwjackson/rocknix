@@ -741,15 +741,35 @@ LAYER11_GUEST_ROOT=/storage/machines/rocknix-guest \
 projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
 ```
 
-Current Layer 11 validation status: static and fixture runtime checks pass in-repo. Hardware validation still requires a rebuilt image that includes the Layer 11 `nixctl`/`nix-doctor` changes. Do not mark Layer 11 Go until the image boots on `thor`, a bridge installs under `/storage/bin`, the bridge returns guest output, removal deletes only Layer 11-owned state, no guest remains running, and SSH/Sway/EmulationStation/Layers 4/8/10 remain healthy.
+Current Layer 11 validation status: one-shot bridges are hardware-Go on `thor` as of 2026-05-06.
+
+Validation evidence:
+
+```text
+GitHub Actions run: 25447891714
+Artifact: ROCKNIX-update-SM8550-20260506
+Installed BUILD_ID: d5d5aa3b9812562495f2f94ebc88950f9c7d7d40
+Installed BUILD_BRANCH: feat/nix-layer-11-one-shot-guest-bridges
+ABL precheck: abl_a MATCH, abl_b MATCH (no bootloader flash)
+Default bridge state: bridges: 0, eligible: available
+Bridge installed: /storage/bin/layer11-nix-version
+Bridge command: /usr/bin/nix --version
+Bridge output: nix (Nix) 2.34.7
+Post-run Layer 10 status: proof-ready, running: no
+nix-doctor --offline: passed with expected pre-existing warnings
+Bridge cleanup: wrapper and metadata removed; bridges: 0
+Packaged smoke script: not installed in image; manual bridge sequence is the hardware evidence
+```
+
+Layer 11 Go applies only to one-shot proof-mode bridges. Persistent services, alternate-port guest SSH, autostart, graphics/audio/input passthrough, and bootable-guest-dependent bridges remain blocked until Layer 10 bootable lifecycle validation passes.
 
 Layer 10 still does not own host SSH, Sway, EmulationStation, Steam/FEX, update, ROM/save state, GPU, audio, or input. Those remain ROCKNIX-owned or later bridge-layer work.
 
-The layer roadmap below records the current boundary. Layers 9 and 10 proof mode are implemented and hardware-validated on SM8550; Layer 10 bootable mode is deferred, Layer 11 one-shot bridges are implemented pending hardware validation, and Layers 12+ still require separate planning and device validation before Go. ROCKNIX remains the host OS in every case and continues to own boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
+The layer roadmap below records the current boundary. Layers 9, 10 proof mode, and 11 one-shot bridges are implemented and hardware-validated on SM8550; Layer 10 bootable mode is deferred, and Layers 12+ still require separate planning and device validation before Go. ROCKNIX remains the host OS in every case and continues to own boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
 
 - **Layer 9: NixOS/nspawn guest proof.** Run a storage-backed NixOS-ish guest under `systemd-nspawn` with its own `nix-daemon`. Manual start only; no boot autostart; stop rule on any impact to SSH, Sway, EmulationStation, Steam/FEX, host updates, or recovery.
 - **Layer 10: managed guest operations.** `nixctl guest status/preflight/init --proof/run/shell/start/stop/cleanup`, resource controls, health checks. Proof mode is hardware-Go; bootable start/stop is deferred until a real bootable rootfs exists. Guest must remain easy to stop, delete, throttle, and keep idle during gameplay.
-- **Layer 11: guest-backed app/service bridges.** Implemented on feature branch for opt-in one-shot host bridges that call selected proof-mode guest commands and leave no guest running; hardware Go pending rebuilt image validation. Persistent services, alternate-port guest SSH, graphics/audio/input, and autostart remain later work after bootable Layer 10 lifecycle is hardware-validated.
+- **Layer 11: guest-backed app/service bridges.** Go on `thor` for opt-in one-shot host bridges that call selected proof-mode guest commands and leave no guest running. Persistent services, alternate-port guest SSH, graphics/audio/input, and autostart remain later work after bootable Layer 10 lifecycle is hardware-validated.
 - **Layer 12: declarative host/guest profiles.** Reproducible profiles describing packages, guest services, bridges, launchers, and resource limits. Never manage ROMs, saves, Steam/FEX state, boot, firmware, or base packages through them.
 - **Layer 13: curated capability catalog.** Hardware-validated, smoke-tested workflows exposed as `nixctl catalog enable <name>`. Not arbitrary internet flakes as root.
 

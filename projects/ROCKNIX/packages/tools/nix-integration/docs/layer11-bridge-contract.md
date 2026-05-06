@@ -100,4 +100,6 @@ Layer 11 one-shot bridges are Go only if hardware validation proves:
 - `nix-doctor --offline` reports Layer 11 health clearly
 - SSH and normal ROCKNIX host operation remain healthy before and after validation
 
+This one-shot scope was hardware-validated on `thor` on 2026-05-06 with build `d5d5aa3b9812562495f2f94ebc88950f9c7d7d40`.
+
 Any autostart, persistent guest service, guest SSH exposure, forbidden passthrough dependency, unsafe cleanup boundary, or residual guest process after a one-shot bridge is a No-Go for Layer 11 until documented and fixed.
