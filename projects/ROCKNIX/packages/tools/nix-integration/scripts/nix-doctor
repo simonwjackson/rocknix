@@ -35,10 +35,17 @@ NIX_DAEMON_SERVICE="${NIX_DAEMON_SERVICE:-nix-daemon.service}"
 NIX_DAEMON_SOCKET="${NIX_DAEMON_SOCKET:-nix-daemon.socket}"
 NIX_DAEMON_SOCKET_PATH="${NIX_DAEMON_SOCKET_PATH:-${NIX_INSTALL_ROOT}/var/nix/daemon-socket/socket}"
 NIX_GROUP_FILE="${NIX_GROUP_FILE:-/etc/group}"
+NIX_SYSTEMCTL="${NIX_SYSTEMCTL:-systemctl}"
 NIX_LAYER9_STATE_DIR="${NIX_LAYER9_STATE_DIR:-/storage/.config/nix-integration/layer9}"
 NIX_LAYER9_NSPAWN_BIN="${NIX_LAYER9_NSPAWN_BIN:-/usr/bin/systemd-nspawn}"
 NIX_LAYER9_GUEST_ROOT="${NIX_LAYER9_GUEST_ROOT:-/storage/machines/rocknix-guest}"
 NIX_LAYER9_SKIP_KERNEL_CHECK="${NIX_LAYER9_SKIP_KERNEL_CHECK:-0}"
+NIX_LAYER10_STATE_DIR="${NIX_LAYER10_STATE_DIR:-/storage/.config/nix-integration/layer10}"
+NIX_LAYER10_GUEST_ROOT="${NIX_LAYER10_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+NIX_LAYER10_NSPAWN_BIN="${NIX_LAYER10_NSPAWN_BIN:-${NIX_LAYER9_NSPAWN_BIN}}"
+NIX_LAYER10_UNIT_NAME="${NIX_LAYER10_UNIT_NAME:-rocknix-guest.service}"
+NIX_LAYER10_SYSTEMD_DIR="${NIX_LAYER10_SYSTEMD_DIR:-}"
+NIX_LAYER10_SKIP_KERNEL_CHECK="${NIX_LAYER10_SKIP_KERNEL_CHECK:-${NIX_LAYER9_SKIP_KERNEL_CHECK}}"
 CHECK_NETWORK=1
 FAILURES=0
 WARNINGS=0
@@ -207,6 +214,22 @@ systemd_unit_path() {
   return 1
 }
 
+systemctl_available() {
+  if [ -n "${NIX_SYSTEMCTL}" ] && command -v "${NIX_SYSTEMCTL}" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+systemctl_state() {
+  unit=$1
+  if systemctl_available; then
+    "${NIX_SYSTEMCTL}" is-active "${unit}" 2>/dev/null || true
+  else
+    echo unknown
+  fi
+}
+
 nix_is_mounted() {
   awk -v p="${NIX_INSTALL_ROOT}" '$2 == p {found=1} END {exit !found}' /proc/mounts 2>/dev/null
 }
@@ -310,6 +333,83 @@ layer9_eligibility() {
   [ -d "${NIX_LAYER9_GUEST_ROOT}" ] || { echo "unsupported: guest root is not a directory: ${NIX_LAYER9_GUEST_ROOT}"; return; }
   layer9_guest_root_ready || { echo "available: guest root present but not proof-ready: ${NIX_LAYER9_GUEST_ROOT}"; return; }
   echo "available: nspawn guest proof prerequisites present"
+}
+
+layer10_kernel_ready() {
+  [ "${NIX_LAYER10_SKIP_KERNEL_CHECK}" = "1" ] && return 0
+  layer9_kernel_ready
+}
+
+layer10_rootfs_mode() {
+  if [ ! -e "${NIX_LAYER10_GUEST_ROOT}" ]; then
+    echo absent
+    return
+  fi
+  if [ ! -d "${NIX_LAYER10_GUEST_ROOT}" ]; then
+    echo invalid
+    return
+  fi
+  if [ -x "${NIX_LAYER10_GUEST_ROOT}/sbin/init" ] || \
+     [ -x "${NIX_LAYER10_GUEST_ROOT}/init" ] || \
+     [ -x "${NIX_LAYER10_GUEST_ROOT}/usr/lib/systemd/systemd" ] || \
+     [ -x "${NIX_LAYER10_GUEST_ROOT}/lib/systemd/systemd" ]; then
+    echo bootable
+    return
+  fi
+  if [ -d "${NIX_LAYER10_GUEST_ROOT}/nix" ] || \
+     [ -x "${NIX_LAYER10_GUEST_ROOT}/bin/sh" ] || \
+     [ -x "${NIX_LAYER10_GUEST_ROOT}/usr/bin/nix" ]; then
+    echo proof
+    return
+  fi
+  echo invalid
+}
+
+layer10_state_value() {
+  if [ -f "${NIX_LAYER10_STATE_DIR}/state" ]; then
+    awk 'NR==1 {print; exit}' "${NIX_LAYER10_STATE_DIR}/state"
+  else
+    echo inactive
+  fi
+}
+
+layer10_running() {
+  [ "$(layer10_state_value)" = "running" ] && return 0
+  if systemctl_available; then
+    [ "$(systemctl_state "${NIX_LAYER10_UNIT_NAME}")" = "active" ] && return 0
+  fi
+  if have ps; then
+    ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${NIX_LAYER10_GUEST_ROOT}" >/dev/null 2>&1 && return 0
+  fi
+  return 1
+}
+
+layer10_state() {
+  [ -x "${NIX_LAYER10_NSPAWN_BIN}" ] || { echo unsupported; return; }
+  layer10_kernel_ready || { echo unsupported; return; }
+  layer10_running && { echo running; return; }
+  case "$(layer10_state_value)" in
+    failed|partial) echo failed; return ;;
+  esac
+  case "$(layer10_rootfs_mode)" in
+    absent) echo available ;;
+    proof) echo proof-ready ;;
+    bootable) echo bootable-ready ;;
+    invalid) echo invalid ;;
+    *) echo invalid ;;
+  esac
+}
+
+layer10_eligibility() {
+  [ -x "${NIX_LAYER10_NSPAWN_BIN}" ] || { echo "unsupported: systemd-nspawn missing: ${NIX_LAYER10_NSPAWN_BIN}"; return; }
+  layer10_kernel_ready || { echo "unsupported: namespace/cgroup prerequisites missing"; return; }
+  case "$(layer10_rootfs_mode)" in
+    absent) echo "available: guest root missing: ${NIX_LAYER10_GUEST_ROOT}" ;;
+    proof) echo "available: proof rootfs ready for run/shell; start requires bootable rootfs" ;;
+    bootable) echo "available: bootable guest root ready for manual start" ;;
+    invalid) echo "unsupported: guest root invalid or unsupported: ${NIX_LAYER10_GUEST_ROOT}" ;;
+    *) echo "unsupported: guest root mode unknown: ${NIX_LAYER10_GUEST_ROOT}" ;;
+  esac
 }
 
 check_profile_command_conflicts() {
@@ -838,6 +938,67 @@ check_layer9() {
   ok "Layer 9 fallback: host Layers 4/8 remain the recovery path; guest cleanup must not touch host Nix state"
 }
 
+check_layer10() {
+  state=$(layer10_state)
+  mode=$(layer10_rootfs_mode)
+  eligibility=$(layer10_eligibility)
+
+  case "${state}" in
+    unsupported)
+      warn "Layer 10 guest lifecycle state: unsupported"
+      ;;
+    available)
+      ok "Layer 10 guest lifecycle state: available"
+      ;;
+    proof-ready)
+      ok "Layer 10 guest lifecycle state: proof-ready"
+      ;;
+    bootable-ready)
+      ok "Layer 10 guest lifecycle state: bootable-ready"
+      ;;
+    running)
+      warn "Layer 10 guest lifecycle state: running; stop the guest when finished"
+      ;;
+    failed|partial)
+      fail_check "Layer 10 guest lifecycle state is ${state}; stop/cleanup guest state or inspect ${NIX_LAYER10_STATE_DIR}"
+      ;;
+    invalid)
+      fail_check "Layer 10 guest lifecycle state: invalid rootfs at ${NIX_LAYER10_GUEST_ROOT}"
+      ;;
+    *)
+      warn "Layer 10 guest lifecycle state has unexpected value: ${state}"
+      ;;
+  esac
+
+  case "${eligibility}" in
+    available:*) ok "Layer 10 guest eligibility: ${eligibility}" ;;
+    unsupported:*) warn "Layer 10 guest eligibility: ${eligibility}" ;;
+    *) warn "Layer 10 guest eligibility: ${eligibility}" ;;
+  esac
+
+  ok "Layer 10 guest root mode: ${mode}"
+
+  if [ -x "${NIX_LAYER10_NSPAWN_BIN}" ]; then
+    ok "Layer 10 systemd-nspawn binary present: ${NIX_LAYER10_NSPAWN_BIN}"
+  else
+    warn "Layer 10 systemd-nspawn binary missing: ${NIX_LAYER10_NSPAWN_BIN}"
+  fi
+
+  if [ -d "${NIX_LAYER10_GUEST_ROOT}" ]; then
+    ok "Layer 10 guest root exists: ${NIX_LAYER10_GUEST_ROOT}"
+  else
+    ok "Layer 10 guest root absent: ${NIX_LAYER10_GUEST_ROOT}"
+  fi
+
+  if layer10_running; then
+    warn "Layer 10 guest appears to be running"
+  else
+    ok "Layer 10 guest not running"
+  fi
+
+  ok "Layer 10 fallback: host SSH and Layers 4/8 remain the recovery path"
+}
+
 check_network() {
   if [ "${CHECK_NETWORK}" -eq 0 ]; then
     warn "network checks skipped"
@@ -872,6 +1033,7 @@ check_layer6
 check_layer7
 check_layer8
 check_layer9
+check_layer10
 
 if [ "${FAILURES}" -eq 0 ]; then
   echo "nix-doctor: passed with ${WARNINGS} warning(s)"

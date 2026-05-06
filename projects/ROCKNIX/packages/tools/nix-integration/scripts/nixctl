@@ -59,6 +59,12 @@ NIX_LAYER9_STATE_DIR="${NIX_LAYER9_STATE_DIR:-/storage/.config/nix-integration/l
 NIX_LAYER9_NSPAWN_BIN="${NIX_LAYER9_NSPAWN_BIN:-/usr/bin/systemd-nspawn}"
 NIX_LAYER9_GUEST_ROOT="${NIX_LAYER9_GUEST_ROOT:-/storage/machines/rocknix-guest}"
 NIX_LAYER9_SKIP_KERNEL_CHECK="${NIX_LAYER9_SKIP_KERNEL_CHECK:-0}"
+NIX_LAYER10_STATE_DIR="${NIX_LAYER10_STATE_DIR:-/storage/.config/nix-integration/layer10}"
+NIX_LAYER10_GUEST_ROOT="${NIX_LAYER10_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+NIX_LAYER10_NSPAWN_BIN="${NIX_LAYER10_NSPAWN_BIN:-${NIX_LAYER9_NSPAWN_BIN}}"
+NIX_LAYER10_UNIT_NAME="${NIX_LAYER10_UNIT_NAME:-rocknix-guest.service}"
+NIX_LAYER10_SYSTEMD_DIR="${NIX_LAYER10_SYSTEMD_DIR:-}"
+NIX_LAYER10_SKIP_KERNEL_CHECK="${NIX_LAYER10_SKIP_KERNEL_CHECK:-${NIX_LAYER9_SKIP_KERNEL_CHECK}}"
 
 # ---- SSL ------------------------------------------------------------------
 # Pre-set for the upstream installer so it skips its cacert derivation install
@@ -93,6 +99,8 @@ Subcommands:
                          deactivate, rollback.
   daemon <action>        Manage experimental Layer 8 nix-daemon mode.
                          Actions: status, preflight, enable, disable, rollback.
+  guest <action>         Manage Layer 10 nspawn guest operations.
+                         Actions: status, preflight.
   help, -h, --help       This message.
 
 Environment overrides (defaults shown):
@@ -107,6 +115,9 @@ Environment overrides (defaults shown):
   NIX_LAYER9_STATE_DIR   ${NIX_LAYER9_STATE_DIR}
   NIX_LAYER9_NSPAWN_BIN  ${NIX_LAYER9_NSPAWN_BIN}
   NIX_LAYER9_GUEST_ROOT  ${NIX_LAYER9_GUEST_ROOT}
+  NIX_LAYER10_STATE_DIR  ${NIX_LAYER10_STATE_DIR}
+  NIX_LAYER10_GUEST_ROOT ${NIX_LAYER10_GUEST_ROOT}
+  NIX_LAYER10_UNIT_NAME  ${NIX_LAYER10_UNIT_NAME}
   NIX_TARBALL_URL        ${NIX_TARBALL_URL}
   NIX_TARBALL_SHA256     ${NIX_TARBALL_SHA256}
   NIX_FORCE              Set to 1 to override safety checks (rare)
@@ -698,6 +709,120 @@ print_layer9_status() {
   echo "  fallback:   host Layers 4/8 remain the recovery path; guest cleanup must not touch host Nix state"
 }
 
+layer10_kernel_ready() {
+  [ "${NIX_LAYER10_SKIP_KERNEL_CHECK}" = "1" ] && return 0
+  layer9_kernel_ready
+}
+
+layer10_rootfs_mode() {
+  if [ ! -e "${NIX_LAYER10_GUEST_ROOT}" ]; then
+    echo absent
+    return
+  fi
+  if [ ! -d "${NIX_LAYER10_GUEST_ROOT}" ]; then
+    echo invalid
+    return
+  fi
+  if [ -x "${NIX_LAYER10_GUEST_ROOT}/sbin/init" ] || \
+     [ -x "${NIX_LAYER10_GUEST_ROOT}/init" ] || \
+     [ -x "${NIX_LAYER10_GUEST_ROOT}/usr/lib/systemd/systemd" ] || \
+     [ -x "${NIX_LAYER10_GUEST_ROOT}/lib/systemd/systemd" ]; then
+    echo bootable
+    return
+  fi
+  if [ -d "${NIX_LAYER10_GUEST_ROOT}/nix" ] || \
+     [ -x "${NIX_LAYER10_GUEST_ROOT}/bin/sh" ] || \
+     [ -x "${NIX_LAYER10_GUEST_ROOT}/usr/bin/nix" ]; then
+    echo proof
+    return
+  fi
+  echo invalid
+}
+
+layer10_state_value() {
+  if [ -f "${NIX_LAYER10_STATE_DIR}/state" ]; then
+    awk 'NR==1 {print; exit}' "${NIX_LAYER10_STATE_DIR}/state"
+  else
+    echo inactive
+  fi
+}
+
+layer10_unit_path() {
+  dirs="${NIX_LAYER10_SYSTEMD_DIR} /storage/.config/system.d /usr/lib/systemd/system /etc/systemd/system"
+  for dir in ${dirs}; do
+    [ -n "${dir}" ] || continue
+    if [ -f "${dir}/${NIX_LAYER10_UNIT_NAME}" ]; then
+      echo "${dir}/${NIX_LAYER10_UNIT_NAME}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+layer10_running() {
+  [ "$(layer10_state_value)" = "running" ] && return 0
+  if systemctl_available; then
+    [ "$(systemctl_state "${NIX_LAYER10_UNIT_NAME}")" = "active" ] && return 0
+  fi
+  if have ps; then
+    ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${NIX_LAYER10_GUEST_ROOT}" >/dev/null 2>&1 && return 0
+  fi
+  return 1
+}
+
+layer10_state() {
+  [ -x "${NIX_LAYER10_NSPAWN_BIN}" ] || { echo unsupported; return; }
+  layer10_kernel_ready || { echo unsupported; return; }
+  layer10_running && { echo running; return; }
+  case "$(layer10_state_value)" in
+    failed|partial) echo failed; return ;;
+  esac
+  case "$(layer10_rootfs_mode)" in
+    absent) echo available ;;
+    proof) echo proof-ready ;;
+    bootable) echo bootable-ready ;;
+    invalid) echo invalid ;;
+    *) echo invalid ;;
+  esac
+}
+
+layer10_eligibility() {
+  [ -x "${NIX_LAYER10_NSPAWN_BIN}" ] || { echo "unsupported: systemd-nspawn missing: ${NIX_LAYER10_NSPAWN_BIN}"; return; }
+  layer10_kernel_ready || { echo "unsupported: namespace/cgroup prerequisites missing"; return; }
+  case "$(layer10_rootfs_mode)" in
+    absent) echo "available: guest root missing: ${NIX_LAYER10_GUEST_ROOT}" ;;
+    proof) echo "available: proof rootfs ready for run/shell; start requires bootable rootfs" ;;
+    bootable) echo "available: bootable guest root ready for manual start" ;;
+    invalid) echo "unsupported: guest root invalid or unsupported: ${NIX_LAYER10_GUEST_ROOT}" ;;
+    *) echo "unsupported: guest root mode unknown: ${NIX_LAYER10_GUEST_ROOT}" ;;
+  esac
+}
+
+print_layer10_status() {
+  echo "Layer 10 (managed nspawn guest operations) status"
+  echo "--------------------------------------------------"
+  state=$(layer10_state)
+  mode=$(layer10_rootfs_mode)
+  eligibility=$(layer10_eligibility)
+  unit_path=$(layer10_unit_path 2>/dev/null || echo missing)
+
+  echo "  state:      ${state}"
+  echo "  mode:       ${mode}"
+  echo "  eligible:   ${eligibility}"
+  echo "  nspawn:     ${NIX_LAYER10_NSPAWN_BIN}"
+  echo "  guest root: ${NIX_LAYER10_GUEST_ROOT}"
+  echo "  state dir:  ${NIX_LAYER10_STATE_DIR}"
+  echo "  unit:       ${unit_path}"
+  echo "  unit run:   $(systemctl_state "${NIX_LAYER10_UNIT_NAME}")"
+  if layer10_running; then
+    echo "  running:    yes"
+  else
+    echo "  running:    no"
+  fi
+  echo "  autostart:  disabled by contract"
+  echo "  fallback:   host SSH and Layers 4/8 remain the recovery path"
+}
+
 print_layer7_status() {
   echo "Layer 7 (app/UI experiment) status"
   echo "------------------------------------"
@@ -785,6 +910,8 @@ cmd_status() {
   print_layer8_status
   echo ""
   print_layer9_status
+  echo ""
+  print_layer10_status
   echo ""
 }
 
@@ -1133,6 +1260,40 @@ cmd_daemon() {
   esac
 }
 
+cmd_guest_status() {
+  print_layer10_status
+}
+
+cmd_guest_preflight() {
+  eligibility=$(layer10_eligibility)
+  case "${eligibility}" in
+    "available: proof rootfs ready"*|"available: bootable guest root ready"*)
+      info "Layer 10 guest preflight passed"
+      note "${eligibility}"
+      ;;
+    *)
+      fail "guest preflight failed: ${eligibility}"
+      ;;
+  esac
+}
+
+cmd_guest() {
+  [ $# -gt 0 ] || fail "guest: missing action (status, preflight)"
+  action=$1
+  shift
+  case "${action}" in
+    status)
+      cmd_guest_status "$@"
+      ;;
+    preflight|plan)
+      cmd_guest_preflight "$@"
+      ;;
+    *)
+      fail "guest: unknown action for Layer 10 read-only phase: ${action}"
+      ;;
+  esac
+}
+
 # ---- Dispatch --------------------------------------------------------------
 
 if [ $# -eq 0 ]; then
@@ -1164,6 +1325,9 @@ case "${cmd}" in
     ;;
   daemon)
     cmd_daemon "$@"
+    ;;
+  guest)
+    cmd_guest "$@"
     ;;
   -h|--help|help)
     usage

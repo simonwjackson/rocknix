@@ -95,6 +95,25 @@ grep -q 'NIX_LAYER9_GUEST_ROOT=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl mis
 grep -q 'NIX_LAYER9_GUEST_ROOT=' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing fixtureable guest root for Layer 9"
 grep -q 'NIX_LAYER9_SKIP_KERNEL_CHECK=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing fixtureable kernel check override for Layer 9"
 grep -q 'NIX_LAYER9_SKIP_KERNEL_CHECK=' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing fixtureable kernel check override for Layer 9"
+grep -q 'Layer 10 (managed nspawn guest operations) status' "${PKG_DIR}/scripts/nixctl" || fail "nixctl status missing Layer 10 section"
+grep -q 'cmd_guest' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10 guest dispatch"
+grep -q 'layer10_rootfs_mode' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10 rootfs mode detection"
+grep -q 'Layer 10 guest preflight passed' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 10 guest preflight"
+grep -q 'check_layer10' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 10 checks"
+grep -q 'Layer 10 guest eligibility' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 10 eligibility output"
+grep -q 'NIX_LAYER10_STATE_DIR=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing fixtureable Layer 10 state dir"
+grep -q 'NIX_LAYER10_STATE_DIR=' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing fixtureable Layer 10 state dir"
+grep -q 'NIX_LAYER10_GUEST_ROOT=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing fixtureable Layer 10 guest root"
+grep -q 'NIX_LAYER10_GUEST_ROOT=' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing fixtureable Layer 10 guest root"
+grep -q 'NIX_LAYER10_UNIT_NAME=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing fixtureable Layer 10 unit name"
+grep -q 'NIX_LAYER10_UNIT_NAME=' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing fixtureable Layer 10 unit name"
+for sub in status install upgrade uninstall doctor user-env daemon guest; do
+  # Subcommand can appear as 'sub)' (alone), 'sub|other)' (left of alt),
+  # or '...|sub)' (right of alt). Match by requiring sub to be preceded by
+  # start-of-line, whitespace, or '|' and followed by ')' or '|'.
+  grep -qE "(^|[[:space:]]|\|)${sub}[|)]" "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing dispatch for subcommand: ${sub}"
+done
+
 grep -q 'surface|name|source|mode' "${PKG_DIR}/scripts/nix-layer-activate" || fail "nix-layer-activate missing manifest contract"
 grep -q 'target exists and is not owned by Layer 6' "${PKG_DIR}/scripts/nix-layer-activate" || fail "nix-layer-activate missing conflict refusal"
 [ -f "${PKG_DIR}/docs/layer6-activation-contract.md" ] || fail "missing Layer 6 activation contract doc"
@@ -123,13 +142,6 @@ grep -q 'must not call `systemctl enable`' "${PKG_DIR}/docs/layer10-guest-lifecy
 grep -q '/dev/dri' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing GPU passthrough prohibition"
 grep -q 'PipeWire' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing audio passthrough prohibition"
 grep -q '/dev/input' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing input passthrough prohibition"
-for sub in status install upgrade uninstall doctor user-env daemon; do
-  # Subcommand can appear as 'sub)' (alone), 'sub|other)' (left of alt),
-  # or '...|sub)' (right of alt). Match by requiring sub to be preceded by
-  # start-of-line, whitespace, or '|' and followed by ')' or '|'.
-  grep -qE "(^|[[:space:]]|\|)${sub}[|)]" "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing dispatch for subcommand: ${sub}"
-done
-
 [ -f "${PKG_DIR}/system.d/nix-storage-setup.service" ] || fail "missing nix-storage-setup.service"
 [ -f "${PKG_DIR}/system.d/nix.mount" ] || fail "missing nix.mount"
 [ -f "${PKG_DIR}/system.d/nix-daemon.socket" ] || fail "missing Layer 8 nix-daemon.socket"
