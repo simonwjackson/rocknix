@@ -105,6 +105,50 @@ NIX_LAYER11_BIN_DIR="${TMP_DIR}/layer11-bin" \
 NIX_LAYER11_STATE_DIR="${TMP_DIR}/layer11-state" \
   "${PKG_DIR}/scripts/nixctl" bridge preflight layer11-smoke >/tmp/nix-layer11-preflight.log
 grep -q 'Layer 11 bridge preflight passed: layer11-smoke' /tmp/nix-layer11-preflight.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-proof-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER11_BIN_DIR="${TMP_DIR}/layer11-bin" \
+NIX_LAYER11_STATE_DIR="${TMP_DIR}/layer11-state" \
+  "${PKG_DIR}/scripts/nixctl" bridge install layer11-smoke -- /usr/bin/nix --version >/tmp/nix-layer11-install.log
+[ -x "${TMP_DIR}/layer11-bin/layer11-smoke" ]
+grep -q 'bridge run layer11-smoke' "${TMP_DIR}/layer11-bin/layer11-smoke"
+grep -q 'target=' "${TMP_DIR}/layer11-state/bridges/layer11-smoke/metadata"
+grep -q "'/usr/bin/nix' '--version'" "${TMP_DIR}/layer11-state/bridges/layer11-smoke/command"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-proof-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER11_BIN_DIR="${TMP_DIR}/layer11-bin" \
+NIX_LAYER11_STATE_DIR="${TMP_DIR}/layer11-state" \
+  "${PKG_DIR}/scripts/nixctl" bridge install layer11-smoke -- /usr/bin/nix-store --version >/tmp/nix-layer11-reinstall.log
+grep -q "'/usr/bin/nix-store' '--version'" "${TMP_DIR}/layer11-state/bridges/layer11-smoke/command"
+printf 'user-owned\n' >"${TMP_DIR}/layer11-bin/layer11-conflict"
+if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+  NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-proof-root" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
+  NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  NIX_LAYER11_BIN_DIR="${TMP_DIR}/layer11-bin" \
+  NIX_LAYER11_STATE_DIR="${TMP_DIR}/layer11-state" \
+  "${PKG_DIR}/scripts/nixctl" bridge install layer11-conflict -- /usr/bin/nix --version >/tmp/nix-layer11-conflict.log 2>&1; then
+  echo 'expected Layer 11 install to refuse non-owned conflict' >&2
+  exit 1
+fi
+grep -q 'target exists and is not owned by Layer 11' /tmp/nix-layer11-conflict.log
+grep -q 'user-owned' "${TMP_DIR}/layer11-bin/layer11-conflict"
+NIX_LAYER11_BIN_DIR="${TMP_DIR}/layer11-bin" \
+NIX_LAYER11_STATE_DIR="${TMP_DIR}/layer11-state" \
+  "${PKG_DIR}/scripts/nixctl" bridge remove layer11-smoke >/tmp/nix-layer11-remove.log
+[ ! -e "${TMP_DIR}/layer11-bin/layer11-smoke" ]
+[ ! -e "${TMP_DIR}/layer11-state/bridges/layer11-smoke" ]
+if NIX_LAYER11_BIN_DIR="${TMP_DIR}/layer11-bin" \
+  NIX_LAYER11_STATE_DIR="${TMP_DIR}/layer11-state" \
+  "${PKG_DIR}/scripts/nixctl" bridge remove layer11-conflict >/tmp/nix-layer11-remove-conflict.log 2>&1; then
+  echo 'expected Layer 11 remove to refuse non-owned bridge' >&2
+  exit 1
+fi
+grep -q 'bridge is not Layer 11-owned' /tmp/nix-layer11-remove-conflict.log
 if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
   NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-proof-root" \
   NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
