@@ -149,13 +149,13 @@ This tree is a scope declaration, not a rigid implementation constraint. The imp
 
 ### Proposed guest/service layers after Layer 8
 
-Layer 9 has been implemented and hardware-validated as a bounded proof. Layer 10 has a feature branch implementation plan and in-repo fixture coverage, but still requires a rebuilt image and `thor` hardware validation before Go. Later layers are directional only and should each receive their own plan before execution. They preserve the same invariant: ROCKNIX remains the host OS and owns boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
+Layer 9 has been implemented and hardware-validated as a bounded proof. Layer 10 proof-mode managed guest operations have also been implemented and hardware-validated on `thor`; bootable start/stop remains deferred until a real bootable guest rootfs exists. Later layers are directional only and should each receive their own plan before execution. They preserve the same invariant: ROCKNIX remains the host OS and owns boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
 
 | Layer | Proposed outcome | Example capability | Boundary / stop rule |
 |---|---|---|---|
 | 9 | NixOS/nspawn guest proof | Start a storage-backed NixOS-ish guest with a one-shot Nix proof | Go on `thor` for bounded manual proof; no boot autostart; no passthrough; `--register=no` required because machined is disabled. |
-| 10 | Managed guest operations | `nixctl guest status/preflight/init/run/shell/start/stop/cleanup` plus resource limits | Implemented on feature branch with fixture coverage; hardware Go still pending rebuilt image validation. Guest must be easy to stop, delete, throttle, and keep idle during gameplay. |
-| 11 | Guest-backed app/service bridges | Host launchers or Ports entries that call selected guest services/apps | Bridges are opt-in and reversible; ROCKNIX must remain usable with guest stopped. |
+| 10 | Managed guest operations | `nixctl guest status/preflight/init/run/shell/start/stop/cleanup` plus resource limits | Proof mode is Go on `thor` for one-shot guest commands; bootable start/stop is deferred. Guest must be easy to stop, delete, throttle, and keep idle during gameplay. |
+| 11 | Guest-backed app/service bridges | Host launchers or Ports entries that call selected guest commands/apps | Start with opt-in one-shot bridges that use proof-mode `nixctl guest run` and leave no guest running. Persistent services, guest SSH, graphics/audio/input, and autostart wait for bootable Layer 10 validation. |
 | 12 | Declarative host/guest profiles | Reproducible profiles declaring packages, guest services, bridges, launchers, and resource limits | Profiles may manage Nix/guest/user-space state only; never ROMs, saves, Steam/FEX state, boot, firmware, or base packages. |
 | 13 | Curated capability catalog | `nixctl catalog enable dev-toolbox` for hardware-validated workflows | Catalog items must be curated, smoke-tested, and hardware-scoped; not arbitrary internet flakes as root. |
 

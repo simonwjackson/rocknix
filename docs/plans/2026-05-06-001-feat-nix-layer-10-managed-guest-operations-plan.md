@@ -1,9 +1,11 @@
 ---
 title: feat: Add Layer 10 managed nspawn guest operations
 type: feat
-status: active
+status: completed
 date: 2026-05-06
 origin: docs/plans/2026-05-05-005-feat-nix-layer-9-nspawn-guest-proof-plan.md
+validated_on: 2026-05-06
+validation_scope: proof-mode hardware Go; bootable start/stop deferred pending bootable rootfs
 ---
 
 # feat: Add Layer 10 managed nspawn guest operations
@@ -391,7 +393,7 @@ flowchart TB
 **Verification:**
 - Hardware operators have one repeatable command path per smoke mode and do not need to assemble ad hoc process cleanup commands.
 
-- [ ] **Unit 6: Update documentation, Go/No-Go decision, and Layer 11 handoff** *(implementation docs updated; hardware Go/No-Go remains pending rebuilt image validation)*
+- [x] **Unit 6: Update documentation, Go/No-Go decision, and Layer 11 handoff** *(proof-mode hardware Go on `thor`; bootable start/stop deferred pending bootable rootfs)*
 
 **Goal:** Record what Layer 10 now supports, what was hardware-validated, what remains out of scope, and what evidence is required before moving to guest-backed services or SSH experiments.
 
@@ -426,6 +428,24 @@ flowchart TB
 
 **Verification:**
 - A future agent can decide whether to proceed to Layer 11 service exposure without rereading the whole implementation diff.
+
+**Hardware validation evidence (2026-05-06):**
+- GitHub Actions run: `25422077554`
+- Artifact: `ROCKNIX-update-SM8550-20260506`
+- Installed build on `thor`: `BUILD_ID=d202bf1e14cd3a63bd10d2d447fb3e887533e657`, `BUILD_BRANCH=feat/nix-layer-10-managed-guest-operations`
+- ABL precheck before update: `abl_a: MATCH (no flash)`, `abl_b: MATCH (no flash)`
+- Default post-boot state: host SSH active, `nix-storage-setup.service` active, `nix.mount` active, no Layer 10 guest running, no generated guest unit, autostart disabled by contract
+- Proof-mode command: `nixctl guest run /usr/bin/nix --version` returned `nix (Nix) 2.34.7`
+- Proof root safety: `nixctl guest start` refused the proof root with the expected non-bootable-root message
+- Stale running-state regression: temporary `state=running` without unit/process evidence reported `state: failed`, then restored to `proof-ready`
+- Post-proof health: `nix-doctor --offline` passed with expected pre-existing warnings only
+- Deferred: bootable `nixctl guest start` / `stop` hardware smoke, because `/storage/machines/rocknix-guest` is a proof root and no bootable guest rootfs artifact exists yet
+
+**Go / No-Go decision:**
+- Go: Layer 10 proof-mode guest operations (`status`, `preflight`, `run`, `shell`, guarded `cleanup`) on SM8550/Odin2 Portal.
+- Conditional: bootable rootfs lifecycle implementation may remain in-tree, but it is not hardware-Go until a real bootable rootfs validates `start`, `stop`, resource limits, and no residual process state.
+- No-Go for dependent work: Layer 11 features that require persistent guest services, guest SSH, graphics/audio/input passthrough, or autostart remain blocked until bootable lifecycle validation passes.
+- Allowed next step: Layer 11 may plan and prototype one-shot host-to-guest bridges that use proof-mode `nixctl guest run`, remain manually installed, and leave no guest running afterward.
 
 ### Implementation Unit Dependency Graph
 
@@ -486,10 +506,11 @@ flowchart TB
 
 ## Documentation / Operational Notes
 
-- Layer 10 can be prototyped live on a Layer 9-capable image by staging scripts/units under `/storage`, but final Go requires a rebuilt image with shipped `nixctl`/`nix-doctor` changes.
-- Hardware validation should start with the current merged `custom` image build, then proceed to proof-mode Layer 10, then bootable-mode Layer 10 only if a bootable rootfs artifact exists.
+- Layer 10 proof-mode final Go was performed on a rebuilt image with shipped `nixctl`/`nix-doctor` changes.
+- Bootable-mode Layer 10 remains deferred until a bootable rootfs artifact exists; do not treat proof-mode validation as evidence for persistent guest services.
 - Any SM8550 full update must follow the ABL slot precheck before rebooting into updater.
-- The operator docs should continue to say that removing ROCKNIX SSH is out of scope; alternate-port guest SSH is Layer 11 service exposure at earliest.
+- The operator docs should continue to say that removing ROCKNIX SSH is out of scope; alternate-port guest SSH is Layer 11 service exposure at earliest, and only after bootable start/stop/resource bounds are hardware-validated.
+- One-shot Layer 11 bridges may proceed as a separate plan because the live prototype proved host entrypoint -> proof-mode guest command -> no residual guest process.
 
 ## Sources & References
 

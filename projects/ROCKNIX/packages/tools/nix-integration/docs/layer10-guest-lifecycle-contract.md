@@ -141,14 +141,31 @@ Fallback does **not** mean lower host layers provide equivalent guest lifecycle 
 
 ## Go / No-Go rule
 
-Layer 10 is Go only if hardware validation proves:
+Layer 10 can be validated in two scopes:
+
+### Proof-mode Go
+
+Proof-mode Layer 10 is Go only if hardware validation proves:
 
 - default boot has no running guest and no enabled guest unit
 - proof-mode `nixctl guest run` or `nixctl guest shell` works with `--register=no`
-- bootable-mode `nixctl guest start` refuses non-bootable roots and starts only a bootable root
+- `nixctl guest start` refuses the proof root as non-bootable
+- stale `state=running` metadata without unit/process evidence is reported as failed, not running
+- `nix-doctor --offline` reports lifecycle health clearly
+- SSH, Sway, EmulationStation, host updates, Layer 4, and Layer 8 remain healthy before and after validation
+
+This scope was hardware-validated on `thor` on 2026-05-06 with build `d202bf1e14cd3a63bd10d2d447fb3e887533e657`.
+
+### Bootable-mode Go
+
+Bootable-mode Layer 10 is Go only if hardware validation additionally proves:
+
+- bootable-mode `nixctl guest start` starts only a bootable root
+- the generated unit remains disabled and never becomes a boot dependency
+- resource policy is visible and either enforced or explicitly warned about
 - `nixctl guest stop` leaves no guest process behind
 - `nixctl guest cleanup` removes only guest-owned state
-- `nix-doctor --offline` reports lifecycle health clearly
-- SSH, Sway, EmulationStation, Steam/FEX, host updates, Layer 4, and Layer 8 remain healthy before and after validation
 
-Any autostart, host service takeover, forbidden passthrough dependency, unsafe cleanup boundary, or guest process left running after stop is a No-Go for Layer 10 until documented and fixed.
+Bootable-mode Go is deferred until a real bootable guest rootfs artifact exists. Proof-mode Go must not be treated as evidence that persistent guest services, guest SSH, autostart, graphics/audio/input passthrough, or service bridges are safe.
+
+Any autostart, host service takeover, forbidden passthrough dependency, unsafe cleanup boundary, or guest process left running after stop is a No-Go for the affected scope until documented and fixed.
