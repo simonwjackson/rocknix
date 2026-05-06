@@ -1,7 +1,7 @@
 ---
 title: feat: Add Layer 10b bootable guest rootfs validation
 type: feat
-status: active
+status: implemented-pending-hardware-validation
 date: 2026-05-06
 origin: docs/plans/2026-05-06-001-feat-nix-layer-10-managed-guest-operations-plan.md
 ---
@@ -194,7 +194,7 @@ flowchart TB
   U5 --> U6
 ```
 
-- [ ] **Unit 1: Define Layer 10b bootable rootfs contract**
+- [x] **Unit 1: Define Layer 10b bootable rootfs contract**
 
 **Goal:** Make the bootable artifact boundary explicit before implementation starts modifying lifecycle commands.
 
@@ -226,7 +226,7 @@ flowchart TB
 **Verification:**
 - Reviewers can tell what evidence is required before bootable Layer 10 is marked Go, and can distinguish test fixtures from hardware validation artifacts.
 
-- [ ] **Unit 2: Add a reproducible bootable rootfs artifact source**
+- [x] **Unit 2: Add a reproducible bootable rootfs artifact source**
 
 **Goal:** Give implementers and operators a pinned, reviewable source for the bootable rootfs used in hardware validation.
 
@@ -261,7 +261,7 @@ flowchart TB
 **Verification:**
 - A future operator can build or fetch the intended bootable rootfs artifact without reverse-engineering a one-off NixOS configuration from chat history.
 
-- [ ] **Unit 3: Add safe bootable rootfs import/staging**
+- [x] **Unit 3: Add safe bootable rootfs import/staging**
 
 **Goal:** Let operators stage a bootable rootfs through `nixctl` with path safety, checksum/provenance metadata, and clear separation from proof-mode init.
 
@@ -299,7 +299,7 @@ flowchart TB
 **Verification:**
 - A bootable rootfs can be staged reproducibly under guest-owned storage, and failed imports do not leave ambiguous state that could be mistaken for bootable-Go.
 
-- [ ] **Unit 4: Harden bootable start/stop liveness and failure handling**
+- [x] **Unit 4: Harden bootable start/stop liveness and failure handling**
 
 **Goal:** Make bootable-mode start/stop reliable enough for hardware Go by requiring root-specific live evidence and deterministic recovery from failed starts/stops.
 
@@ -338,7 +338,7 @@ flowchart TB
 **Verification:**
 - Bootable lifecycle state is derived from real host evidence and remains aligned between `nixctl guest status`, `nixctl guest start/stop`, and `nix-doctor --offline`.
 
-- [ ] **Unit 5: Make bootable smoke repeatable on-device**
+- [x] **Unit 5: Make bootable smoke repeatable on-device**
 
 **Goal:** Avoid another manual-only validation gap by deciding how hardware operators run the bootable start/stop smoke on the installed image.
 
@@ -373,7 +373,7 @@ flowchart TB
 **Verification:**
 - The hardware validation path is repeatable by a future agent without relying on unstated local repo paths or chat-only manual commands.
 
-- [ ] **Unit 6: Validate on `thor` and record bootable-mode Go/No-Go**
+- [ ] **Unit 6: Validate on `thor` and record bootable-mode Go/No-Go** *(pending rebuilt SM8550 image and real bootable artifact)*
 
 **Goal:** Produce the durable SM8550 evidence that unblocks or blocks future persistent guest work.
 
@@ -410,6 +410,36 @@ flowchart TB
 
 **Verification:**
 - The docs contain enough concrete evidence for a future Layer 11b/12 plan to know whether persistent guest-dependent work is allowed.
+
+**Implementation evidence before hardware validation:**
+
+```text
+Implemented in repo:
+- Layer 10b contract and roadmap boundary
+- pinned guest source at projects/ROCKNIX/packages/tools/nix-integration/guest
+- nixctl guest import --bootable <artifact>
+- Layer 10 rootfs provenance metadata with sha256/import timestamp/source
+- nix-doctor provenance reporting
+- root-specific live nspawn evidence for running state
+- packaged runtime smoke helper at /usr/lib/nix-integration/tests/nix-integration-runtime-smoke.sh
+
+Validated locally:
+- nix-integration static checks passed
+- nix-integration runtime smoke passed
+- nix flake show for the Layer 10b guest source evaluates the rootfs package
+```
+
+Remaining hardware work:
+
+```text
+- build SM8550 image from feat/nix-layer-10b-bootable-rootfs
+- build/fetch the Layer 10b aarch64 rootfs artifact
+- ABL-precheck and install image on thor
+- import artifact with nixctl guest import --bootable
+- run LAYER10_SMOKE=bootable from packaged smoke helper
+- reboot and verify guest unit remains disabled and no guest is running
+- record Go/No-Go evidence here and in SM8550 docs
+```
 
 ## System-Wide Impact
 
@@ -454,7 +484,7 @@ flowchart TB
 
 ## Documentation / Operational Notes
 
-- The Layer 10b plan should remain active until hardware evidence is recorded. Fixture `bootable-ready` is not enough.
+- Layer 10b is implemented in-repo but remains pending hardware validation until a rebuilt SM8550 image imports and starts/stops a real bootable artifact. Fixture `bootable-ready` is not enough.
 - If the bootable rootfs replaces the current proof root at `/storage/machines/rocknix-guest`, docs must explain how to return to proof mode for Layer 11 one-shot bridges.
 - The first bootable validation should run with the device in a recoverable state and host SSH verified immediately before start.
 - Any SM8550 full update must repeat ABL precheck before rebooting into updater.
