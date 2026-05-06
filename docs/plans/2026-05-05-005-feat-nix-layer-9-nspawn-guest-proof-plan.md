@@ -364,7 +364,7 @@ Failure/fallback matrix:
 **Verification:**
 - Device is ready for guest smoke with no host regression.
 
-- [ ] **Unit 6: Run manual NixOS guest proof and document Go/No-Go**
+- [x] **Unit 6: Run manual NixOS guest proof and document Go/No-Go**
 
 **Goal:** Validate the actual Layer 9 outcome on `thor` and record whether to proceed to Layer 10.
 

@@ -780,7 +780,41 @@ nixctl status -> Layer 9 state: available; guest root missing as expected
 nix-doctor --offline -> passed; Layer 9 available; Layers 4/8 healthy
 ```
 
-No guest has been staged or started yet. Unit 6 is the manual guest proof.
+Layer 9 manual guest proof then passed with a staged storage-local rootfs assembled from existing on-device Nix closures:
+
+```text
+/storage/machines/rocknix-guest/bin/sh -> /nix/store/...-bash.../bin/bash
+/storage/machines/rocknix-guest/usr/bin/nix -> /nix/store/...-nix-2.34.7/bin/nix
+```
+
+The first nspawn attempt failed as expected for ROCKNIX's trimmed systemd because `machined=false`:
+
+```text
+Failed to register machine: The name org.freedesktop.machine1 was not provided by any .service files
+```
+
+The smoke path now runs nspawn with `--register=no`. Final proof:
+
+```text
+[layer9-smoke] pre-flight: Layer 9 nspawn diagnostics
+[layer9-smoke] start: bounded systemd-nspawn guest proof command
+layer9-guest-proof
+nix (Nix) 2.34.7
+[layer9-smoke] cleanup: verify no guest process or enabled guest unit remains
+[layer9-smoke] diagnostics: post-proof host Layer 9 status remains readable
+nix-integration Layer 9 smoke passed
+```
+
+Post-proof status:
+
+```text
+Layer 9 state: proof-ready
+Layer 9 eligible: available: nspawn guest proof prerequisites present
+running: no
+fallback: host Layers 4/8 remain the recovery path; guest cleanup must not touch host Nix state
+```
+
+Keep/reject decision: Layer 9 is Go for the bounded manual proof. Proceed to Layer 10 only with a separate plan for lifecycle commands, resource controls, freeze/thaw policy, and explicit no-autostart behavior.
 
 The remaining future layers below are directional only. They are not implemented and not validated on SM8550. Each must get its own plan before device work begins. ROCKNIX remains the host OS in every case and continues to own boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
 

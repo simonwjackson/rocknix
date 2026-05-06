@@ -178,6 +178,7 @@ grep -q 'nix-integration Layer 8 smoke passed' "${SCRIPT_DIR}/nix-integration-ru
 grep -q 'LAYER9_SMOKE=1' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 9 opt-in flag"
 grep -q 'LAYER9_GUEST_ROOT' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 9 guest root override"
 grep -q 'systemd-nspawn guest proof' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 9 nspawn proof description"
+grep -q -- '--register=no' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke must run nspawn without machined registration"
 grep -q 'layer9-guest-proof' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 9 proof marker"
 grep -q 'nix-integration Layer 9 smoke passed' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 9 success marker"
 
