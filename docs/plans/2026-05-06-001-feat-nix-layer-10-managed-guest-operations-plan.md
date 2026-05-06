@@ -270,7 +270,7 @@ flowchart TB
 **Verification:**
 - Operators can run `nixctl status`, `nixctl guest status`, `nixctl guest preflight`, and `nix-doctor --offline` on a device with no guest, proof rootfs, bootable rootfs, or stale state and get clear non-mutating output.
 
-- [ ] **Unit 3: Implement proof-mode init, run/shell, and cleanup**
+- [x] **Unit 3: Implement proof-mode init, run/shell, and cleanup**
 
 **Goal:** Make the Layer 9 minimal rootfs recipe repeatable enough for Layer 10 operators and provide safe one-shot command execution without requiring a bootable guest.
 

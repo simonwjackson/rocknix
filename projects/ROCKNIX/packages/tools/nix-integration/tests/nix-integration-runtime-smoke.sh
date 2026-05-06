@@ -114,6 +114,44 @@ if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
   exit 1
 fi
 grep -q 'guest preflight failed: available: guest root missing' /tmp/nix-layer10-missing-preflight.log
+mkdir -p "${TMP_DIR}/nix/store/fake-nix/bin" "${TMP_DIR}/nix/store/fake-nix-store/bin" "${TMP_DIR}/nix/store/fake-bash/bin"
+printf '#!/bin/sh\necho nix-fake\n' >"${TMP_DIR}/nix/store/fake-nix/bin/nix"
+cat >"${TMP_DIR}/nix/store/fake-nix-store/bin/nix-store" <<EOF
+#!/bin/sh
+printf '%s\n' '${TMP_DIR}/nix/store/fake-nix' '${TMP_DIR}/nix/store/fake-nix-store' '${TMP_DIR}/nix/store/fake-bash'
+EOF
+printf '#!/bin/sh\necho bash-fake\n' >"${TMP_DIR}/nix/store/fake-bash/bin/bash"
+chmod 0755 "${TMP_DIR}/nix/store/fake-nix/bin/nix" "${TMP_DIR}/nix/store/fake-nix-store/bin/nix-store" "${TMP_DIR}/nix/store/fake-bash/bin/bash"
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-init-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-init-state" \
+NIX_LAYER10_NIX_BIN="${TMP_DIR}/nix/store/fake-nix/bin/nix" \
+NIX_LAYER10_NIX_STORE_BIN="${TMP_DIR}/nix/store/fake-nix-store/bin/nix-store" \
+NIX_LAYER10_BASH_BIN="${TMP_DIR}/nix/store/fake-bash/bin/bash" \
+  "${PKG_DIR}/scripts/nixctl" guest init --proof >/tmp/nix-layer10-init-proof.log
+[ -L "${TMP_DIR}/layer10-init-root/bin/sh" ]
+[ -L "${TMP_DIR}/layer10-init-root/usr/bin/nix" ]
+[ -d "${TMP_DIR}/layer10-init-root/nix/store/fake-nix" ]
+grep -q 'proof-ready' "${TMP_DIR}/layer10-init-state/state"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-init-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-init-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER10_LOG="${TMP_DIR}/layer10-run.log" \
+  "${PKG_DIR}/scripts/nixctl" guest run /bin/sh -lc 'nix --version' >/tmp/nix-layer10-run.log
+grep -q 'systemd-nspawn smoke-test' /tmp/nix-layer10-run.log
+grep -q 'proof-ready' "${TMP_DIR}/layer10-init-state/state"
+if NIX_LAYER10_GUEST_ROOT="/storage" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-unsafe-state" \
+  "${PKG_DIR}/scripts/nixctl" guest cleanup --yes >/tmp/nix-layer10-unsafe-cleanup.log 2>&1; then
+  echo 'expected Layer 10 cleanup to refuse unsafe root' >&2
+  exit 1
+fi
+grep -q 'guest cleanup: refusing unsafe guest root' /tmp/nix-layer10-unsafe-cleanup.log
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-init-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-init-state" \
+  "${PKG_DIR}/scripts/nixctl" guest cleanup --yes >/tmp/nix-layer10-cleanup.log
+[ ! -e "${TMP_DIR}/layer10-init-root" ]
+[ ! -e "${TMP_DIR}/layer10-init-state" ]
 mkdir -p "${TMP_DIR}/layer8-empty-config"
 printf 'experimental-features = nix-command flakes\nbuild-users-group =\n' >"${TMP_DIR}/layer8-empty-config/nix.conf"
 if NIX_LAYER8_SYSTEMD_DIR="${PKG_DIR}/system.d" \
