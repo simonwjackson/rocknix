@@ -1043,6 +1043,15 @@ layer12_configured() {
   [ "$(layer12_metadata_value service 2>/dev/null || true)" = "ssh" ] || return 1
 }
 
+layer12_nspawn_args() {
+  layer12_configured || return 0
+  port=$(layer12_ssh_port)
+  keys=$(layer12_authorized_keys)
+  layer12_port_valid "${port}" || return 1
+  [ -n "${keys}" ] && [ -s "${keys}" ] || return 1
+  printf ' --private-network --port=tcp:%s:22 --bind-ro=%s:%s' "${port}" "${keys}" "${NIX_LAYER12_AUTHORIZED_KEYS_DEST}"
+}
+
 layer12_ssh_port() {
   layer12_metadata_value port 2>/dev/null || echo "${NIX_LAYER12_DEFAULT_SSH_PORT}"
 }
@@ -1690,7 +1699,7 @@ TasksMax=${NIX_LAYER10_TASKS_MAX}
 CPUWeight=${NIX_LAYER10_CPU_WEIGHT}
 IOWeight=${NIX_LAYER10_IO_WEIGHT}
 MemoryMax=${NIX_LAYER10_MEMORY_MAX}
-ExecStart=${NIX_LAYER10_NSPAWN_BIN} --boot --register=no --directory=${NIX_LAYER10_GUEST_ROOT}
+ExecStart=${NIX_LAYER10_NSPAWN_BIN} --boot --register=no --directory=${NIX_LAYER10_GUEST_ROOT}$(layer12_nspawn_args)
 EOF
   echo "${unit_path}"
 }
@@ -1699,6 +1708,9 @@ cmd_guest_start() {
   cmd_guest_preflight
   mode=$(layer10_rootfs_mode)
   [ "${mode}" = "bootable" ] || fail "guest start: rootfs mode is ${mode}; start requires bootable rootfs (use guest run/shell for proof roots)"
+  if layer12_configured; then
+    cmd_guest_service_preflight ssh
+  fi
   if layer10_running; then
     info "Layer 10 guest already running"
     return 0
