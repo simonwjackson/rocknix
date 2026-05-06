@@ -74,6 +74,8 @@ NIX_LAYER10_TASKS_MAX="${NIX_LAYER10_TASKS_MAX:-512}"
 NIX_LAYER10_NIX_BIN="${NIX_LAYER10_NIX_BIN:-${NIX_DEFAULT_PROFILE_BIN}/nix}"
 NIX_LAYER10_NIX_STORE_BIN="${NIX_LAYER10_NIX_STORE_BIN:-${NIX_DEFAULT_PROFILE_BIN}/nix-store}"
 NIX_LAYER10_BASH_BIN="${NIX_LAYER10_BASH_BIN:-}"
+NIX_LAYER11_STATE_DIR="${NIX_LAYER11_STATE_DIR:-/storage/.config/nix-integration/layer11}"
+NIX_LAYER11_BIN_DIR="${NIX_LAYER11_BIN_DIR:-/storage/bin}"
 
 # ---- SSL ------------------------------------------------------------------
 # Pre-set for the upstream installer so it skips its cacert derivation install
@@ -111,6 +113,8 @@ Subcommands:
   guest <action>         Manage Layer 10 nspawn guest operations.
                          Actions: status, preflight, init --proof, run <cmd>,
                          shell, start, stop, cleanup [--yes].
+  bridge <action>        Manage Layer 11 one-shot guest-backed bridges.
+                         Actions: status, preflight <name>.
   help, -h, --help       This message.
 
 Environment overrides (defaults shown):
@@ -130,6 +134,8 @@ Environment overrides (defaults shown):
   NIX_LAYER10_UNIT_NAME  ${NIX_LAYER10_UNIT_NAME}
   NIX_LAYER10_TIMEOUT    ${NIX_LAYER10_TIMEOUT}
   NIX_LAYER10_MEMORY_MAX ${NIX_LAYER10_MEMORY_MAX}
+  NIX_LAYER11_STATE_DIR  ${NIX_LAYER11_STATE_DIR}
+  NIX_LAYER11_BIN_DIR    ${NIX_LAYER11_BIN_DIR}
   NIX_TARBALL_URL        ${NIX_TARBALL_URL}
   NIX_TARBALL_SHA256     ${NIX_TARBALL_SHA256}
   NIX_FORCE              Set to 1 to override safety checks (rare)
@@ -836,6 +842,46 @@ print_layer10_status() {
   echo "  fallback:   host SSH and Layers 4/8 remain the recovery path"
 }
 
+layer11_bridge_name_valid() {
+  name=${1:-}
+  [ -n "${name}" ] || return 1
+  case "${name}" in
+    *[!A-Za-z0-9._-]*|.*|*..*|*/*) return 1 ;;
+  esac
+  return 0
+}
+
+layer11_bridge_count() {
+  [ -d "${NIX_LAYER11_STATE_DIR}/bridges" ] || { echo 0; return; }
+  find "${NIX_LAYER11_STATE_DIR}/bridges" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | awk '{print $1}'
+}
+
+layer11_eligibility() {
+  [ -d "${NIX_LAYER11_BIN_DIR}" ] || { echo "unsupported: bridge bin dir missing: ${NIX_LAYER11_BIN_DIR}"; return; }
+  [ -w "${NIX_LAYER11_BIN_DIR}" ] || { echo "unsupported: bridge bin dir not writable: ${NIX_LAYER11_BIN_DIR}"; return; }
+  case "$(layer10_state)" in
+    proof-ready|bootable-ready) echo "available: Layer 10 one-shot guest execution ready" ;;
+    running) echo "unsupported: Layer 10 guest is running; stop it before bridge operations" ;;
+    available) echo "unsupported: Layer 10 guest root missing or not ready" ;;
+    unsupported) echo "unsupported: Layer 10 guest operations unsupported" ;;
+    invalid) echo "unsupported: Layer 10 guest root invalid" ;;
+    failed|partial) echo "unsupported: Layer 10 guest state requires cleanup or repair" ;;
+    *) echo "unsupported: Layer 10 guest state unknown" ;;
+  esac
+}
+
+print_layer11_status() {
+  echo "Layer 11 (one-shot guest-backed bridges) status"
+  echo "------------------------------------------------"
+  echo "  state dir:  ${NIX_LAYER11_STATE_DIR}"
+  echo "  bin dir:    ${NIX_LAYER11_BIN_DIR}"
+  echo "  bridges:    $(layer11_bridge_count)"
+  echo "  eligible:   $(layer11_eligibility)"
+  echo "  execution:  one-shot via nixctl guest run"
+  echo "  autostart:  disabled by contract"
+  echo "  fallback:   host SSH remains the recovery path; bridges must leave Layer 10 stopped"
+}
+
 print_layer7_status() {
   echo "Layer 7 (app/UI experiment) status"
   echo "------------------------------------"
@@ -925,6 +971,8 @@ cmd_status() {
   print_layer9_status
   echo ""
   print_layer10_status
+  echo ""
+  print_layer11_status
   echo ""
 }
 
@@ -1534,6 +1582,43 @@ cmd_guest() {
   esac
 }
 
+cmd_bridge_status() {
+  print_layer11_status
+}
+
+cmd_bridge_preflight() {
+  name=${1:-}
+  [ -n "${name}" ] || fail "bridge preflight: missing bridge name"
+  layer11_bridge_name_valid "${name}" || fail "bridge preflight: unsafe bridge name: ${name}"
+  eligibility=$(layer11_eligibility)
+  case "${eligibility}" in
+    available:*)
+      info "Layer 11 bridge preflight passed: ${name}"
+      note "${eligibility}"
+      ;;
+    *)
+      fail "bridge preflight failed: ${eligibility}"
+      ;;
+  esac
+}
+
+cmd_bridge() {
+  [ $# -gt 0 ] || fail "bridge: missing action (status, preflight)"
+  action=$1
+  shift
+  case "${action}" in
+    status)
+      cmd_bridge_status "$@"
+      ;;
+    preflight|plan)
+      cmd_bridge_preflight "$@"
+      ;;
+    *)
+      fail "bridge: unknown action: ${action}"
+      ;;
+  esac
+}
+
 # ---- Dispatch --------------------------------------------------------------
 
 if [ $# -eq 0 ]; then
@@ -1568,6 +1653,9 @@ case "${cmd}" in
     ;;
   guest)
     cmd_guest "$@"
+    ;;
+  bridge)
+    cmd_bridge "$@"
     ;;
   -h|--help|help)
     usage

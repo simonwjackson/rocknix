@@ -50,6 +50,8 @@ NIX_LAYER10_CPU_WEIGHT="${NIX_LAYER10_CPU_WEIGHT:-1}"
 NIX_LAYER10_IO_WEIGHT="${NIX_LAYER10_IO_WEIGHT:-1}"
 NIX_LAYER10_MEMORY_MAX="${NIX_LAYER10_MEMORY_MAX:-1G}"
 NIX_LAYER10_TASKS_MAX="${NIX_LAYER10_TASKS_MAX:-512}"
+NIX_LAYER11_STATE_DIR="${NIX_LAYER11_STATE_DIR:-/storage/.config/nix-integration/layer11}"
+NIX_LAYER11_BIN_DIR="${NIX_LAYER11_BIN_DIR:-/storage/bin}"
 CHECK_NETWORK=1
 FAILURES=0
 WARNINGS=0
@@ -413,6 +415,25 @@ layer10_eligibility() {
     bootable) echo "available: bootable guest root ready for manual start" ;;
     invalid) echo "unsupported: guest root invalid or unsupported: ${NIX_LAYER10_GUEST_ROOT}" ;;
     *) echo "unsupported: guest root mode unknown: ${NIX_LAYER10_GUEST_ROOT}" ;;
+  esac
+}
+
+layer11_bridge_count() {
+  [ -d "${NIX_LAYER11_STATE_DIR}/bridges" ] || { echo 0; return; }
+  find "${NIX_LAYER11_STATE_DIR}/bridges" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | awk '{print $1}'
+}
+
+layer11_eligibility() {
+  [ -d "${NIX_LAYER11_BIN_DIR}" ] || { echo "unsupported: bridge bin dir missing: ${NIX_LAYER11_BIN_DIR}"; return; }
+  [ -w "${NIX_LAYER11_BIN_DIR}" ] || { echo "unsupported: bridge bin dir not writable: ${NIX_LAYER11_BIN_DIR}"; return; }
+  case "$(layer10_state)" in
+    proof-ready|bootable-ready) echo "available: Layer 10 one-shot guest execution ready" ;;
+    running) echo "unsupported: Layer 10 guest is running; stop it before bridge operations" ;;
+    available) echo "unsupported: Layer 10 guest root missing or not ready" ;;
+    unsupported) echo "unsupported: Layer 10 guest operations unsupported" ;;
+    invalid) echo "unsupported: Layer 10 guest root invalid" ;;
+    failed|partial) echo "unsupported: Layer 10 guest state requires cleanup or repair" ;;
+    *) echo "unsupported: Layer 10 guest state unknown" ;;
   esac
 }
 
@@ -1004,6 +1025,29 @@ check_layer10() {
   ok "Layer 10 fallback: host SSH and Layers 4/8 remain the recovery path"
 }
 
+check_layer11() {
+  eligibility=$(layer11_eligibility)
+  bridge_count=$(layer11_bridge_count)
+
+  ok "Layer 11 bridge state dir: ${NIX_LAYER11_STATE_DIR}"
+  if [ -d "${NIX_LAYER11_BIN_DIR}" ]; then
+    ok "Layer 11 bridge bin dir exists: ${NIX_LAYER11_BIN_DIR}"
+  else
+    warn "Layer 11 bridge bin dir missing: ${NIX_LAYER11_BIN_DIR}"
+  fi
+  ok "Layer 11 installed bridge count: ${bridge_count}"
+
+  case "${eligibility}" in
+    available:*) ok "Layer 11 bridge eligibility: ${eligibility}" ;;
+    unsupported:*) warn "Layer 11 bridge eligibility: ${eligibility}" ;;
+    *) warn "Layer 11 bridge eligibility: ${eligibility}" ;;
+  esac
+
+  ok "Layer 11 execution model: one-shot via nixctl guest run"
+  ok "Layer 11 autostart: disabled by contract"
+  ok "Layer 11 fallback: host SSH remains the recovery path; bridges must leave Layer 10 stopped"
+}
+
 check_network() {
   if [ "${CHECK_NETWORK}" -eq 0 ]; then
     warn "network checks skipped"
@@ -1039,6 +1083,7 @@ check_layer7
 check_layer8
 check_layer9
 check_layer10
+check_layer11
 
 if [ "${FAILURES}" -eq 0 ]; then
   echo "nix-doctor: passed with ${WARNINGS} warning(s)"

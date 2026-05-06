@@ -119,7 +119,16 @@ grep -q 'NIX_LAYER10_GUEST_ROOT=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl mi
 grep -q 'NIX_LAYER10_GUEST_ROOT=' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing fixtureable Layer 10 guest root"
 grep -q 'NIX_LAYER10_UNIT_NAME=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing fixtureable Layer 10 unit name"
 grep -q 'NIX_LAYER10_UNIT_NAME=' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing fixtureable Layer 10 unit name"
-for sub in status install upgrade uninstall doctor user-env daemon guest; do
+grep -q 'Layer 11 (one-shot guest-backed bridges) status' "${PKG_DIR}/scripts/nixctl" || fail "nixctl status missing Layer 11 section"
+grep -q 'cmd_bridge' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 11 bridge dispatch"
+grep -q 'Layer 11 bridge preflight passed' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 11 bridge preflight"
+grep -q 'NIX_LAYER11_STATE_DIR=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing fixtureable Layer 11 state dir"
+grep -q 'NIX_LAYER11_BIN_DIR=' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing fixtureable Layer 11 bin dir"
+grep -q 'NIX_LAYER11_STATE_DIR=' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing fixtureable Layer 11 state dir"
+grep -q 'NIX_LAYER11_BIN_DIR=' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing fixtureable Layer 11 bin dir"
+grep -q 'check_layer11' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 11 checks"
+grep -q 'Layer 11 bridge eligibility' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 11 eligibility output"
+for sub in status install upgrade uninstall doctor user-env daemon guest bridge; do
   # Subcommand can appear as 'sub)' (alone), 'sub|other)' (left of alt),
   # or '...|sub)' (right of alt). Match by requiring sub to be preceded by
   # start-of-line, whitespace, or '|' and followed by ')' or '|'.
