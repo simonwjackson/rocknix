@@ -378,7 +378,6 @@ layer10_state_value() {
 }
 
 layer10_running() {
-  [ "$(layer10_state_value)" = "running" ] && return 0
   if systemctl_available; then
     [ "$(systemctl_state "${NIX_LAYER10_UNIT_NAME}")" = "active" ] && return 0
   fi
@@ -393,6 +392,7 @@ layer10_state() {
   layer10_kernel_ready || { echo unsupported; return; }
   layer10_running && { echo running; return; }
   case "$(layer10_state_value)" in
+    running) echo failed; return ;;
     failed|partial) echo failed; return ;;
   esac
   case "$(layer10_rootfs_mode)" in

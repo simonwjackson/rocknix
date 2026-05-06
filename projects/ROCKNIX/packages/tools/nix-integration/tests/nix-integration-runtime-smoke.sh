@@ -106,6 +106,14 @@ NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
   "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer10-doctor-bootable.log || true
 grep -q 'Layer 10 guest lifecycle state: bootable-ready' /tmp/nix-layer10-doctor-bootable.log
 grep -q 'Layer 10 guest eligibility: available: bootable guest root ready for manual start' /tmp/nix-layer10-doctor-bootable.log
+mkdir -p "${TMP_DIR}/layer10-stale-state"
+printf 'running\n' >"${TMP_DIR}/layer10-stale-state/state"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-boot-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-stale-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  "${PKG_DIR}/scripts/nixctl" guest status >/tmp/nix-layer10-stale-status.log
+grep -q 'state:      failed' /tmp/nix-layer10-stale-status.log
 if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
   NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-missing-root" \
   NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
