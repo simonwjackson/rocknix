@@ -379,12 +379,20 @@ layer10_state_value() {
   fi
 }
 
+layer10_unit_active() {
+  systemctl_available || return 1
+  [ "$(systemctl_state "${NIX_LAYER10_UNIT_NAME}")" = "active" ]
+}
+
+layer10_process_running() {
+  have ps || return 1
+  ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${NIX_LAYER10_GUEST_ROOT}" >/dev/null 2>&1
+}
+
 layer10_running() {
-  if systemctl_available; then
-    [ "$(systemctl_state "${NIX_LAYER10_UNIT_NAME}")" = "active" ] && return 0
-  fi
-  if have ps; then
-    ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${NIX_LAYER10_GUEST_ROOT}" >/dev/null 2>&1 && return 0
+  layer10_process_running && return 0
+  if ! have ps; then
+    layer10_unit_active && return 0
   fi
   return 1
 }
@@ -393,6 +401,10 @@ layer10_state() {
   [ -x "${NIX_LAYER10_NSPAWN_BIN}" ] || { echo unsupported; return; }
   layer10_kernel_ready || { echo unsupported; return; }
   layer10_running && { echo running; return; }
+  if have ps && layer10_unit_active; then
+    echo failed
+    return
+  fi
   case "$(layer10_state_value)" in
     running) echo failed; return ;;
     failed|partial) echo failed; return ;;
@@ -1035,6 +1047,9 @@ check_layer10() {
     warn "Layer 10 guest appears to be running"
   else
     ok "Layer 10 guest not running"
+    if have ps && layer10_unit_active; then
+      fail_check "Layer 10 unit is active but no nspawn process references ${NIX_LAYER10_GUEST_ROOT}"
+    fi
   fi
 
   ok "Layer 10 resource policy: CPUWeight=${NIX_LAYER10_CPU_WEIGHT} IOWeight=${NIX_LAYER10_IO_WEIGHT} MemoryMax=${NIX_LAYER10_MEMORY_MAX} TasksMax=${NIX_LAYER10_TASKS_MAX}"
