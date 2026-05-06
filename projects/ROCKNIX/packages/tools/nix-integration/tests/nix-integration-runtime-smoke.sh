@@ -446,6 +446,7 @@ NIX_SYSTEMCTL_PID="${TMP_DIR}/systemctl-layer10.pid" \
   "${PKG_DIR}/scripts/nixctl" guest start >/tmp/nix-layer10-start.log
 [ -f "${TMP_DIR}/layer10-systemd/rocknix-guest.service" ]
 grep -q -- '--register=no' "${TMP_DIR}/layer10-systemd/rocknix-guest.service"
+grep -q -- '--private-network' "${TMP_DIR}/layer10-systemd/rocknix-guest.service"
 grep -q 'CPUWeight=1' "${TMP_DIR}/layer10-systemd/rocknix-guest.service"
 ! grep -q '^\[Install\]' "${TMP_DIR}/layer10-systemd/rocknix-guest.service"
 grep -q '^start rocknix-guest.service' "${TMP_DIR}/systemctl-layer10.log"

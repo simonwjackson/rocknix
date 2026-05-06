@@ -1049,7 +1049,7 @@ layer12_nspawn_args() {
   keys=$(layer12_authorized_keys)
   layer12_port_valid "${port}" || return 1
   [ -n "${keys}" ] && [ -s "${keys}" ] || return 1
-  printf ' --private-network --port=tcp:%s:22 --bind-ro=%s:%s' "${port}" "${keys}" "${NIX_LAYER12_AUTHORIZED_KEYS_DEST}"
+  printf ' --port=tcp:%s:22 --bind-ro=%s:%s' "${port}" "${keys}" "${NIX_LAYER12_AUTHORIZED_KEYS_DEST}"
 }
 
 layer12_ssh_port() {
@@ -1699,7 +1699,7 @@ TasksMax=${NIX_LAYER10_TASKS_MAX}
 CPUWeight=${NIX_LAYER10_CPU_WEIGHT}
 IOWeight=${NIX_LAYER10_IO_WEIGHT}
 MemoryMax=${NIX_LAYER10_MEMORY_MAX}
-ExecStart=${NIX_LAYER10_NSPAWN_BIN} --boot --register=no --directory=${NIX_LAYER10_GUEST_ROOT}$(layer12_nspawn_args)
+ExecStart=${NIX_LAYER10_NSPAWN_BIN} --boot --register=no --private-network --directory=${NIX_LAYER10_GUEST_ROOT}$(layer12_nspawn_args)
 EOF
   echo "${unit_path}"
 }
