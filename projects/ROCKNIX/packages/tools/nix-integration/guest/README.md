@@ -2,7 +2,7 @@
 
 This directory defines the minimal bootable guest rootfs used to validate Layer 10b on SM8550/Odin2 Portal.
 
-Layer 10b is only a bootable lifecycle validation layer. The guest rootfs exists to prove that `nixctl guest start` and `nixctl guest stop` work with a real container-style rootfs under `systemd-nspawn --boot --register=no`. It is not a service layer and must not expose guest SSH, autostart, graphics, audio, input, ROM/save paths, Steam/FEX state, or host UI sockets.
+Layer 10b is only a bootable lifecycle validation layer. The guest rootfs exists to prove that `nixctl guest start` and `nixctl guest stop` work with a real container-style rootfs under `systemd-nspawn --boot --register=no`. Layer 12 enables the guest's locked-down OpenSSH service only when host-side metadata and an operator-provided authorized-keys file are configured. It must not expose guest SSH by default, autostart, graphics, audio, input, ROM/save paths, Steam/FEX state, or host UI sockets.
 
 ## Artifact contract
 
@@ -13,7 +13,7 @@ A hardware-Go artifact must be:
 - bootable by `systemd-nspawn --boot`
 - self-contained for first validation; do not bind host `/nix` or `/storage/.nix-root` as guest `/nix`
 - headless and non-network-exposed by default
-- free of default passwords, password login, and remote-login services
+- free of default passwords, password login, and shipped authorized keys
 - imported only under the configured Layer 10 guest root, normally `/storage/machines/rocknix-guest`
 
 ## Build
@@ -38,8 +38,8 @@ The import/staging command records the artifact name, sha256, import timestamp, 
 
 Do not add these to this Layer 10b guest:
 
-- `services.openssh.enable = true`
-- password login or default credentials
+- default guest SSH exposure; Layer 12 must provide host-side opt-in metadata and alternate-port forwarding
+- password login, shipped authorized keys, or default credentials
 - graphical sessions, Wayland/Sway integration, or `/dev/dri`
 - PipeWire, PulseAudio, ALSA passthrough, or audio sockets
 - `/dev/input` or controller/touch input passthrough

@@ -6,7 +6,18 @@
   networking.hostName = "rocknix-guest";
   networking.useDHCP = false;
 
-  services.openssh.enable = false;
+  services.openssh = {
+    enable = true;
+    ports = [ 22 ];
+    authorizedKeysFiles = [ "/etc/ssh/authorized_keys.d/%u" ];
+    settings = {
+      PasswordAuthentication = false;
+      KbdInteractiveAuthentication = false;
+      PermitRootLogin = "prohibit-password";
+    };
+  };
+
+  environment.etc."ssh/authorized_keys.d/.keep".text = "";
 
   users.mutableUsers = true;
   users.users.root.hashedPassword = "!";
