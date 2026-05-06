@@ -666,6 +666,7 @@ Implemented Layer 10 command surface on the feature branch:
 nixctl guest status
 nixctl guest preflight
 nixctl guest init --proof
+nixctl guest import --bootable <artifact>
 nixctl guest run <command>
 nixctl guest shell
 nixctl guest start
@@ -683,7 +684,7 @@ TasksMax=512
 ExecStart=/usr/bin/systemd-nspawn --boot --register=no --directory=/storage/machines/rocknix-guest
 ```
 
-Layer 10 opt-in hardware smoke modes:
+Layer 10 opt-in hardware smoke modes. Layer 10b-enabled images also package this helper at `/usr/lib/nix-integration/tests/nix-integration-runtime-smoke.sh` so hardware validation does not depend on a repo checkout on the device.
 
 ```text
 LAYER10_SMOKE=proof \
@@ -712,7 +713,7 @@ Stale running-state regression: state=running without unit/process evidence repo
 Post-proof status: Layer 10 restored to proof-ready, running: no
 ```
 
-Bootable-mode `nixctl guest start` / `stop` remains deferred. The current `/storage/machines/rocknix-guest` rootfs is a proof root, not a bootable container/NixOS rootfs. Do not treat proof-mode validation as evidence for long-running guest services, guest SSH, autostart, graphics/audio/input passthrough, or service supervision.
+Bootable-mode `nixctl guest start` / `stop` is implemented but not hardware-Go. Layer 10b adds the missing bootable rootfs path: a pinned NixOS/container-style aarch64 guest source under `projects/ROCKNIX/packages/tools/nix-integration/guest`, `nixctl guest import --bootable <artifact>` with sha256/provenance metadata, root-specific live nspawn evidence for `running`, and a packaged `LAYER10_SMOKE=bootable` helper that refuses to start without provenance. Hardware-Go still requires a rebuilt SM8550 image, a real imported bootable artifact, successful manual start/stop, no enabled unit after reboot, no residual guest process, and healthy host SSH/UI/Nix state. Do not treat proof-mode validation, fixture tests, or import success alone as evidence for long-running guest services, guest SSH, autostart, graphics/audio/input passthrough, or service supervision.
 
 A narrow Layer 11 live prototype was also performed: a temporary `/storage/bin/layer11-proof` host bridge invoked `nixctl guest run /usr/bin/nix --version`, returned `nix (Nix) 2.34.7`, left Layer 10 at `running: no`, and was deleted. This proves the one-shot bridge shape only; it is not a Go for persistent Layer 11 services.
 
@@ -765,11 +766,12 @@ Layer 11 Go applies only to one-shot proof-mode bridges. Persistent services, al
 
 Layer 10 still does not own host SSH, Sway, EmulationStation, Steam/FEX, update, ROM/save state, GPU, audio, or input. Those remain ROCKNIX-owned or later bridge-layer work.
 
-The layer roadmap below records the current boundary. Layers 9, 10 proof mode, and 11 one-shot bridges are implemented and hardware-validated on SM8550; Layer 10 bootable mode is deferred, and Layers 12+ still require separate planning and device validation before Go. ROCKNIX remains the host OS in every case and continues to own boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
+The layer roadmap below records the current boundary. Layers 9, 10 proof mode, and 11 one-shot bridges are implemented and hardware-validated on SM8550; Layer 10b bootable rootfs validation is implemented in-repo and awaits rebuilt-image hardware validation, and Layers 12+ still require separate planning and device validation before Go. ROCKNIX remains the host OS in every case and continues to own boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
 
 - **Layer 9: NixOS/nspawn guest proof.** Run a storage-backed NixOS-ish guest under `systemd-nspawn` with its own `nix-daemon`. Manual start only; no boot autostart; stop rule on any impact to SSH, Sway, EmulationStation, Steam/FEX, host updates, or recovery.
-- **Layer 10: managed guest operations.** `nixctl guest status/preflight/init --proof/run/shell/start/stop/cleanup`, resource controls, health checks. Proof mode is hardware-Go; bootable start/stop is deferred until a real bootable rootfs exists. Guest must remain easy to stop, delete, throttle, and keep idle during gameplay.
-- **Layer 11: guest-backed app/service bridges.** Go on `thor` for opt-in one-shot host bridges that call selected proof-mode guest commands and leave no guest running. Persistent services, alternate-port guest SSH, graphics/audio/input, and autostart remain later work after bootable Layer 10 lifecycle is hardware-validated.
+- **Layer 10: managed guest operations.** `nixctl guest status/preflight/init --proof/run/shell/start/stop/cleanup`, resource controls, health checks. Proof mode is hardware-Go; bootable start/stop exists but is not hardware-Go without Layer 10b evidence. Guest must remain easy to stop, delete, throttle, and keep idle during gameplay.
+- **Layer 10b: bootable guest rootfs validation.** Implemented in-repo for bootable artifact source, safe import/provenance, stricter root-specific liveness, and packaged bootable smoke. Hardware-Go is pending rebuilt-image validation on `thor` with a real NixOS/container-style rootfs artifact.
+- **Layer 11: guest-backed app/service bridges.** Go on `thor` for opt-in one-shot host bridges that call selected proof-mode guest commands and leave no guest running. Persistent services, alternate-port guest SSH, graphics/audio/input, and autostart remain later work after Layer 10b bootable lifecycle is hardware-validated.
 - **Layer 12: declarative host/guest profiles.** Reproducible profiles describing packages, guest services, bridges, launchers, and resource limits. Never manage ROMs, saves, Steam/FEX state, boot, firmware, or base packages through them.
 - **Layer 13: curated capability catalog.** Hardware-validated, smoke-tested workflows exposed as `nixctl catalog enable <name>`. Not arbitrary internet flakes as root.
 
