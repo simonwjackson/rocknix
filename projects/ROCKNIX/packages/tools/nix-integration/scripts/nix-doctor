@@ -423,6 +423,13 @@ layer11_bridge_count() {
   find "${NIX_LAYER11_STATE_DIR}/bridges" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | awk '{print $1}'
 }
 
+layer11_metadata_value() {
+  key=$1
+  file=$2
+  [ -f "${file}" ] || return 1
+  awk -F= -v key="${key}" '$1 == key {sub(/^[^=]*=/, ""); print; found=1; exit} END {exit !found}' "${file}"
+}
+
 layer11_eligibility() {
   [ -d "${NIX_LAYER11_BIN_DIR}" ] || { echo "unsupported: bridge bin dir missing: ${NIX_LAYER11_BIN_DIR}"; return; }
   [ -w "${NIX_LAYER11_BIN_DIR}" ] || { echo "unsupported: bridge bin dir not writable: ${NIX_LAYER11_BIN_DIR}"; return; }
@@ -1036,6 +1043,32 @@ check_layer11() {
     warn "Layer 11 bridge bin dir missing: ${NIX_LAYER11_BIN_DIR}"
   fi
   ok "Layer 11 installed bridge count: ${bridge_count}"
+
+  if [ -d "${NIX_LAYER11_STATE_DIR}/bridges" ]; then
+    for bridge_dir in "${NIX_LAYER11_STATE_DIR}/bridges"/*; do
+      [ -d "${bridge_dir}" ] || continue
+      metadata="${bridge_dir}/metadata"
+      command_file="${bridge_dir}/command"
+      bridge_name=${bridge_dir##*/}
+      if [ ! -f "${metadata}" ]; then
+        fail_check "Layer 11 bridge metadata missing: ${bridge_name}"
+        continue
+      fi
+      target=$(layer11_metadata_value target "${metadata}" 2>/dev/null || true)
+      if [ -z "${target}" ]; then
+        fail_check "Layer 11 bridge target missing from metadata: ${bridge_name}"
+      elif [ -x "${target}" ]; then
+        ok "Layer 11 bridge target executable: ${bridge_name} -> ${target}"
+      else
+        warn "Layer 11 bridge metadata exists but target is missing or not executable: ${bridge_name} -> ${target}"
+      fi
+      if [ -s "${command_file}" ]; then
+        ok "Layer 11 bridge command recorded: ${bridge_name}"
+      else
+        fail_check "Layer 11 bridge command metadata missing: ${bridge_name}"
+      fi
+    done
+  fi
 
   case "${eligibility}" in
     available:*) ok "Layer 11 bridge eligibility: ${eligibility}" ;;

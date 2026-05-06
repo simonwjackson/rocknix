@@ -114,7 +114,8 @@ Subcommands:
                          Actions: status, preflight, init --proof, run <cmd>,
                          shell, start, stop, cleanup [--yes].
   bridge <action>        Manage Layer 11 one-shot guest-backed bridges.
-                         Actions: status, preflight <name>.
+                         Actions: status, preflight <name>, install <name> -- <cmd>,
+                         remove <name>.
   help, -h, --help       This message.
 
 Environment overrides (defaults shown):
@@ -854,6 +855,67 @@ layer11_bridge_name_valid() {
 layer11_bridge_count() {
   [ -d "${NIX_LAYER11_STATE_DIR}/bridges" ] || { echo 0; return; }
   find "${NIX_LAYER11_STATE_DIR}/bridges" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | awk '{print $1}'
+}
+
+layer11_bridge_dir() {
+  echo "${NIX_LAYER11_STATE_DIR}/bridges/$1"
+}
+
+layer11_bridge_target() {
+  echo "${NIX_LAYER11_BIN_DIR}/$1"
+}
+
+layer11_metadata_value() {
+  key=$1
+  file=$2
+  [ -f "${file}" ] || return 1
+  awk -F= -v key="${key}" '$1 == key {sub(/^[^=]*=/, ""); print; found=1; exit} END {exit !found}' "${file}"
+}
+
+layer11_owns_bridge() {
+  name=$1
+  target=$(layer11_bridge_target "${name}")
+  metadata="$(layer11_bridge_dir "${name}")/metadata"
+  [ -f "${metadata}" ] || return 1
+  recorded=$(layer11_metadata_value target "${metadata}" 2>/dev/null || true)
+  [ "${recorded}" = "${target}" ] || return 1
+  return 0
+}
+
+shell_quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+layer11_command_line() {
+  [ $# -gt 0 ] || return 1
+  line=
+  for arg in "$@"; do
+    quoted=$(shell_quote "${arg}")
+    if [ -n "${line}" ]; then
+      line="${line} ${quoted}"
+    else
+      line="${quoted}"
+    fi
+  done
+  printf '%s\n' "${line}"
+}
+
+layer11_target_path_safe() {
+  path=$1
+  real=$(canonical_path "${path}")
+  case "${real}" in
+    /storage/bin/*|/tmp/*/layer11-bin/*) return 0 ;;
+  esac
+  return 1
+}
+
+layer11_state_path_safe() {
+  path=$1
+  real=$(canonical_path "${path}")
+  case "${real}" in
+    /storage/.config/nix-integration/layer11|/tmp/*/layer11-state) return 0 ;;
+  esac
+  return 1
 }
 
 layer11_eligibility() {
@@ -1602,8 +1664,63 @@ cmd_bridge_preflight() {
   esac
 }
 
+cmd_bridge_install() {
+  name=${1:-}
+  [ -n "${name}" ] || fail "bridge install: missing bridge name"
+  shift || true
+  [ "${1:-}" = "--" ] || fail "bridge install: expected -- before guest command"
+  shift
+  [ $# -gt 0 ] || fail "bridge install: missing guest command"
+  cmd_bridge_preflight "${name}"
+
+  target=$(layer11_bridge_target "${name}")
+  metadata_dir=$(layer11_bridge_dir "${name}")
+  metadata="${metadata_dir}/metadata"
+  command_file="${metadata_dir}/command"
+  layer11_target_path_safe "${target}" || fail "bridge install: refusing unsafe target path: ${target}"
+  layer11_state_path_safe "${NIX_LAYER11_STATE_DIR}" || fail "bridge install: refusing unsafe state dir: ${NIX_LAYER11_STATE_DIR}"
+
+  if [ -e "${target}" ] || [ -L "${target}" ]; then
+    layer11_owns_bridge "${name}" || fail "bridge install: target exists and is not owned by Layer 11: ${target}"
+  fi
+
+  command_line=$(layer11_command_line "$@") || fail "bridge install: could not encode guest command"
+  mkdir -p "${NIX_LAYER11_BIN_DIR}" "${metadata_dir}"
+  tmp_target="${target}.tmp.$$"
+  cat >"${tmp_target}" <<EOF
+#!/bin/sh
+set -eu
+exec /usr/bin/nixctl bridge run ${name}
+EOF
+  chmod 0755 "${tmp_target}"
+  mv -f "${tmp_target}" "${target}"
+
+  {
+    printf 'name=%s\n' "${name}"
+    printf 'target=%s\n' "${target}"
+    printf 'guest_root=%s\n' "${NIX_LAYER10_GUEST_ROOT}"
+    date -u '+installed_at=%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf 'installed_at=unknown\n'
+  } >"${metadata}"
+  printf '%s\n' "${command_line}" >"${command_file}"
+  info "Layer 11 bridge installed: ${target}"
+}
+
+cmd_bridge_remove() {
+  name=${1:-}
+  [ -n "${name}" ] || fail "bridge remove: missing bridge name"
+  layer11_bridge_name_valid "${name}" || fail "bridge remove: unsafe bridge name: ${name}"
+  target=$(layer11_bridge_target "${name}")
+  metadata_dir=$(layer11_bridge_dir "${name}")
+  layer11_target_path_safe "${target}" || fail "bridge remove: refusing unsafe target path: ${target}"
+  layer11_state_path_safe "${NIX_LAYER11_STATE_DIR}" || fail "bridge remove: refusing unsafe state dir: ${NIX_LAYER11_STATE_DIR}"
+  layer11_owns_bridge "${name}" || fail "bridge remove: bridge is not Layer 11-owned: ${name}"
+  rm -f "${target}"
+  rm -rf "${metadata_dir}"
+  info "Layer 11 bridge removed: ${name}"
+}
+
 cmd_bridge() {
-  [ $# -gt 0 ] || fail "bridge: missing action (status, preflight)"
+  [ $# -gt 0 ] || fail "bridge: missing action (status, preflight, install, remove)"
   action=$1
   shift
   case "${action}" in
@@ -1612,6 +1729,12 @@ cmd_bridge() {
       ;;
     preflight|plan)
       cmd_bridge_preflight "$@"
+      ;;
+    install)
+      cmd_bridge_install "$@"
+      ;;
+    remove|uninstall)
+      cmd_bridge_remove "$@"
       ;;
     *)
       fail "bridge: unknown action: ${action}"
