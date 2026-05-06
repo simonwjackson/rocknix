@@ -41,6 +41,21 @@ Layer 10 distinguishes rootfs shape before choosing operations:
 
 A proof-mode root must not be advertised as a long-running booted guest. `nixctl guest start` must refuse proof-mode roots with a clear message and direct the operator to `nixctl guest run` or `nixctl guest shell`.
 
+## Layer 10b bootable rootfs artifact boundary
+
+Layer 10b is the bootable-rootfs validation increment for Layer 10. It exists to prove that `start` and `stop` work with a real container-style guest rootfs before any later layer exposes guest SSH, persistent services, running-guest bridges, autostart, graphics, audio, input, or host UI passthrough.
+
+A Layer 10b hardware-Go artifact must be:
+
+- a NixOS/container-style rootfs intended for `systemd-nspawn --boot`
+- shaped with an executable init/systemd entry point such as `/sbin/init`, `/init`, `/usr/lib/systemd/systemd`, or `/lib/systemd/systemd`
+- self-contained for the first hardware validation; it must not depend on binding host `/nix` or `/storage/.nix-root` as guest `/nix`
+- imported under the configured guest root, defaulting to `/storage/machines/rocknix-guest`
+- recorded in Layer 10 metadata with source/provenance, sha256, imported timestamp, and rootfs mode
+- headless and non-network-exposed by default; no guest SSH, password login, default credentials, graphical session, audio service, input service, or host UI integration may be required for bootable-mode Go
+
+A minimal init fixture or shell-script boot fixture may be used for tests, but it is not sufficient hardware evidence for bootable-mode Go. Proof-mode roots remain non-bootable even if they can run `nixctl guest run` successfully.
+
 ## Default paths
 
 Default guest root:
@@ -166,6 +181,6 @@ Bootable-mode Layer 10 is Go only if hardware validation additionally proves:
 - `nixctl guest stop` leaves no guest process behind
 - `nixctl guest cleanup` removes only guest-owned state
 
-Bootable-mode Go is deferred until a real bootable guest rootfs artifact exists. Proof-mode Go must not be treated as evidence that persistent guest services, guest SSH, autostart, graphics/audio/input passthrough, or service bridges are safe.
+Bootable-mode Go is deferred until a real Layer 10b bootable guest rootfs artifact exists and records provenance/checksum metadata. Proof-mode Go and fixture bootable tests must not be treated as evidence that persistent guest services, guest SSH, autostart, graphics/audio/input passthrough, or service bridges are safe.
 
 Any autostart, host service takeover, forbidden passthrough dependency, unsafe cleanup boundary, or guest process left running after stop is a No-Go for the affected scope until documented and fixed.
