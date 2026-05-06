@@ -391,7 +391,7 @@ flowchart TB
 **Verification:**
 - Hardware operators have one repeatable command path per smoke mode and do not need to assemble ad hoc process cleanup commands.
 
-- [ ] **Unit 6: Update documentation, Go/No-Go decision, and Layer 11 handoff**
+- [ ] **Unit 6: Update documentation, Go/No-Go decision, and Layer 11 handoff** *(implementation docs updated; hardware Go/No-Go remains pending rebuilt image validation)*
 
 **Goal:** Record what Layer 10 now supports, what was hardware-validated, what remains out of scope, and what evidence is required before moving to guest-backed services or SSH experiments.
 

@@ -660,6 +660,43 @@ Layer 10 now has an implementation plan and lifecycle contract:
 
 The Layer 10 boundary separates proof roots from bootable roots. The Layer 9 minimal nix+bash rootfs supports bounded `nixctl guest run` / `nixctl guest shell` style operations, but `nixctl guest start` must refuse it as non-bootable. Long-running guest start/stop is only for a bootable container-style rootfs, remains manual, uses standalone `systemd-nspawn --register=no`, and must not enable a unit by default.
 
+Implemented Layer 10 command surface on the feature branch:
+
+```text
+nixctl guest status
+nixctl guest preflight
+nixctl guest init --proof
+nixctl guest run <command>
+nixctl guest shell
+nixctl guest start
+nixctl guest stop
+nixctl guest cleanup --yes
+```
+
+Proof-mode roots support `init --proof`, `run`, `shell`, and `cleanup`. Bootable roots support manual `start`/`stop` through a disabled storage-local unit with conservative defaults:
+
+```text
+CPUWeight=1
+IOWeight=1
+MemoryMax=1G
+TasksMax=512
+ExecStart=/usr/bin/systemd-nspawn --boot --register=no --directory=/storage/machines/rocknix-guest
+```
+
+Layer 10 opt-in hardware smoke modes:
+
+```text
+LAYER10_SMOKE=proof \
+LAYER10_GUEST_ROOT=/storage/machines/rocknix-guest \
+projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
+
+LAYER10_SMOKE=bootable \
+LAYER10_GUEST_ROOT=/storage/machines/rocknix-guest \
+projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-smoke.sh
+```
+
+Current validation status: static and fixture runtime checks pass in-repo. Hardware validation still requires a rebuilt image that includes the Layer 10 `nixctl`/`nix-doctor` changes. Do not mark Layer 10 Go until the image boots on `thor`, default boot has no running/enabled guest, proof-mode smoke passes, bootable-mode smoke is either passed with a real bootable rootfs or explicitly deferred, and SSH/Sway/EmulationStation/Layers 4/8 remain healthy.
+
 Layer 10 still does not own host SSH, Sway, EmulationStation, Steam/FEX, update, ROM/save state, GPU, audio, or input. Those remain ROCKNIX-owned or later bridge-layer work.
 
 The remaining future layers below are directional only. They are not implemented and not validated on SM8550. Each must get its own plan before device work begins. ROCKNIX remains the host OS in every case and continues to own boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
