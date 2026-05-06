@@ -67,6 +67,10 @@ NIX_LAYER10_SYSTEMD_DIR="${NIX_LAYER10_SYSTEMD_DIR:-}"
 NIX_LAYER10_SKIP_KERNEL_CHECK="${NIX_LAYER10_SKIP_KERNEL_CHECK:-${NIX_LAYER9_SKIP_KERNEL_CHECK}}"
 NIX_LAYER10_TIMEOUT="${NIX_LAYER10_TIMEOUT:-45}"
 NIX_LAYER10_LOG="${NIX_LAYER10_LOG:-/tmp/nix-integration-layer10-guest.log}"
+NIX_LAYER10_CPU_WEIGHT="${NIX_LAYER10_CPU_WEIGHT:-1}"
+NIX_LAYER10_IO_WEIGHT="${NIX_LAYER10_IO_WEIGHT:-1}"
+NIX_LAYER10_MEMORY_MAX="${NIX_LAYER10_MEMORY_MAX:-1G}"
+NIX_LAYER10_TASKS_MAX="${NIX_LAYER10_TASKS_MAX:-512}"
 NIX_LAYER10_NIX_BIN="${NIX_LAYER10_NIX_BIN:-${NIX_DEFAULT_PROFILE_BIN}/nix}"
 NIX_LAYER10_NIX_STORE_BIN="${NIX_LAYER10_NIX_STORE_BIN:-${NIX_DEFAULT_PROFILE_BIN}/nix-store}"
 NIX_LAYER10_BASH_BIN="${NIX_LAYER10_BASH_BIN:-}"
@@ -106,7 +110,7 @@ Subcommands:
                          Actions: status, preflight, enable, disable, rollback.
   guest <action>         Manage Layer 10 nspawn guest operations.
                          Actions: status, preflight, init --proof, run <cmd>,
-                         shell, cleanup [--yes].
+                         shell, start, stop, cleanup [--yes].
   help, -h, --help       This message.
 
 Environment overrides (defaults shown):
@@ -125,6 +129,7 @@ Environment overrides (defaults shown):
   NIX_LAYER10_GUEST_ROOT ${NIX_LAYER10_GUEST_ROOT}
   NIX_LAYER10_UNIT_NAME  ${NIX_LAYER10_UNIT_NAME}
   NIX_LAYER10_TIMEOUT    ${NIX_LAYER10_TIMEOUT}
+  NIX_LAYER10_MEMORY_MAX ${NIX_LAYER10_MEMORY_MAX}
   NIX_TARBALL_URL        ${NIX_TARBALL_URL}
   NIX_TARBALL_SHA256     ${NIX_TARBALL_SHA256}
   NIX_FORCE              Set to 1 to override safety checks (rare)
@@ -821,6 +826,7 @@ print_layer10_status() {
   echo "  state dir:  ${NIX_LAYER10_STATE_DIR}"
   echo "  unit:       ${unit_path}"
   echo "  unit run:   $(systemctl_state "${NIX_LAYER10_UNIT_NAME}")"
+  echo "  resources:  CPUWeight=${NIX_LAYER10_CPU_WEIGHT} IOWeight=${NIX_LAYER10_IO_WEIGHT} MemoryMax=${NIX_LAYER10_MEMORY_MAX} TasksMax=${NIX_LAYER10_TASKS_MAX}"
   if layer10_running; then
     echo "  running:    yes"
   else
@@ -1375,6 +1381,74 @@ cmd_guest_shell() {
   cmd_guest_run /bin/sh "$@"
 }
 
+layer10_unit_dir() {
+  if [ -n "${NIX_LAYER10_SYSTEMD_DIR}" ]; then
+    echo "${NIX_LAYER10_SYSTEMD_DIR}"
+  else
+    echo /storage/.config/system.d
+  fi
+}
+
+layer10_write_unit() {
+  unit_dir=$(layer10_unit_dir)
+  mkdir -p "${unit_dir}"
+  unit_path="${unit_dir}/${NIX_LAYER10_UNIT_NAME}"
+  cat >"${unit_path}" <<EOF
+[Unit]
+Description=ROCKNIX Layer 10 nspawn guest
+Documentation=internal:projects/ROCKNIX/packages/tools/nix-integration/docs/layer10-guest-lifecycle-contract.md
+RequiresMountsFor=/storage
+After=nix.mount
+
+[Service]
+Type=simple
+KillMode=mixed
+Delegate=yes
+TasksMax=${NIX_LAYER10_TASKS_MAX}
+CPUWeight=${NIX_LAYER10_CPU_WEIGHT}
+IOWeight=${NIX_LAYER10_IO_WEIGHT}
+MemoryMax=${NIX_LAYER10_MEMORY_MAX}
+ExecStart=${NIX_LAYER10_NSPAWN_BIN} --boot --register=no --directory=${NIX_LAYER10_GUEST_ROOT}
+EOF
+  echo "${unit_path}"
+}
+
+cmd_guest_start() {
+  cmd_guest_preflight
+  mode=$(layer10_rootfs_mode)
+  [ "${mode}" = "bootable" ] || fail "guest start: rootfs mode is ${mode}; start requires bootable rootfs (use guest run/shell for proof roots)"
+  if layer10_running; then
+    info "Layer 10 guest already running"
+    return 0
+  fi
+  systemctl_available || fail "guest start requires systemctl"
+  unit_path=$(layer10_write_unit)
+  info "Starting Layer 10 bootable guest with disabled unit: ${unit_path}"
+  "${NIX_SYSTEMCTL}" daemon-reload >/dev/null 2>&1 || true
+  layer10_write_state starting
+  if "${NIX_SYSTEMCTL}" start "${NIX_LAYER10_UNIT_NAME}"; then
+    layer10_write_state running
+    info "Layer 10 guest started: ${NIX_LAYER10_UNIT_NAME}"
+  else
+    layer10_write_state failed
+    fail "guest start failed; state marked failed"
+  fi
+}
+
+cmd_guest_stop() {
+  if systemctl_available; then
+    "${NIX_SYSTEMCTL}" stop "${NIX_LAYER10_UNIT_NAME}" >/dev/null 2>&1 || true
+  else
+    note "systemctl unavailable; clearing Layer 10 running metadata only"
+  fi
+  layer10_write_state stopped
+  if have ps && ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${NIX_LAYER10_GUEST_ROOT}" >/dev/null 2>&1; then
+    layer10_write_state failed
+    fail "guest stop: nspawn process still appears to reference ${NIX_LAYER10_GUEST_ROOT}"
+  fi
+  info "Layer 10 guest stopped"
+}
+
 layer10_cleanup_path_safe() {
   path=$1
   real=$(canonical_path "${path}")
@@ -1426,7 +1500,7 @@ cmd_guest_cleanup() {
 }
 
 cmd_guest() {
-  [ $# -gt 0 ] || fail "guest: missing action (status, preflight, init, run, shell, cleanup)"
+  [ $# -gt 0 ] || fail "guest: missing action (status, preflight, init, run, shell, start, stop, cleanup)"
   action=$1
   shift
   case "${action}" in
@@ -1444,6 +1518,12 @@ cmd_guest() {
       ;;
     shell)
       cmd_guest_shell "$@"
+      ;;
+    start)
+      cmd_guest_start "$@"
+      ;;
+    stop)
+      cmd_guest_stop "$@"
       ;;
     cleanup)
       cmd_guest_cleanup "$@"

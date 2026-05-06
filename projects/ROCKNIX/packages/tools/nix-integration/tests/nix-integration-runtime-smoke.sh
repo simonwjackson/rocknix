@@ -114,6 +114,53 @@ if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
   exit 1
 fi
 grep -q 'guest preflight failed: available: guest root missing' /tmp/nix-layer10-missing-preflight.log
+FAKE_LAYER10_SYSTEMCTL="${TMP_DIR}/systemctl-layer10"
+cat >"${FAKE_LAYER10_SYSTEMCTL}" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"${NIX_SYSTEMCTL_LOG}"
+case "$1" in
+  is-active) echo inactive; exit 3 ;;
+  daemon-reload|start|stop) exit 0 ;;
+  enable) exit 99 ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod 0755 "${FAKE_LAYER10_SYSTEMCTL}"
+if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+  NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-proof-root" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-start-proof-state" \
+  NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  NIX_SYSTEMCTL="${FAKE_LAYER10_SYSTEMCTL}" \
+  NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer10-proof.log" \
+  "${PKG_DIR}/scripts/nixctl" guest start >/tmp/nix-layer10-proof-start.log 2>&1; then
+  echo 'expected Layer 10 start to refuse proof rootfs' >&2
+  exit 1
+fi
+grep -q 'start requires bootable rootfs' /tmp/nix-layer10-proof-start.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-boot-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-start-state" \
+NIX_LAYER10_SYSTEMD_DIR="${TMP_DIR}/layer10-systemd" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_SYSTEMCTL="${FAKE_LAYER10_SYSTEMCTL}" \
+NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer10.log" \
+  "${PKG_DIR}/scripts/nixctl" guest start >/tmp/nix-layer10-start.log
+[ -f "${TMP_DIR}/layer10-systemd/rocknix-guest.service" ]
+grep -q -- '--register=no' "${TMP_DIR}/layer10-systemd/rocknix-guest.service"
+grep -q 'CPUWeight=1' "${TMP_DIR}/layer10-systemd/rocknix-guest.service"
+! grep -q '^\[Install\]' "${TMP_DIR}/layer10-systemd/rocknix-guest.service"
+grep -q '^start rocknix-guest.service' "${TMP_DIR}/systemctl-layer10.log"
+! grep -q '^enable' "${TMP_DIR}/systemctl-layer10.log"
+grep -q 'running' "${TMP_DIR}/layer10-start-state/state"
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-boot-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-start-state" \
+NIX_LAYER10_SYSTEMD_DIR="${TMP_DIR}/layer10-systemd" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_SYSTEMCTL="${FAKE_LAYER10_SYSTEMCTL}" \
+NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer10.log" \
+  "${PKG_DIR}/scripts/nixctl" guest stop >/tmp/nix-layer10-stop.log
+grep -q '^stop rocknix-guest.service' "${TMP_DIR}/systemctl-layer10.log"
+grep -q 'stopped' "${TMP_DIR}/layer10-start-state/state"
 mkdir -p "${TMP_DIR}/nix/store/fake-nix/bin" "${TMP_DIR}/nix/store/fake-nix-store/bin" "${TMP_DIR}/nix/store/fake-bash/bin"
 printf '#!/bin/sh\necho nix-fake\n' >"${TMP_DIR}/nix/store/fake-nix/bin/nix"
 cat >"${TMP_DIR}/nix/store/fake-nix-store/bin/nix-store" <<EOF

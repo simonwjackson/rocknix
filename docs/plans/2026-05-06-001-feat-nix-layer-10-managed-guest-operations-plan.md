@@ -312,7 +312,7 @@ flowchart TB
 **Verification:**
 - A Layer 9 proof rootfs can be initialized, used for a one-shot `nix --version` style command, and cleaned up through `nixctl guest` without manual nspawn commands.
 
-- [ ] **Unit 4: Add bootable guest unit generation, start, stop, and resource controls**
+- [x] **Unit 4: Add bootable guest unit generation, start, stop, and resource controls**
 
 **Goal:** Support long-running bootable guest lifecycle while keeping the unit disabled, manually started, resource-bounded, and easy to stop.
 
