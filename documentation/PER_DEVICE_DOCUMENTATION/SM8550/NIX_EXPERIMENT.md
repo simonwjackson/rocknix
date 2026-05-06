@@ -716,6 +716,13 @@ Bootable-mode `nixctl guest start` / `stop` remains deferred. The current `/stor
 
 A narrow Layer 11 live prototype was also performed: a temporary `/storage/bin/layer11-proof` host bridge invoked `nixctl guest run /usr/bin/nix --version`, returned `nix (Nix) 2.34.7`, left Layer 10 at `running: no`, and was deleted. This proves the one-shot bridge shape only; it is not a Go for persistent Layer 11 services.
 
+Layer 11 one-shot bridge implementation is tracked separately:
+
+- Plan: `docs/plans/2026-05-06-002-feat-nix-layer-11-one-shot-guest-bridges-plan.md`
+- Contract: `projects/ROCKNIX/packages/tools/nix-integration/docs/layer11-bridge-contract.md`
+
+The first Layer 11 scope may install opt-in wrappers under `/storage/bin` that call fixed proof-mode guest commands through `nixctl guest run` and remove only Layer 11-owned wrapper/metadata state. It must refuse non-owned file conflicts and must leave Layer 10 at `running: no` after each bridge invocation.
+
 Layer 10 still does not own host SSH, Sway, EmulationStation, Steam/FEX, update, ROM/save state, GPU, audio, or input. Those remain ROCKNIX-owned or later bridge-layer work.
 
 The layer roadmap below records the current boundary. Layers 9 and 10 proof mode are implemented and hardware-validated on SM8550; Layer 10 bootable mode and Layers 11+ still require separate planning and device validation before Go. ROCKNIX remains the host OS in every case and continues to own boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
