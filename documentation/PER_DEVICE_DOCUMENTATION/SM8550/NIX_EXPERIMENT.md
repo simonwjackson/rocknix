@@ -756,6 +756,32 @@ projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-runtime-sm
 
 The smoke is intentionally bounded: it requires an executable `systemd-nspawn`, refuses a missing/non-proof-ready rootfs before starting anything, runs a one-shot guest proof command with `timeout`, verifies no enabled guest unit exists, and fails if a guest process remains after cleanup.
 
+Layer 9 image validation on `thor` found one packaging mistake before the Go image:
+
+```text
+run_id=25382377134
+BUILD_ID=d68be718902cc45f5fda334c92a45b3be176574e
+result: booted, host healthy, but /usr/bin/systemd-nspawn missing
+root cause: patched packages/sysutils/systemd/package.mk, but ROCKNIX uses projects/ROCKNIX/packages/sysutils/systemd/package.mk
+```
+
+After moving the gate to the ROCKNIX systemd override, the corrected image passed the Layer 9 image-support check:
+
+```text
+run_id=25399423558
+BUILD_ID=a148296ab771a85a5fbadb6d11e07d37379ad0ae
+OS_VERSION=20260506
+BUILD_BRANCH=feat/nix-layer-9-nspawn-guest-proof
+ABL precheck: abl_a MATCH, abl_b MATCH (no flash)
+/usr/bin/systemd-nspawn --version -> systemd 255 (255.8)
+/usr/lib/systemd/system/systemd-nspawn@.service -> present
+systemctl is-enabled systemd-nspawn@rocknix-guest.service -> disabled
+nixctl status -> Layer 9 state: available; guest root missing as expected
+nix-doctor --offline -> passed; Layer 9 available; Layers 4/8 healthy
+```
+
+No guest has been staged or started yet. Unit 6 is the manual guest proof.
+
 The remaining future layers below are directional only. They are not implemented and not validated on SM8550. Each must get its own plan before device work begins. ROCKNIX remains the host OS in every case and continues to own boot, kernel, firmware, default UI startup, Steam/FEX integration, and image updates.
 
 - **Layer 9: NixOS/nspawn guest proof.** Run a storage-backed NixOS-ish guest under `systemd-nspawn` with its own `nix-daemon`. Manual start only; no boot autostart; stop rule on any impact to SSH, Sway, EmulationStation, Steam/FEX, host updates, or recovery.

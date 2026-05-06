@@ -332,7 +332,7 @@ Failure/fallback matrix:
 **Verification:**
 - Hardware smoke can be repeated on `thor` without reflashing or deleting host Nix state.
 
-- [ ] **Unit 5: Build and deploy a Layer 9-enabled SM8550 image**
+- [x] **Unit 5: Build and deploy a Layer 9-enabled SM8550 image**
 
 **Goal:** Produce the image that preserves `systemd-nspawn` and validate that default boot remains unchanged.
 
