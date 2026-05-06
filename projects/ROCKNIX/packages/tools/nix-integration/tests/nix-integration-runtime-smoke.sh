@@ -111,6 +111,7 @@ NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
 NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
 NIX_LAYER11_BIN_DIR="${TMP_DIR}/layer11-bin" \
 NIX_LAYER11_STATE_DIR="${TMP_DIR}/layer11-state" \
+NIX_LAYER11_NIXCTL_BIN="${PKG_DIR}/scripts/nixctl" \
   "${PKG_DIR}/scripts/nixctl" bridge install layer11-smoke -- /usr/bin/nix --version >/tmp/nix-layer11-install.log
 [ -x "${TMP_DIR}/layer11-bin/layer11-smoke" ]
 grep -q 'bridge run layer11-smoke' "${TMP_DIR}/layer11-bin/layer11-smoke"
@@ -122,8 +123,19 @@ NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
 NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
 NIX_LAYER11_BIN_DIR="${TMP_DIR}/layer11-bin" \
 NIX_LAYER11_STATE_DIR="${TMP_DIR}/layer11-state" \
+NIX_LAYER11_NIXCTL_BIN="${PKG_DIR}/scripts/nixctl" \
   "${PKG_DIR}/scripts/nixctl" bridge install layer11-smoke -- /usr/bin/nix-store --version >/tmp/nix-layer11-reinstall.log
 grep -q "'/usr/bin/nix-store' '--version'" "${TMP_DIR}/layer11-state/bridges/layer11-smoke/command"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-proof-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER10_LOG="${TMP_DIR}/layer11-bridge-guest.log" \
+NIX_LAYER11_BIN_DIR="${TMP_DIR}/layer11-bin" \
+NIX_LAYER11_STATE_DIR="${TMP_DIR}/layer11-state" \
+  "${TMP_DIR}/layer11-bin/layer11-smoke" >/tmp/nix-layer11-wrapper-run.log
+grep -q 'systemd-nspawn smoke-test' /tmp/nix-layer11-wrapper-run.log
+grep -q 'proof-ready' "${TMP_DIR}/layer10-state/state"
 printf 'user-owned\n' >"${TMP_DIR}/layer11-bin/layer11-conflict"
 if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
   NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-proof-root" \
@@ -131,6 +143,7 @@ if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
   NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
   NIX_LAYER11_BIN_DIR="${TMP_DIR}/layer11-bin" \
   NIX_LAYER11_STATE_DIR="${TMP_DIR}/layer11-state" \
+  NIX_LAYER11_NIXCTL_BIN="${PKG_DIR}/scripts/nixctl" \
   "${PKG_DIR}/scripts/nixctl" bridge install layer11-conflict -- /usr/bin/nix --version >/tmp/nix-layer11-conflict.log 2>&1; then
   echo 'expected Layer 11 install to refuse non-owned conflict' >&2
   exit 1
@@ -487,8 +500,13 @@ if [ "${LAYER10_SMOKE:-0}" = "1" ] || [ "${LAYER10_SMOKE:-0}" = "proof" ] || [ "
 else
   LAYER10_REQUESTED=0
 fi
+if [ "${LAYER11_SMOKE:-0}" = "1" ]; then
+  LAYER11_REQUESTED=1
+else
+  LAYER11_REQUESTED=0
+fi
 
-if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ]; then
+if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ]; then
   printf 'nix-integration Layer 4 smoke: skipped (set LAYER4_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 5 smoke: skipped (set LAYER5_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 6 smoke: skipped (set LAYER6_SMOKE=1 to enable)\n'
@@ -496,6 +514,7 @@ if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LA
   printf 'nix-integration Layer 8 smoke: skipped (set LAYER8_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 9 smoke: skipped (set LAYER9_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 10 smoke: skipped (set LAYER10_SMOKE=proof or bootable to enable)\n'
+  printf 'nix-integration Layer 11 smoke: skipped (set LAYER11_SMOKE=1 to enable)\n'
   exit 0
 fi
 
@@ -865,7 +884,7 @@ fi
 # Requires Layer 4 real Nix, image-time daemon build identities/config, and
 # opt-in daemon units. Default CI never starts systemd units.
 if [ "${LAYER8_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ]; then
+  if [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ]; then
     exit 0
   fi
 else
@@ -951,7 +970,7 @@ fi
 # on hardware. Requires a Layer 9-enabled image and a pre-staged guest rootfs.
 # The smoke does not download or generate the rootfs and never enables a unit.
 if [ "${LAYER9_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER10_REQUESTED}" != "1" ]; then
+  if [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ]; then
     exit 0
   fi
 else
@@ -1036,8 +1055,10 @@ fi
 # start/stop with resource-bounded disabled unit generation. Default CI never
 # starts a real nspawn guest.
 if [ "${LAYER10_SMOKE:-0}" != "1" ] && [ "${LAYER10_SMOKE:-0}" != "proof" ] && [ "${LAYER10_SMOKE:-0}" != "bootable" ]; then
-  exit 0
-fi
+  if [ "${LAYER11_REQUESTED}" != "1" ]; then
+    exit 0
+  fi
+else
 
 L10_LOG=/tmp/nix-integration-layer10-smoke.log
 L10_MODE="${LAYER10_SMOKE:-proof}"
@@ -1145,3 +1166,73 @@ NIX_LAYER10_STATE_DIR="${L10_STATE}" \
 
 printf 'nix-integration Layer 10 smoke passed (%s)\n' "${L10_MODE}"
 printf 'log: %s\n' "${L10_LOG}"
+fi
+
+# ---- Layer 11 device-side smoke (opt-in) -----------------------------------
+# Set LAYER11_SMOKE=1 to validate one-shot host -> guest bridge execution on
+# hardware. Requires Layer 10 proof-mode readiness and removes the temporary
+# bridge before exiting.
+if [ "${LAYER11_SMOKE:-0}" != "1" ]; then
+  exit 0
+fi
+
+L11_LOG=/tmp/nix-integration-layer11-smoke.log
+L11_NAME="${LAYER11_BRIDGE_NAME:-layer11-nix-version}"
+L11_ROOT="${LAYER11_GUEST_ROOT:-${NIX_LAYER10_GUEST_ROOT:-/storage/machines/rocknix-guest}}"
+L11_STATE="${LAYER11_STATE_DIR:-${NIX_LAYER11_STATE_DIR:-/storage/.config/nix-integration/layer11}}"
+L11_BIN_DIR="${LAYER11_BIN_DIR:-${NIX_LAYER11_BIN_DIR:-/storage/bin}}"
+rm -f "${L11_LOG}"
+
+log11() {
+  printf '[layer11-smoke] %s\n' "$*"
+  printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" >>"${L11_LOG}"
+}
+
+layer11_guest_running() {
+  ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${L11_ROOT}" >/dev/null 2>&1
+}
+
+log11 'pre-flight: Layer 11 bridge diagnostics'
+NIX_LAYER10_GUEST_ROOT="${L11_ROOT}" \
+NIX_LAYER11_STATE_DIR="${L11_STATE}" \
+NIX_LAYER11_BIN_DIR="${L11_BIN_DIR}" \
+  "${NIXCTL}" bridge status >>"${L11_LOG}" 2>&1 \
+  || { echo 'FAIL: nixctl bridge status failed during Layer 11 preflight' >&2; exit 1; }
+NIX_LAYER10_GUEST_ROOT="${L11_ROOT}" \
+NIX_LAYER11_STATE_DIR="${L11_STATE}" \
+NIX_LAYER11_BIN_DIR="${L11_BIN_DIR}" \
+  "${NIXCTL}" bridge preflight "${L11_NAME}" >>"${L11_LOG}" 2>&1 \
+  || { echo 'FAIL: nixctl bridge preflight failed during Layer 11 smoke' >&2; exit 1; }
+
+log11 'install: temporary one-shot bridge'
+NIX_LAYER10_GUEST_ROOT="${L11_ROOT}" \
+NIX_LAYER11_STATE_DIR="${L11_STATE}" \
+NIX_LAYER11_BIN_DIR="${L11_BIN_DIR}" \
+  "${NIXCTL}" bridge install "${L11_NAME}" -- /usr/bin/nix --version >>"${L11_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 11 bridge install failed' >&2; exit 1; }
+
+log11 'run: host bridge invokes guest-backed command'
+NIX_LAYER10_GUEST_ROOT="${L11_ROOT}" \
+NIX_LAYER11_STATE_DIR="${L11_STATE}" \
+NIX_LAYER11_BIN_DIR="${L11_BIN_DIR}" \
+  "${L11_BIN_DIR}/${L11_NAME}" >>"${L11_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 11 bridge run failed' >&2; exit 1; }
+grep -q 'nix (Nix)' "${L11_LOG}" \
+  || { echo 'FAIL: Layer 11 bridge output did not include nix version' >&2; exit 1; }
+
+log11 'cleanup: verify no guest process remains and remove bridge'
+if layer11_guest_running; then
+  pkill -f "systemd-nspawn.*${L11_ROOT}" 2>/dev/null || true
+  sleep 1
+fi
+layer11_guest_running \
+  && { echo 'FAIL: Layer 11 bridge left guest process running' >&2; exit 1; }
+NIX_LAYER11_STATE_DIR="${L11_STATE}" \
+NIX_LAYER11_BIN_DIR="${L11_BIN_DIR}" \
+  "${NIXCTL}" bridge remove "${L11_NAME}" >>"${L11_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 11 bridge remove failed' >&2; exit 1; }
+[ ! -e "${L11_BIN_DIR}/${L11_NAME}" ] \
+  || { echo 'FAIL: Layer 11 bridge wrapper survived cleanup' >&2; exit 1; }
+
+printf 'nix-integration Layer 11 smoke passed\n'
+printf 'log: %s\n' "${L11_LOG}"

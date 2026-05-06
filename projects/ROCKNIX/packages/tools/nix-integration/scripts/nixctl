@@ -76,6 +76,7 @@ NIX_LAYER10_NIX_STORE_BIN="${NIX_LAYER10_NIX_STORE_BIN:-${NIX_DEFAULT_PROFILE_BI
 NIX_LAYER10_BASH_BIN="${NIX_LAYER10_BASH_BIN:-}"
 NIX_LAYER11_STATE_DIR="${NIX_LAYER11_STATE_DIR:-/storage/.config/nix-integration/layer11}"
 NIX_LAYER11_BIN_DIR="${NIX_LAYER11_BIN_DIR:-/storage/bin}"
+NIX_LAYER11_NIXCTL_BIN="${NIX_LAYER11_NIXCTL_BIN:-/usr/bin/nixctl}"
 
 # ---- SSL ------------------------------------------------------------------
 # Pre-set for the upstream installer so it skips its cacert derivation install
@@ -115,7 +116,7 @@ Subcommands:
                          shell, start, stop, cleanup [--yes].
   bridge <action>        Manage Layer 11 one-shot guest-backed bridges.
                          Actions: status, preflight <name>, install <name> -- <cmd>,
-                         remove <name>.
+                         run <name>, remove <name>.
   help, -h, --help       This message.
 
 Environment overrides (defaults shown):
@@ -137,6 +138,7 @@ Environment overrides (defaults shown):
   NIX_LAYER10_MEMORY_MAX ${NIX_LAYER10_MEMORY_MAX}
   NIX_LAYER11_STATE_DIR  ${NIX_LAYER11_STATE_DIR}
   NIX_LAYER11_BIN_DIR    ${NIX_LAYER11_BIN_DIR}
+  NIX_LAYER11_NIXCTL_BIN ${NIX_LAYER11_NIXCTL_BIN}
   NIX_TARBALL_URL        ${NIX_TARBALL_URL}
   NIX_TARBALL_SHA256     ${NIX_TARBALL_SHA256}
   NIX_FORCE              Set to 1 to override safety checks (rare)
@@ -1690,7 +1692,7 @@ cmd_bridge_install() {
   cat >"${tmp_target}" <<EOF
 #!/bin/sh
 set -eu
-exec /usr/bin/nixctl bridge run ${name}
+exec ${NIX_LAYER11_NIXCTL_BIN} bridge run ${name}
 EOF
   chmod 0755 "${tmp_target}"
   mv -f "${tmp_target}" "${target}"
@@ -1719,8 +1721,21 @@ cmd_bridge_remove() {
   info "Layer 11 bridge removed: ${name}"
 }
 
+cmd_bridge_run() {
+  name=${1:-}
+  [ -n "${name}" ] || fail "bridge run: missing bridge name"
+  layer11_bridge_name_valid "${name}" || fail "bridge run: unsafe bridge name: ${name}"
+  layer11_owns_bridge "${name}" || fail "bridge run: bridge is not Layer 11-owned: ${name}"
+  command_file="$(layer11_bridge_dir "${name}")/command"
+  [ -s "${command_file}" ] || fail "bridge run: command metadata missing: ${name}"
+  cmd_bridge_preflight "${name}"
+  command_line=$(awk 'NR==1 {print; exit}' "${command_file}")
+  eval "set -- ${command_line}"
+  cmd_guest_run "$@"
+}
+
 cmd_bridge() {
-  [ $# -gt 0 ] || fail "bridge: missing action (status, preflight, install, remove)"
+  [ $# -gt 0 ] || fail "bridge: missing action (status, preflight, install, run, remove)"
   action=$1
   shift
   case "${action}" in
@@ -1732,6 +1747,9 @@ cmd_bridge() {
       ;;
     install)
       cmd_bridge_install "$@"
+      ;;
+    run|test)
+      cmd_bridge_run "$@"
       ;;
     remove|uninstall)
       cmd_bridge_remove "$@"
