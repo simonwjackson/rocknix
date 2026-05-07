@@ -81,6 +81,12 @@ NIX_LAYER11_NIXCTL_BIN="${NIX_LAYER11_NIXCTL_BIN:-/usr/bin/nixctl}"
 NIX_LAYER12_STATE_DIR="${NIX_LAYER12_STATE_DIR:-/storage/.config/nix-integration/layer12}"
 NIX_LAYER12_DEFAULT_SSH_PORT="${NIX_LAYER12_DEFAULT_SSH_PORT:-2222}"
 NIX_LAYER12_AUTHORIZED_KEYS_DEST="${NIX_LAYER12_AUTHORIZED_KEYS_DEST:-/etc/ssh/authorized_keys.d/root}"
+NIX_LAYER13_STATE_DIR="${NIX_LAYER13_STATE_DIR:-/storage/.config/nix-integration/layer13}"
+NIX_LAYER13_MODULE_KIT_DIR="${NIX_LAYER13_MODULE_KIT_DIR:-/usr/lib/nix-integration/modules}"
+NIX_LAYER13_HOST_WORKSPACE="${NIX_LAYER13_HOST_WORKSPACE:-/storage/.config/nix-integration/modules/host}"
+NIX_LAYER13_HOST_MODULE="${NIX_LAYER13_HOST_MODULE:-${NIX_LAYER13_HOST_WORKSPACE}/config.nix}"
+NIX_LAYER13_GUEST_WORKSPACE="${NIX_LAYER13_GUEST_WORKSPACE:-/storage/.config/nix-integration/modules/guest}"
+NIX_LAYER13_NIX_BIN="${NIX_LAYER13_NIX_BIN:-${NIX_DEFAULT_PROFILE_BIN}/nix}"
 
 # ---- SSL ------------------------------------------------------------------
 # Pre-set for the upstream installer so it skips its cacert derivation install
@@ -122,6 +128,9 @@ Subcommands:
   bridge <action>        Manage Layer 11 one-shot guest-backed bridges.
                          Actions: status, preflight <name>, install <name> -- <cmd>,
                          run <name>, remove <name>.
+  module <action>        Manage Layer 13 declarative ROCKNIX modules.
+                         Actions: status, init, preflight [module], apply [module],
+                         deactivate.
   help, -h, --help       This message.
 
 Environment overrides (defaults shown):
@@ -147,6 +156,8 @@ Environment overrides (defaults shown):
   NIX_LAYER11_NIXCTL_BIN ${NIX_LAYER11_NIXCTL_BIN}
   NIX_LAYER12_STATE_DIR  ${NIX_LAYER12_STATE_DIR}
   NIX_LAYER12_DEFAULT_SSH_PORT ${NIX_LAYER12_DEFAULT_SSH_PORT}
+  NIX_LAYER13_STATE_DIR  ${NIX_LAYER13_STATE_DIR}
+  NIX_LAYER13_HOST_WORKSPACE ${NIX_LAYER13_HOST_WORKSPACE}
   NIX_TARBALL_URL        ${NIX_TARBALL_URL}
   NIX_TARBALL_SHA256     ${NIX_TARBALL_SHA256}
   NIX_FORCE              Set to 1 to override safety checks (rare)
@@ -1278,6 +1289,8 @@ cmd_status() {
   echo ""
   print_layer12_status
   echo ""
+  print_layer13_status
+  echo ""
 }
 
 cmd_install() {
@@ -2117,6 +2130,187 @@ cmd_guest_service() {
   esac
 }
 
+layer13_module_path_safe() {
+  path=$1
+  case "${path}" in
+    /storage/*|/tmp/*) ;;
+    *) return 1 ;;
+  esac
+  case "${path}" in
+    *' '*|*'`'*|*'"'*|*"'"*|*'|'*|*';'*|*'&'*) return 1 ;;
+  esac
+  return 0
+}
+
+layer13_name_valid() {
+  case "$1" in
+    ''|.*|*/*|*'..'*|*'|'*|*':'*|*' '*|*'`'*|*'"'*|*"'"*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+layer13_eval_manifest() {
+  module=${1:-${NIX_LAYER13_HOST_MODULE}}
+  [ -f "${module}" ] || fail "module preflight: module file missing: ${module}"
+  layer13_module_path_safe "${module}" || fail "module preflight: refusing unsafe module path: ${module}"
+  [ -d "${NIX_LAYER13_MODULE_KIT_DIR}" ] || fail "module preflight: module kit missing: ${NIX_LAYER13_MODULE_KIT_DIR}"
+  [ -x "${NIX_LAYER13_NIX_BIN}" ] || fail "module preflight: nix missing: ${NIX_LAYER13_NIX_BIN}"
+  expr="let f = builtins.getFlake \"path:${NIX_LAYER13_MODULE_KIT_DIR}\"; in (f.lib.evalRocknix { system = builtins.currentSystem; module = ${module}; }).activationManifest"
+  "${NIX_LAYER13_NIX_BIN}" --extra-experimental-features 'nix-command flakes' eval --raw --impure --expr "${expr}"
+}
+
+layer13_manifest_preflight() {
+  manifest=$1
+  [ -f "${manifest}" ] || fail "module preflight: manifest missing: ${manifest}"
+  while IFS='|' read -r kind a b c d rest; do
+    [ -n "${kind}" ] || continue
+    case "${kind}" in
+      file)
+        surface=${a}; name=${b}; source=${c}; mode=${d}
+        [ -z "${rest:-}" ] || fail "module preflight: invalid file line has too many fields: ${kind}|${a}|${b}"
+        case "${surface}" in bin|profile.d) ;; *) fail "module preflight: unsupported file surface: ${surface}" ;; esac
+        layer13_name_valid "${name}" || fail "module preflight: unsafe file target name: ${name}"
+        [ -f "${source}" ] || fail "module preflight: source missing for ${surface}/${name}: ${source}"
+        case "${mode}" in [0-7][0-7][0-7][0-7]) ;; *) fail "module preflight: invalid mode for ${surface}/${name}: ${mode}" ;; esac
+        ;;
+      bridge)
+        name=${a}; command=${b}
+        layer11_bridge_name_valid "${name}" || fail "module preflight: unsafe bridge name: ${name}"
+        [ -n "${command}" ] || fail "module preflight: bridge ${name} has empty command"
+        ;;
+      guest-ssh)
+        port=${a}; keys=${b}
+        layer12_port_valid "${port}" || fail "module preflight: refusing unsafe guest SSH port: ${port}"
+        [ "${port}" = "${NIX_LAYER12_DEFAULT_SSH_PORT}" ] || fail "module preflight: guest SSH currently supports only port ${NIX_LAYER12_DEFAULT_SSH_PORT}"
+        [ -n "${keys}" ] || fail "module preflight: guest SSH authorized_keys missing"
+        layer12_authorized_keys_path_safe "${keys}" || fail "module preflight: unsafe guest SSH authorized_keys path: ${keys}"
+        ;;
+      *) fail "module preflight: unknown manifest kind: ${kind}" ;;
+    esac
+  done <"${manifest}"
+}
+
+layer13_write_manifest() {
+  module=${1:-${NIX_LAYER13_HOST_MODULE}}
+  mkdir -p "${NIX_LAYER13_STATE_DIR}"
+  manifest="${NIX_LAYER13_STATE_DIR}/planned-manifest"
+  layer13_eval_manifest "${module}" >"${manifest}"
+  layer13_manifest_preflight "${manifest}"
+  echo "${manifest}"
+}
+
+print_layer13_status() {
+  echo "Layer 13 (declarative modules) status"
+  echo "--------------------------------------"
+  state=inactive
+  [ -f "${NIX_LAYER13_STATE_DIR}/state" ] && state=$(awk 'NR==1 {print; exit}' "${NIX_LAYER13_STATE_DIR}/state")
+  echo "  state:      ${state}"
+  echo "  state dir:  ${NIX_LAYER13_STATE_DIR}"
+  echo "  kit:        ${NIX_LAYER13_MODULE_KIT_DIR}"
+  echo "  workspace:  ${NIX_LAYER13_HOST_WORKSPACE}"
+  echo "  module:     ${NIX_LAYER13_HOST_MODULE}"
+  if [ -f "${NIX_LAYER13_STATE_DIR}/active-manifest" ]; then
+    echo "  manifest:   recorded"
+  else
+    echo "  manifest:   none"
+  fi
+  echo
+}
+
+cmd_module_status() {
+  print_layer13_status
+}
+
+cmd_module_init() {
+  mkdir -p "${NIX_LAYER13_HOST_WORKSPACE}"
+  target="${NIX_LAYER13_HOST_MODULE}"
+  [ ! -e "${target}" ] || fail "module init: refusing to overwrite existing module: ${target}"
+  src="${NIX_LAYER13_MODULE_KIT_DIR}/examples/host-tools.nix"
+  [ -f "${src}" ] || fail "module init: example missing: ${src}"
+  cp "${src}" "${target}"
+  info "Layer 13 host module workspace initialized: ${target}"
+}
+
+cmd_module_preflight() {
+  module=${1:-${NIX_LAYER13_HOST_MODULE}}
+  manifest=$(layer13_write_manifest "${module}")
+  info "Layer 13 module preflight passed"
+  note "manifest: ${manifest}"
+}
+
+cmd_module_apply() {
+  module=${1:-${NIX_LAYER13_HOST_MODULE}}
+  manifest=$(layer13_write_manifest "${module}")
+  generation=$(date -u +%Y%m%d%H%M%S 2>/dev/null || echo unknown)-$$
+  work="${NIX_LAYER13_STATE_DIR}/apply-${generation}"
+  bundle="${work}/layer6-bundle"
+  mkdir -p "${bundle}/files" "${NIX_LAYER13_STATE_DIR}"
+  : >"${bundle}/manifest"
+  cp "${manifest}" "${NIX_LAYER13_STATE_DIR}/active-manifest"
+  cp "${module}" "${NIX_LAYER13_STATE_DIR}/active-module" 2>/dev/null || true
+  while IFS='|' read -r kind a b c d rest; do
+    [ -n "${kind}" ] || continue
+    case "${kind}" in
+      file)
+        surface=${a}; name=${b}; source=${c}; mode=${d}
+        file_name="${surface}-${name}"
+        cp "${source}" "${bundle}/files/${file_name}" || fail "module apply: could not stage ${source}"
+        printf '%s|%s|files/%s|%s\n' "${surface}" "${name}" "${file_name}" "${mode}" >>"${bundle}/manifest"
+        ;;
+      bridge)
+        name=${a}; command=${b}
+        # shellcheck disable=SC2086
+        NIX_LAYER11_STATE_DIR="${NIX_LAYER13_STATE_DIR}/layer11" NIX_LAYER11_BIN_DIR="${NIX_LAYER11_BIN_DIR}" NIX_LAYER11_NIXCTL_BIN="${0}" "${0}" bridge install "${name}" -- ${command}
+        ;;
+      guest-ssh)
+        port=${a}; keys=${b}
+        "${0}" guest service enable ssh --port "${port}" --authorized-keys "${keys}"
+        ;;
+    esac
+  done <"${manifest}"
+  if [ -s "${bundle}/manifest" ]; then
+    activate_bin=$(layer6_activate_bin) || fail "module apply: nix-layer-activate not found on PATH or /usr/bin"
+    NIX_LAYER6_STATE_DIR="${NIX_LAYER13_STATE_DIR}/layer6" "${activate_bin}" activate "${bundle}"
+  fi
+  printf 'active\n' >"${NIX_LAYER13_STATE_DIR}/state"
+  info "Layer 13 module applied"
+}
+
+cmd_module_deactivate() {
+  manifest="${NIX_LAYER13_STATE_DIR}/active-manifest"
+  [ -f "${manifest}" ] || fail "module deactivate: no active manifest"
+  while IFS='|' read -r kind a b c d rest; do
+    [ -n "${kind}" ] || continue
+    case "${kind}" in
+      bridge)
+        NIX_LAYER11_STATE_DIR="${NIX_LAYER13_STATE_DIR}/layer11" NIX_LAYER11_BIN_DIR="${NIX_LAYER11_BIN_DIR}" "${0}" bridge remove "${a}" || true
+        ;;
+      guest-ssh)
+        "${0}" guest service disable ssh || true
+        ;;
+    esac
+  done <"${manifest}"
+  if activate_bin=$(layer6_activate_bin); then
+    NIX_LAYER6_STATE_DIR="${NIX_LAYER13_STATE_DIR}/layer6" "${activate_bin}" deactivate >/dev/null 2>&1 || true
+  fi
+  printf 'inactive\n' >"${NIX_LAYER13_STATE_DIR}/state"
+  info "Layer 13 module deactivated"
+}
+
+cmd_module() {
+  [ $# -gt 0 ] || fail "module: missing action (status, init, preflight, apply, deactivate)"
+  action=$1
+  shift
+  case "${action}" in
+    status) cmd_module_status "$@" ;;
+    init) cmd_module_init "$@" ;;
+    preflight|plan) cmd_module_preflight "$@" ;;
+    apply) cmd_module_apply "$@" ;;
+    deactivate|rollback) cmd_module_deactivate "$@" ;;
+    *) fail "module: unknown action: ${action}" ;;
+  esac
+}
+
 cmd_guest() {
   [ $# -gt 0 ] || fail "guest: missing action (status, preflight, init, import, run, shell, start, stop, cleanup, service)"
   action=$1
@@ -2309,6 +2503,9 @@ case "${cmd}" in
     ;;
   bridge)
     cmd_bridge "$@"
+    ;;
+  module)
+    cmd_module "$@"
     ;;
   -h|--help|help)
     usage

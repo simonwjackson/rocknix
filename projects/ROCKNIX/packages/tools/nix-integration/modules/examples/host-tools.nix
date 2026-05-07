@@ -1,10 +1,11 @@
-{ pkgs, ... }:
+{ ... }:
 
 let
-  hello = pkgs.writeShellScript "rocknix-module-hello" ''
+  hello = builtins.toFile "rocknix-module-hello" ''
+    #!/bin/sh
     echo rocknix-module-hello
   '';
-  profile = pkgs.writeText "999-rocknix-module-example" ''
+  profile = builtins.toFile "999-rocknix-module-example" ''
     export ROCKNIX_MODULE_EXAMPLE=1
   '';
 in {
