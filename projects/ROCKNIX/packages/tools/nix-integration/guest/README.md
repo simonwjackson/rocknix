@@ -1,6 +1,6 @@
 # ROCKNIX Layer 10b bootable guest rootfs
 
-This directory defines the minimal bootable guest rootfs used to validate Layer 10b on SM8550/Odin2 Portal.
+This directory defines the minimal bootable guest rootfs used to validate Layer 10b on SM8550/Odin2 Portal. The guest is authored as reusable NixOS modules under `modules/` and profiles under `profiles/`; `rocknix-guest.nix` imports the default SSH-capable profile for compatibility with existing build commands.
 
 Layer 10b is only a bootable lifecycle validation layer. The guest rootfs exists to prove that `nixctl guest start` and `nixctl guest stop` work with a real container-style rootfs under `systemd-nspawn --boot --register=no`. Layer 12 enables the guest's locked-down OpenSSH service only when host-side metadata and an operator-provided authorized-keys file are configured. It must not expose guest SSH by default, autostart, graphics, audio, input, ROM/save paths, Steam/FEX state, or host UI sockets.
 
@@ -15,6 +15,14 @@ A hardware-Go artifact must be:
 - headless and non-network-exposed by default
 - free of default passwords, password login, and shipped authorized keys
 - imported only under the configured Layer 10 guest root, normally `/storage/machines/rocknix-guest`
+
+## Module layout
+
+- `modules/base.nix` contains the headless container baseline.
+- `modules/tools.nix` contains the minimal CLI/tooling set.
+- `modules/ssh.nix` contains the locked-down Layer 12 OpenSSH config on port `2222`.
+- `profiles/minimal.nix` imports the base/tooling modules without SSH exposure.
+- `profiles/ssh.nix` imports the default Layer 10b/12 profile used by `rocknix-guest.nix`.
 
 ## Build
 
