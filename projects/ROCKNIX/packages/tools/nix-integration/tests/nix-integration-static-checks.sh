@@ -156,8 +156,15 @@ grep -q 'cmd_guest_service' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing 
 grep -q 'guest service enable ssh' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 SSH enable command"
 grep -q 'refusing unsafe port: ${port}' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 port guard"
 grep -q -- '--private-network' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing private networking for bootable guest"
-grep -q -- '--port=tcp:%s:22' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 alternate-port nspawn mapping"
+grep -q 'layer10_nspawn_network_args' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 shared-network switch"
+if grep -q -- '--port=tcp:%s:22' "${PKG_DIR}/scripts/nixctl"; then
+  fail "nixctl must not depend on systemd-nspawn --port NAT for Layer 12"
+fi
+grep -q 'currently supports only port' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing fixed guest SSH port guard"
 grep -q -- '--bind-ro=%s:%s' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 authorized-keys bind"
+grep -q 'ports = \[ 2222 \];' "${PKG_DIR}/guest/rocknix-guest.nix" || fail "guest config must listen on Layer 12 default SSH port 2222"
+grep -q 'root/etc/ssh/authorized_keys.d/root' "${PKG_DIR}/guest/flake.nix" || fail "guest rootfs must provide regular authorized_keys target for StrictModes"
+grep -q 'root/usr/bin/nix' "${PKG_DIR}/guest/flake.nix" || fail "guest rootfs must expose /usr/bin/nix for bridge/smoke contracts"
 grep -q 'check_layer12' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 12 checks"
 grep -q 'Layer 12 guest SSH eligibility' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 12 eligibility output"
 grep -q 'must not bind host port 22' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 12 port 22 guardrail"

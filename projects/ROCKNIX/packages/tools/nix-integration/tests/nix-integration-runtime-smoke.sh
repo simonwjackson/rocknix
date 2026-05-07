@@ -386,6 +386,16 @@ if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
   exit 1
 fi
 grep -q 'refusing unsafe port: 22' /tmp/nix-layer12-enable-port22.log
+if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+  NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+  NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service enable ssh --port 2223 --authorized-keys "${TMP_DIR}/storage-keys/authorized_keys" >/tmp/nix-layer12-enable-port2223.log 2>&1; then
+  echo 'expected Layer 12 SSH enable to reject non-default port until guest config is dynamic' >&2
+  exit 1
+fi
+grep -q 'currently supports only port 2222' /tmp/nix-layer12-enable-port2223.log
 NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
 NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
 NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
@@ -603,8 +613,8 @@ NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer12.log" \
 NIX_SYSTEMCTL_PID="${TMP_DIR}/systemctl-layer12.pid" \
   "${PKG_DIR}/scripts/nixctl" guest start >/tmp/nix-layer12-start.log
 [ -f "${TMP_DIR}/layer12-systemd/rocknix-guest.service" ]
-grep -q -- '--private-network' "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
-grep -q -- '--port=tcp:2222:22' "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
+! grep -q -- '--private-network' "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
+! grep -q -- '--port=tcp:' "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
 grep -q -- "--bind-ro=${TMP_DIR}/layer12-start-keys/authorized_keys:/etc/ssh/authorized_keys.d/root" "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
 ! grep -q -- '--port=tcp:22:22' "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
 if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \

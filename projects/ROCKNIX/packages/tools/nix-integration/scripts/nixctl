@@ -1102,8 +1102,20 @@ layer12_nspawn_args() {
   port=$(layer12_ssh_port)
   keys=$(layer12_authorized_keys)
   layer12_port_valid "${port}" || return 1
+  [ "${port}" = "${NIX_LAYER12_DEFAULT_SSH_PORT}" ] || return 1
   [ -n "${keys}" ] && [ -s "${keys}" ] || return 1
-  printf ' --port=tcp:%s:22 --bind-ro=%s:%s' "${port}" "${keys}" "${NIX_LAYER12_AUTHORIZED_KEYS_DEST}"
+  printf ' --bind-ro=%s:%s' "${keys}" "${NIX_LAYER12_AUTHORIZED_KEYS_DEST}"
+}
+
+layer10_nspawn_network_args() {
+  if layer12_configured; then
+    # Layer 12 guest SSH listens directly on NIX_LAYER12_DEFAULT_SSH_PORT in
+    # the shared host network namespace. Avoid systemd-nspawn --port NAT:
+    # ROCKNIX SM8550 images do not provide the legacy iptables nat table that
+    # nspawn's port forwarding requires.
+    return 0
+  fi
+  printf ' --private-network'
 }
 
 layer12_ssh_port() {
@@ -1753,7 +1765,7 @@ TasksMax=${NIX_LAYER10_TASKS_MAX}
 CPUWeight=${NIX_LAYER10_CPU_WEIGHT}
 IOWeight=${NIX_LAYER10_IO_WEIGHT}
 MemoryMax=${NIX_LAYER10_MEMORY_MAX}
-ExecStart=${NIX_LAYER10_NSPAWN_BIN} --boot --register=no --private-network --directory=${NIX_LAYER10_GUEST_ROOT}$(layer12_nspawn_args)
+ExecStart=${NIX_LAYER10_NSPAWN_BIN} --boot --register=no$(layer10_nspawn_network_args) --directory=${NIX_LAYER10_GUEST_ROOT}$(layer12_nspawn_args)
 EOF
   echo "${unit_path}"
 }
@@ -2026,6 +2038,7 @@ cmd_guest_service_enable() {
   [ -f "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" ] || fail "guest service enable ssh: Layer 10b provenance required"
   grep -q '^sha256=' "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" 2>/dev/null || fail "guest service enable ssh: Layer 10b provenance missing sha256"
   layer12_port_valid "${port}" || fail "guest service enable ssh: refusing unsafe port: ${port} (use alternate non-privileged port, not 22)"
+  [ "${port}" = "${NIX_LAYER12_DEFAULT_SSH_PORT}" ] || fail "guest service enable ssh: this guest image currently supports only port ${NIX_LAYER12_DEFAULT_SSH_PORT}"
   [ -n "${keys}" ] || fail "guest service enable ssh: --authorized-keys is required"
   layer12_authorized_keys_path_safe "${keys}" || fail "guest service enable ssh: refusing unsafe authorized-keys path: ${keys}"
   [ -f "${keys}" ] || fail "guest service enable ssh: authorized-keys file missing: ${keys}"
