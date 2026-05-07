@@ -83,6 +83,7 @@ NIX_LAYER12_DEFAULT_SSH_PORT="${NIX_LAYER12_DEFAULT_SSH_PORT:-2222}"
 NIX_LAYER12_AUTHORIZED_KEYS_DEST="${NIX_LAYER12_AUTHORIZED_KEYS_DEST:-/etc/ssh/authorized_keys.d/root}"
 NIX_LAYER13_STATE_DIR="${NIX_LAYER13_STATE_DIR:-/storage/.config/nix-integration/layer13}"
 NIX_LAYER13_MODULE_KIT_DIR="${NIX_LAYER13_MODULE_KIT_DIR:-/usr/lib/nix-integration/modules}"
+NIX_LAYER13_GUEST_KIT_DIR="${NIX_LAYER13_GUEST_KIT_DIR:-/usr/lib/nix-integration/guest}"
 NIX_LAYER13_HOST_WORKSPACE="${NIX_LAYER13_HOST_WORKSPACE:-/storage/.config/nix-integration/modules/host}"
 NIX_LAYER13_HOST_MODULE="${NIX_LAYER13_HOST_MODULE:-${NIX_LAYER13_HOST_WORKSPACE}/config.nix}"
 NIX_LAYER13_GUEST_WORKSPACE="${NIX_LAYER13_GUEST_WORKSPACE:-/storage/.config/nix-integration/modules/guest}"
@@ -124,7 +125,8 @@ Subcommands:
   guest <action>         Manage Layer 10 nspawn guest operations.
                          Actions: status, preflight, init --proof,
                          import --bootable <artifact>, run <cmd>, shell,
-                         start, stop, cleanup [--yes], service <action>.
+                         start, stop, cleanup [--yes], service <action>,
+                         module <action>.
   bridge <action>        Manage Layer 11 one-shot guest-backed bridges.
                          Actions: status, preflight <name>, install <name> -- <cmd>,
                          run <name>, remove <name>.
@@ -2311,8 +2313,61 @@ cmd_module() {
   esac
 }
 
+cmd_guest_module_init() {
+  [ -d "${NIX_LAYER13_GUEST_KIT_DIR}" ] || fail "guest module init: guest kit missing: ${NIX_LAYER13_GUEST_KIT_DIR}"
+  layer13_module_path_safe "${NIX_LAYER13_GUEST_WORKSPACE}/config" || fail "guest module init: refusing unsafe workspace: ${NIX_LAYER13_GUEST_WORKSPACE}"
+  [ ! -e "${NIX_LAYER13_GUEST_WORKSPACE}" ] || fail "guest module init: refusing to overwrite existing workspace: ${NIX_LAYER13_GUEST_WORKSPACE}"
+  mkdir -p "${NIX_LAYER13_GUEST_WORKSPACE%/*}"
+  cp -PR "${NIX_LAYER13_GUEST_KIT_DIR}" "${NIX_LAYER13_GUEST_WORKSPACE}"
+  info "Layer 13 guest module workspace initialized: ${NIX_LAYER13_GUEST_WORKSPACE}"
+}
+
+cmd_guest_module_preflight() {
+  layer13_module_path_safe "${NIX_LAYER13_GUEST_WORKSPACE}/flake.nix" || fail "guest module preflight: refusing unsafe workspace: ${NIX_LAYER13_GUEST_WORKSPACE}"
+  [ -f "${NIX_LAYER13_GUEST_WORKSPACE}/flake.nix" ] || fail "guest module preflight: flake missing: ${NIX_LAYER13_GUEST_WORKSPACE}/flake.nix"
+  [ -x "${NIX_LAYER13_NIX_BIN}" ] || fail "guest module preflight: nix missing: ${NIX_LAYER13_NIX_BIN}"
+  if layer10_running; then
+    fail "guest module preflight: guest is running; stop it before build/import"
+  fi
+  info "Layer 13 guest module preflight passed"
+}
+
+cmd_guest_module_build() {
+  cmd_guest_module_preflight
+  mkdir -p "${NIX_LAYER13_STATE_DIR}/guest"
+  out_link="${NIX_LAYER13_STATE_DIR}/guest/result"
+  rm -f "${out_link}"
+  "${NIX_LAYER13_NIX_BIN}" --extra-experimental-features 'nix-command flakes' build "${NIX_LAYER13_GUEST_WORKSPACE}#rootfs" --out-link "${out_link}"
+  artifact=$(find "${out_link}/tarball" -maxdepth 1 -type f 2>/dev/null | head -1 || true)
+  [ -n "${artifact}" ] || fail "guest module build: rootfs artifact missing below ${out_link}/tarball"
+  printf '%s\n' "${artifact}" >"${NIX_LAYER13_STATE_DIR}/guest/latest-artifact"
+  info "Layer 13 guest module rootfs built: ${artifact}"
+}
+
+cmd_guest_module_import() {
+  artifact=${1:-}
+  if [ -z "${artifact}" ] && [ -f "${NIX_LAYER13_STATE_DIR}/guest/latest-artifact" ]; then
+    artifact=$(awk 'NR==1 {print; exit}' "${NIX_LAYER13_STATE_DIR}/guest/latest-artifact")
+  fi
+  [ -n "${artifact}" ] || fail "guest module import: missing artifact (run guest module build first or pass an artifact path)"
+  cmd_guest_import --bootable "${artifact}"
+}
+
+cmd_guest_module() {
+  [ $# -gt 0 ] || fail "guest module: missing action (init, preflight, build, import)"
+  action=$1
+  shift
+  case "${action}" in
+    init) cmd_guest_module_init "$@" ;;
+    preflight|plan) cmd_guest_module_preflight "$@" ;;
+    build) cmd_guest_module_build "$@" ;;
+    import) cmd_guest_module_import "$@" ;;
+    *) fail "guest module: unknown action: ${action}" ;;
+  esac
+}
+
 cmd_guest() {
-  [ $# -gt 0 ] || fail "guest: missing action (status, preflight, init, import, run, shell, start, stop, cleanup, service)"
+  [ $# -gt 0 ] || fail "guest: missing action (status, preflight, init, import, run, shell, start, stop, cleanup, service, module)"
   action=$1
   shift
   case "${action}" in
@@ -2345,6 +2400,9 @@ cmd_guest() {
       ;;
     service)
       cmd_guest_service "$@"
+      ;;
+    module)
+      cmd_guest_module "$@"
       ;;
     *)
       fail "guest: unknown action: ${action}"
