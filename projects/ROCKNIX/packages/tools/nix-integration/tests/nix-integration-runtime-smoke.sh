@@ -856,6 +856,55 @@ NIX_LAYER6_PROFILE_D_DIR="${L7_TMP}/profile.d" \
 [ ! -e "${L7_TMP}/bin/rocknix-layer7-browser" ]
 [ ! -e "${L7_TMP}/profile.d/999-rocknix-layer7-browser" ]
 
+# Layer 13 host module fixture smoke. This is skipped on minimal build hosts
+# without Nix, but runs on developer machines and configured ROCKNIX devices.
+if command -v nix >/dev/null 2>&1; then
+  L13_TMP="${TMP_DIR}/layer13"
+  mkdir -p "${L13_TMP}/bin" "${L13_TMP}/profile.d" "${L13_TMP}/modules"
+  cp "${PKG_DIR}/tests/fixtures/modules/host-tools.nix" "${L13_TMP}/modules/host-tools.nix"
+  PATH="${PKG_DIR}/scripts:${PATH}" \
+  NIX_LAYER13_MODULE_KIT_DIR="${PKG_DIR}/modules" \
+  NIX_LAYER13_NIX_BIN="$(command -v nix)" \
+  NIX_LAYER13_STATE_DIR="${L13_TMP}/state" \
+  NIX_LAYER13_HOST_WORKSPACE="${L13_TMP}/modules" \
+  NIX_LAYER13_HOST_MODULE="${L13_TMP}/modules/host-tools.nix" \
+  NIX_LAYER6_BIN_DIR="${L13_TMP}/bin" \
+  NIX_LAYER6_PROFILE_D_DIR="${L13_TMP}/profile.d" \
+    "${PKG_DIR}/scripts/nixctl" module preflight >/tmp/nix-layer13-preflight.log
+  PATH="${PKG_DIR}/scripts:${PATH}" \
+  NIX_LAYER13_MODULE_KIT_DIR="${PKG_DIR}/modules" \
+  NIX_LAYER13_NIX_BIN="$(command -v nix)" \
+  NIX_LAYER13_STATE_DIR="${L13_TMP}/state" \
+  NIX_LAYER13_HOST_WORKSPACE="${L13_TMP}/modules" \
+  NIX_LAYER13_HOST_MODULE="${L13_TMP}/modules/host-tools.nix" \
+  NIX_LAYER6_BIN_DIR="${L13_TMP}/bin" \
+  NIX_LAYER6_PROFILE_D_DIR="${L13_TMP}/profile.d" \
+    "${PKG_DIR}/scripts/nixctl" module apply >/tmp/nix-layer13-apply.log
+  "${L13_TMP}/bin/rocknix-fixture-module-hello" >/tmp/nix-layer13-wrapper.log
+  grep -q 'rocknix-fixture-module-hello' /tmp/nix-layer13-wrapper.log
+  [ -f "${L13_TMP}/profile.d/999-rocknix-fixture-module" ]
+  PATH="${PKG_DIR}/scripts:${PATH}" \
+  NIX_LAYER13_STATE_DIR="${L13_TMP}/state" \
+  NIX_LAYER6_BIN_DIR="${L13_TMP}/bin" \
+  NIX_LAYER6_PROFILE_D_DIR="${L13_TMP}/profile.d" \
+    "${PKG_DIR}/scripts/nixctl" module deactivate >/tmp/nix-layer13-deactivate.log
+  [ ! -e "${L13_TMP}/bin/rocknix-fixture-module-hello" ]
+
+  cp "${PKG_DIR}/tests/fixtures/modules/invalid-host-path.nix" "${L13_TMP}/modules/invalid-host-path.nix"
+  if PATH="${PKG_DIR}/scripts:${PATH}" \
+    NIX_LAYER13_MODULE_KIT_DIR="${PKG_DIR}/modules" \
+    NIX_LAYER13_NIX_BIN="$(command -v nix)" \
+    NIX_LAYER13_STATE_DIR="${L13_TMP}/invalid-state" \
+    NIX_LAYER13_HOST_MODULE="${L13_TMP}/modules/invalid-host-path.nix" \
+    "${PKG_DIR}/scripts/nixctl" module preflight >/tmp/nix-layer13-invalid-host-path.log 2>&1; then
+    echo 'expected Layer 13 invalid host path preflight to fail' >&2
+    exit 1
+  fi
+  grep -q 'unsafe file target name' /tmp/nix-layer13-invalid-host-path.log
+else
+  printf 'nix-integration Layer 13 fixture smoke: skipped (nix unavailable)\n'
+fi
+
 # nspawn running detector: regression for the self-match bug.
 # Spawn a process whose comm is 'sh' (not 'systemd-nspawn') and whose argv
 # contains the literal substring 'systemd-nspawn' AND the configured guest
