@@ -42,7 +42,7 @@ NIX_LAYER9_GUEST_ROOT="${NIX_LAYER9_GUEST_ROOT:-/storage/machines/rocknix-guest}
 NIX_LAYER9_SKIP_KERNEL_CHECK="${NIX_LAYER9_SKIP_KERNEL_CHECK:-0}"
 NIX_LAYER10_STATE_DIR="${NIX_LAYER10_STATE_DIR:-/storage/.config/nix-integration/layer10}"
 NIX_LAYER10_GUEST_ROOT="${NIX_LAYER10_GUEST_ROOT:-/storage/machines/rocknix-guest}"
-NIX_LAYER10_NSPAWN_BIN="${NIX_LAYER10_NSPAWN_BIN:-${NIX_LAYER9_NSPAWN_BIN}}"
+NIX_LAYER10_NSPAWN_BIN="${NIX_LAYER10_NSPAWN_BIN:-auto}"
 NIX_LAYER10_UNIT_NAME="${NIX_LAYER10_UNIT_NAME:-rocknix-guest.service}"
 NIX_LAYER10_SYSTEMD_DIR="${NIX_LAYER10_SYSTEMD_DIR:-}"
 NIX_LAYER10_SKIP_KERNEL_CHECK="${NIX_LAYER10_SKIP_KERNEL_CHECK:-${NIX_LAYER9_SKIP_KERNEL_CHECK}}"
@@ -390,6 +390,30 @@ layer10_rootfs_mode() {
   echo invalid
 }
 
+layer10_guest_nspawn_bin() {
+  root=${1:-${NIX_LAYER10_GUEST_ROOT}}
+  for candidate in \
+    "${root}"/run/current-system/sw/bin/systemd-nspawn \
+    "${root}"/nix/store/*systemd*/bin/systemd-nspawn; do
+    [ -x "${candidate}" ] || continue
+    printf '%s\n' "${candidate}"
+    return 0
+  done
+  return 1
+}
+
+layer10_nspawn_bin() {
+  case "${NIX_LAYER10_NSPAWN_BIN}" in
+    auto|'')
+      layer10_guest_nspawn_bin "${NIX_LAYER10_GUEST_ROOT}" && return 0
+      printf '%s\n' "${NIX_LAYER9_NSPAWN_BIN}"
+      ;;
+    *)
+      printf '%s\n' "${NIX_LAYER10_NSPAWN_BIN}"
+      ;;
+  esac
+}
+
 layer10_state_value() {
   if [ -f "${NIX_LAYER10_STATE_DIR}/state" ]; then
     awk 'NR==1 {print; exit}' "${NIX_LAYER10_STATE_DIR}/state"
@@ -417,7 +441,8 @@ layer10_running() {
 }
 
 layer10_state() {
-  [ -x "${NIX_LAYER10_NSPAWN_BIN}" ] || { echo unsupported; return; }
+  nspawn_bin=$(layer10_nspawn_bin)
+  [ -x "${nspawn_bin}" ] || { echo unsupported; return; }
   layer10_kernel_ready || { echo unsupported; return; }
   layer10_running && { echo running; return; }
   if have ps && layer10_unit_active; then
@@ -438,7 +463,8 @@ layer10_state() {
 }
 
 layer10_eligibility() {
-  [ -x "${NIX_LAYER10_NSPAWN_BIN}" ] || { echo "unsupported: systemd-nspawn missing: ${NIX_LAYER10_NSPAWN_BIN}"; return; }
+  nspawn_bin=$(layer10_nspawn_bin)
+  [ -x "${nspawn_bin}" ] || { echo "unsupported: systemd-nspawn missing: ${nspawn_bin}"; return; }
   layer10_kernel_ready || { echo "unsupported: namespace/cgroup prerequisites missing"; return; }
   case "$(layer10_rootfs_mode)" in
     absent) echo "available: guest root missing: ${NIX_LAYER10_GUEST_ROOT}" ;;
@@ -1116,10 +1142,11 @@ check_layer10() {
 
   ok "Layer 10 guest root mode: ${mode}"
 
-  if [ -x "${NIX_LAYER10_NSPAWN_BIN}" ]; then
-    ok "Layer 10 systemd-nspawn binary present: ${NIX_LAYER10_NSPAWN_BIN}"
+  nspawn_bin=$(layer10_nspawn_bin)
+  if [ -x "${nspawn_bin}" ]; then
+    ok "Layer 10 systemd-nspawn binary present: ${nspawn_bin}"
   else
-    warn "Layer 10 systemd-nspawn binary missing: ${NIX_LAYER10_NSPAWN_BIN}"
+    warn "Layer 10 systemd-nspawn binary missing: ${nspawn_bin}"
   fi
 
   if [ -d "${NIX_LAYER10_GUEST_ROOT}" ]; then
