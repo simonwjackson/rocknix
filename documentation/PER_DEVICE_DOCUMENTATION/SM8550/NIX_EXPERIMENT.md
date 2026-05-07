@@ -717,6 +717,8 @@ Bootable-mode `nixctl guest start` / `stop` is implemented but not hardware-Go. 
 
 Layer 12 is implemented as the first opt-in guest service layer after Layer 10b: key-only guest SSH on an alternate host port, defaulting to `2222`. Layer 12 must not replace host SSH, bind port `22`, enable password authentication, ship default credentials, autostart the guest, or expose other services. Build pipelining may produce a Layer 12 image before Layer 10b hardware validation completes, but validation and Go/No-Go decisions must remain ordered: Layer 10b first, then Layer 12 on top.
 
+Layer 13 adds declarative modules on top of the validated Layer 10/12 surfaces. Guest modules are real NixOS modules imported into the bootable guest rootfs. ROCKNIX host modules are storage-scoped modules that compile to existing Layer 6/11/12 activation artifacts and must not mutate host system paths. Layer 13 may be batched into the same image build as Layer 10/12 fixes, but Go evidence is still ordered: Layer 10b, then Layer 12, then module workflows.
+
 Layer 12 operator flow after Layer 10b import:
 
 ```text
