@@ -311,4 +311,29 @@ if grep -q "grep '\[s\]ystemd-nspawn' | grep -F" "${SCRIPT_DIR}/nix-integration-
 fi
 grep -q 'NSPAWN_IMPOSTOR_PID' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing self-match regression fixture for nspawn detector"
 
+# U2 autostart-detection semantics: must use stdout-state allowlist, not
+# 'is-enabled --quiet' exit-code-only check that misclassifies static units.
+grep -q '^unit_autostarts()' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing unit_autostarts helper (U2)"
+grep -q 'enabled|enabled-runtime|alias' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "unit_autostarts must allow only enabled/enabled-runtime/alias (U2)"
+if grep -E -q 'systemctl is-enabled[^|]+>/dev/null 2>&1' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh"; then
+  fail "runtime smoke still uses exit-code-only systemctl is-enabled idiom (U2)"
+fi
+
+# U3 hardware smoke runnable from packaged install layout: device-side
+# sections must use resolve_smoke_bin so /usr/bin/nixctl is found at
+# /usr/lib/nix-integration/tests/.
+grep -q '^resolve_smoke_bin()' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing resolve_smoke_bin helper (U3)"
+grep -q 'NIXCTL=\$(resolve_smoke_bin nixctl)' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke must resolve NIXCTL via resolve_smoke_bin (U3)"
+grep -q 'DOCTOR=\$(resolve_smoke_bin nix-doctor)' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke must resolve DOCTOR via resolve_smoke_bin (U3)"
+
+# U4 fixture preamble gate: HARDWARE_ONLY_MODE must reference all six CI-mode
+# flags AND all three hardware-mode flags so future flag additions are caught.
+grep -q 'HARDWARE_ONLY_MODE=' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing HARDWARE_ONLY_MODE gate (U4)"
+for flag in LAYER4_SMOKE LAYER5_SMOKE LAYER6_SMOKE LAYER7_SMOKE LAYER8_SMOKE LAYER9_SMOKE; do
+  grep -q "\"\${${flag}:-0}\" != \"1\"" "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "HARDWARE_ONLY_MODE must reject ${flag} (U4)"
+done
+grep -q 'LAYER10_SMOKE:-0}" != "proof"' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "HARDWARE_ONLY_MODE must reject LAYER10_SMOKE=proof (U4)"
+grep -q 'LAYER10_SMOKE:-0}" = "bootable"' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "HARDWARE_ONLY_MODE must accept LAYER10_SMOKE=bootable (U4)"
+grep -q 'hardware-only mode: skipping CI fixture preamble' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing hardware-only skip note (U4)"
+
 printf 'nix-integration static checks passed\n'
