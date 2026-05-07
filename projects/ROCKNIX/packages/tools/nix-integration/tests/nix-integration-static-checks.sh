@@ -335,5 +335,9 @@ done
 grep -q 'LAYER10_SMOKE:-0}" != "proof"' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "HARDWARE_ONLY_MODE must reject LAYER10_SMOKE=proof (U4)"
 grep -q 'LAYER10_SMOKE:-0}" = "bootable"' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "HARDWARE_ONLY_MODE must accept LAYER10_SMOKE=bootable (U4)"
 grep -q 'hardware-only mode: skipping CI fixture preamble' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing hardware-only skip note (U4)"
+l11_requested_refs=$(grep -c 'LAYER11_REQUESTED' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh")
+l12_requested_refs=$(grep -c 'LAYER12_REQUESTED' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh")
+[ "${l11_requested_refs}" -ge 8 ] || fail "hardware Layer 11 request must survive earlier layer skip gates (U4)"
+[ "${l12_requested_refs}" -ge 9 ] || fail "hardware Layer 12 request must survive earlier layer skip gates (U4)"
 
 printf 'nix-integration static checks passed\n'
