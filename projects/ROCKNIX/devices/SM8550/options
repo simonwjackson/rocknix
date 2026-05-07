@@ -36,6 +36,9 @@
   # Kernel cmdline
     EXTRA_CMDLINE="quiet rootwait console=tty0 allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2 systemd.unified_cgroup_hierarchy=1 systemd.legacy_systemd_cgroup_controller=0 nosoftlockup usbcore.interrupt_interval_override=045e:028e:2"
 
+  # Layer 10b NixOS guests require systemd-nspawn to present cgroup v2.
+    SYSTEMD_DEFAULT_HIERARCHY="unified"
+
   # Bootloader to use (syslinux / u-boot)
     BOOTLOADER="qcom-abl"
 
