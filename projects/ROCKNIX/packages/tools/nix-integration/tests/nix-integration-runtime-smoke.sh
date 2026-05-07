@@ -70,6 +70,27 @@ unit_autostarts() {
   esac
 }
 
+# Locate a smoke-relevant binary by name. Used by hardware-mode device-side
+# sections so the packaged smoke at /usr/lib/nix-integration/tests/ can find
+# /usr/bin/nixctl and /usr/bin/nix-doctor without depending on sibling
+# directories that aren't installed there. Repo invocations fall through to
+# ${PKG_DIR}/scripts/<name> as before.
+resolve_smoke_bin() {
+  name=$1
+  [ -n "${name}" ] || return 1
+  hit=$(command -v "${name}" 2>/dev/null || true)
+  if [ -n "${hit}" ] && [ -x "${hit}" ]; then
+    printf '%s\n' "${hit}"
+    return 0
+  fi
+  if [ -x "${PKG_DIR}/scripts/${name}" ]; then
+    printf '%s\n' "${PKG_DIR}/scripts/${name}"
+    return 0
+  fi
+  echo "FAIL: smoke cannot resolve ${name}: not on PATH and not at ${PKG_DIR}/scripts/${name}" >&2
+  return 1
+}
+
 # Layer 5 profile contract: the profile.d snippet must expose the root Nix
 # profile before Layer 4 and storage-local user env paths, and must be idempotent.
 PROFILE_ENV="${TMP_DIR}/profile-env"
@@ -863,8 +884,8 @@ fi
 # Device-side smokes use the real package script paths (not the fake-tarball
 # harness above), so reset the per-test environment.
 
-NIXCTL="${PKG_DIR}/scripts/nixctl"
-DOCTOR="${PKG_DIR}/scripts/nix-doctor"
+NIXCTL=$(resolve_smoke_bin nixctl) || exit 1
+DOCTOR=$(resolve_smoke_bin nix-doctor) || exit 1
 export NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate"
 L4_LOG=/tmp/nix-integration-layer4-smoke.log
 rm -f "${L4_LOG}"
