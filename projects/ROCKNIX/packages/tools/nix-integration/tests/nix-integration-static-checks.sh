@@ -298,4 +298,17 @@ grep -q 'bridge install' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fai
 grep -q 'bridge run' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 11 bridge run path"
 grep -q 'nix-integration Layer 11 smoke passed' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 11 success marker"
 
+# nspawn running detector: must use exec-name + cmdline scan, not the
+# self-matching ps|grep idiom that masked Layer 10b/12 hardware failures.
+grep -q '^nspawn_pid_for_root()' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing nspawn_pid_for_root helper"
+grep -q '^nspawn_running_for_root()' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing nspawn_running_for_root helper"
+if grep -q "grep '\[s\]ystemd-nspawn'" "${PKG_DIR}/scripts/nixctl"; then
+  fail "nixctl still uses self-matching ps|grep '[s]ystemd-nspawn' idiom"
+fi
+grep -q '^smoke_nspawn_running()' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing smoke_nspawn_running helper"
+if grep -q "grep '\[s\]ystemd-nspawn' | grep -F" "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh"; then
+  fail "runtime smoke still uses self-matching ps|grep '[s]ystemd-nspawn' idiom"
+fi
+grep -q 'NSPAWN_IMPOSTOR_PID' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing self-match regression fixture for nspawn detector"
+
 printf 'nix-integration static checks passed\n'
