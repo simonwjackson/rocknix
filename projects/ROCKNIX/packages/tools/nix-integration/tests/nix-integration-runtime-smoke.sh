@@ -91,6 +91,46 @@ resolve_smoke_bin() {
   return 1
 }
 
+# Map the user's LAYER*_SMOKE inputs to per-layer 'requested' booleans.
+# Done early so the U4 hardware-only gate below can read them.
+if [ "${LAYER10_SMOKE:-0}" = "1" ] || [ "${LAYER10_SMOKE:-0}" = "proof" ] || [ "${LAYER10_SMOKE:-0}" = "bootable" ]; then
+  LAYER10_REQUESTED=1
+else
+  LAYER10_REQUESTED=0
+fi
+if [ "${LAYER11_SMOKE:-0}" = "1" ]; then
+  LAYER11_REQUESTED=1
+else
+  LAYER11_REQUESTED=0
+fi
+if [ "${LAYER12_SMOKE:-0}" = "ssh" ]; then
+  LAYER12_REQUESTED=1
+else
+  LAYER12_REQUESTED=0
+fi
+
+# Hardware-only mode: at least one hardware-mode flag is set
+# (LAYER10_SMOKE=bootable, LAYER11_SMOKE=1, LAYER12_SMOKE=ssh) AND no
+# CI-mode flag is set (LAYER4..LAYER9, LAYER10_SMOKE=proof|1). When this is
+# true, skip the CI fixture preamble: those fixtures assume a clean
+# unconfigured device and pin error strings (e.g. 'refusing unsafe guest
+# root') that don't match real failure paths on a configured device.
+HARDWARE_ONLY_MODE=0
+if { [ "${LAYER10_SMOKE:-0}" = "bootable" ] || [ "${LAYER11_REQUESTED}" = "1" ] || [ "${LAYER12_REQUESTED}" = "1" ]; } \
+   && [ "${LAYER4_SMOKE:-0}" != "1" ] \
+   && [ "${LAYER5_SMOKE:-0}" != "1" ] \
+   && [ "${LAYER6_SMOKE:-0}" != "1" ] \
+   && [ "${LAYER7_SMOKE:-0}" != "1" ] \
+   && [ "${LAYER8_SMOKE:-0}" != "1" ] \
+   && [ "${LAYER9_SMOKE:-0}" != "1" ] \
+   && [ "${LAYER10_SMOKE:-0}" != "proof" ] \
+   && [ "${LAYER10_SMOKE:-0}" != "1" ]; then
+  HARDWARE_ONLY_MODE=1
+fi
+
+if [ "${HARDWARE_ONLY_MODE}" = "0" ]; then
+# ---- CI fixture preamble (skipped in hardware-only mode) -------------------
+
 # Layer 5 profile contract: the profile.d snippet must expose the root Nix
 # profile before Layer 4 and storage-local user env paths, and must be idempotent.
 PROFILE_ENV="${TMP_DIR}/profile-env"
@@ -843,6 +883,10 @@ kill "${NSPAWN_IMPOSTOR_PID}" 2>/dev/null || true
 wait "${NSPAWN_IMPOSTOR_PID}" 2>/dev/null || true
 
 printf 'nix-integration runtime smoke passed\n'
+else
+printf '[smoke] hardware-only mode: skipping CI fixture preamble\n'
+fi
+# ---- end CI fixture preamble ----------------------------------------------
 
 # ---- Layer 4 device-side smoke (opt-in) ------------------------------------
 # Set LAYER4_SMOKE=1 to run the real install/use/uninstall cycle against the
@@ -852,21 +896,6 @@ printf 'nix-integration runtime smoke passed\n'
 #   - network reachability to releases.nixos.org and cache.nixos.org
 #   - >= 1 GB free on /storage
 # Not run in default CI; intended for manual validation on hardware.
-if [ "${LAYER10_SMOKE:-0}" = "1" ] || [ "${LAYER10_SMOKE:-0}" = "proof" ] || [ "${LAYER10_SMOKE:-0}" = "bootable" ]; then
-  LAYER10_REQUESTED=1
-else
-  LAYER10_REQUESTED=0
-fi
-if [ "${LAYER11_SMOKE:-0}" = "1" ]; then
-  LAYER11_REQUESTED=1
-else
-  LAYER11_REQUESTED=0
-fi
-if [ "${LAYER12_SMOKE:-0}" = "ssh" ]; then
-  LAYER12_REQUESTED=1
-else
-  LAYER12_REQUESTED=0
-fi
 
 if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ] && [ "${LAYER12_REQUESTED}" != "1" ]; then
   printf 'nix-integration Layer 4 smoke: skipped (set LAYER4_SMOKE=1 to enable)\n'
