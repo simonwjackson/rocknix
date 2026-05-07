@@ -95,7 +95,7 @@ nixctl guest service disable ssh
 
 Layer 12 depends on Layer 10b bootable mode. Service preflight must refuse unsupported, proof-only, invalid, failed, or missing-provenance guest roots. Layer 12 must not make proof roots look service-capable.
 
-The generated Layer 10 unit must use private networking even when Layer 12 is unconfigured, so guest sshd cannot collide with or expose host port `22`. Layer 12 may modify the generated disabled Layer 10 unit only to add explicit alternate-port forwarding and the authorized-keys bind mount when SSH metadata is configured. The generated unit remains manually started and must not call `systemctl enable`.
+The generated Layer 10 unit must use private networking while Layer 12 is unconfigured, so a generic bootable guest cannot collide with host networking. When Layer 12 SSH metadata is configured, the guest uses the shared host network namespace and guest sshd listens directly on the fixed alternate port `2222`; this avoids depending on `systemd-nspawn --port` NAT, which is unavailable on SM8550 images without the legacy iptables NAT table. Layer 12 may modify the generated disabled Layer 10 unit only to remove private networking for this direct alternate-port SSH mode and add the authorized-keys bind mount. The generated unit remains manually started and must not call `systemctl enable`.
 
 ## Go / No-Go rule
 

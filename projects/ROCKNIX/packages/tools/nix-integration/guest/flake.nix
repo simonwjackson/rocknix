@@ -24,15 +24,26 @@
         in pkgs.runCommand "rocknix-layer10b-guest-rootfs" {
           nativeBuildInputs = [ pkgs.coreutils pkgs.gnutar pkgs.zstd ];
         } ''
-          mkdir -p root/nix/store root/sbin root/tmp root/proc root/sys root/dev root/run root/etc root/var root/var/lib $out/tarball
+          mkdir -p root/nix/store root/sbin root/usr/bin root/tmp root/proc root/sys root/dev root/run root/etc root/var root/var/lib $out/tarball
           chmod 1777 root/tmp
           while IFS= read -r store_path; do
             cp -a "$store_path" root/nix/store/
           done < ${closure}/store-paths
           ln -s ${toplevel}/init root/init
           ln -s ${toplevel}/init root/sbin/init
+          ln -s /run/current-system/sw/bin/nix root/usr/bin/nix
           cp -a ${toplevel}/etc/. root/etc/
           chmod -R u+w root/etc
+          if [ -e root/etc/static/ssh/sshd_config ]; then
+            mkdir -p root/etc/ssh
+            rm -f root/etc/ssh/sshd_config
+            cp -L root/etc/static/ssh/sshd_config root/etc/ssh/sshd_config
+            chmod u+w root/etc/ssh/sshd_config
+          fi
+          mkdir -p root/etc/ssh/authorized_keys.d
+          rm -f root/etc/ssh/authorized_keys.d/root
+          : > root/etc/ssh/authorized_keys.d/root
+          chmod 600 root/etc/ssh/authorized_keys.d/root
           tar --sort=name --numeric-owner --owner=0 --group=0 --zstd \
             -cf $out/tarball/rocknix-layer10b-guest-rootfs-aarch64-linux.tar.zst \
             -C root .
