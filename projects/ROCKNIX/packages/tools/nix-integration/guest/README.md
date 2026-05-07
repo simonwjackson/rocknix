@@ -1,6 +1,6 @@
 # ROCKNIX Layer 10b bootable guest rootfs
 
-This directory defines the minimal bootable guest rootfs used to validate Layer 10b on SM8550/Odin2 Portal. The guest is authored as reusable NixOS modules under `modules/` and profiles under `profiles/`; `rocknix-guest.nix` imports the default SSH-capable profile for compatibility with existing build commands.
+This directory defines the current bootable guest rootfs used on SM8550/Odin2 Portal. The guest is authored as reusable NixOS modules under `modules/` and profiles under `profiles/`; `rocknix-guest.nix` imports the default SSH-capable profile.
 
 Layer 10b is only a bootable lifecycle validation layer. The guest rootfs exists to prove that `nixctl guest start` and `nixctl guest stop` work with a real container-style rootfs under `systemd-nspawn --boot --register=no`. Layer 12 enables the guest's locked-down OpenSSH service only when host-side metadata and an operator-provided authorized-keys file are configured. It must not expose guest SSH by default, autostart, graphics, audio, input, ROM/save paths, Steam/FEX state, or host UI sockets.
 
@@ -10,7 +10,7 @@ A hardware-Go artifact must be:
 
 - built for `aarch64-linux`
 - NixOS/container-style, with `boot.isContainer = true`
-- bootable by `systemd-nspawn --boot`
+- bootable by the compatible `systemd-nspawn` carried in the guest closure
 - self-contained for first validation; do not bind host `/nix` or `/storage/.nix-root` as guest `/nix`
 - headless and non-network-exposed by default
 - free of default passwords, password login, and shipped authorized keys
@@ -20,7 +20,7 @@ A hardware-Go artifact must be:
 
 - `modules/base.nix` contains the headless container baseline.
 - `modules/tools.nix` contains the minimal CLI/tooling set.
-- `modules/ssh.nix` contains the locked-down Layer 12 OpenSSH config on port `2222`.
+- `modules/ssh.nix` contains the locked-down Layer 12 OpenSSH config on port `2222`; authorized keys are supplied only by the host-side runtime bind mount.
 - `profiles/minimal.nix` imports the base/tooling modules without SSH exposure.
 - `profiles/ssh.nix` imports the default Layer 10b/12 profile used by `rocknix-guest.nix`.
 

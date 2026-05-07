@@ -12,7 +12,6 @@
     };
   };
 
-  environment.etc."ssh/authorized_keys.d/root".text = "";
   users.mutableUsers = true;
   users.users.root.hashedPassword = "!";
 }

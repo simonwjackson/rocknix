@@ -330,9 +330,10 @@ NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
   "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer10-doctor-bootable.log || true
 grep -q 'Layer 10 guest lifecycle state: bootable-ready' /tmp/nix-layer10-doctor-bootable.log
 grep -q 'Layer 10 guest eligibility: available: bootable guest root ready for manual start' /tmp/nix-layer10-doctor-bootable.log
-mkdir -p "${TMP_DIR}/layer10-import-src/sbin"
+mkdir -p "${TMP_DIR}/layer10-import-src/sbin" "${TMP_DIR}/layer10-import-src/nix/store/fake-systemd/bin"
 printf '#!/bin/sh\n' >"${TMP_DIR}/layer10-import-src/sbin/init"
-chmod 0755 "${TMP_DIR}/layer10-import-src/sbin/init"
+printf '#!/bin/sh\nexit 0\n' >"${TMP_DIR}/layer10-import-src/nix/store/fake-systemd/bin/systemd-nspawn"
+chmod 0755 "${TMP_DIR}/layer10-import-src/sbin/init" "${TMP_DIR}/layer10-import-src/nix/store/fake-systemd/bin/systemd-nspawn"
 tar -cf "${TMP_DIR}/layer10-bootable.tar" -C "${TMP_DIR}/layer10-import-src" .
 NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
 NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
@@ -443,7 +444,8 @@ grep -q 'Layer 12 guest SSH metadata removed' /tmp/nix-layer12-remove.log
 [ ! -e "${TMP_DIR}/layer12-state/ssh" ]
 mkdir -p "${TMP_DIR}/layer10-import-symlink-src/sbin" "${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin"
 printf '#!/bin/sh\n' >"${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin/init"
-chmod 0755 "${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin/init"
+printf '#!/bin/sh\nexit 0\n' >"${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin/systemd-nspawn"
+chmod 0755 "${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin/init" "${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin/systemd-nspawn"
 ln -s /nix/store/fake-systemd/bin/init "${TMP_DIR}/layer10-import-symlink-src/sbin/init"
 tar -cf "${TMP_DIR}/layer10-bootable-symlink.tar" -C "${TMP_DIR}/layer10-import-symlink-src" .
 NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-symlink-root" \
