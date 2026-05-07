@@ -681,15 +681,70 @@ layer9_guest_root_ready() {
   [ -d "${NIX_LAYER9_GUEST_ROOT}/etc" ] || [ -d "${NIX_LAYER9_GUEST_ROOT}/usr" ] || [ -d "${NIX_LAYER9_GUEST_ROOT}/nix" ]
 }
 
+# Scan /proc for live systemd-nspawn processes whose argv references the given
+# guest root. Identifies candidates by exec name (/proc/<pid>/comm) OR by
+# argv[0] basename (so test fixtures that invoke a wrapper script named
+# 'systemd-nspawn' are still detected). Then matches the guest root against
+# nspawn's three argv shapes: '--directory=<root>', '--directory <root>'
+# (space-separated), and a bare '<root>' positional.
+#
+# This avoids the self-match pitfall of 'ps -ef | grep [s]ystemd-nspawn |
+# grep -F -- <root>', which matches any caller (an SSH command, a smoke
+# script) whose argv contains the literal substring 'systemd-nspawn' and the
+# guest-root path. False positives from that idiom were observed masking real
+# guest boot failures during Layer 10b/12 hardware validation.
+#
+# Echoes one PID per matching process. Returns 0 unconditionally; callers
+# decide whether absence of output means "not running".
+nspawn_pid_for_root() {
+  root=$1
+  [ -n "${root}" ] || return 1
+  [ -d /proc ] || return 1
+  norm=$(canonical_path "${root}")
+  norm=${norm%/}
+  for proc in /proc/[0-9]*; do
+    [ -r "${proc}/cmdline" ] || continue
+    args=$(tr '\0' '\n' <"${proc}/cmdline" 2>/dev/null) || continue
+    [ -n "${args}" ] || continue
+    pid=${proc#/proc/}
+    argv0=$(printf '%s\n' "${args}" | head -n 1)
+    base=${argv0##*/}
+    comm=$(cat "${proc}/comm" 2>/dev/null) || comm=
+    if [ "${comm}" != "systemd-nspawn" ] && [ "${base}" != "systemd-nspawn" ]; then
+      continue
+    fi
+    if printf '%s\n' "${args}" | awk -v want="${norm}" '
+      {
+        a = $0
+        sub(/\/+$/, "", a)
+        if (a == want) { found = 1; exit }
+        if (prev == "--directory" && a == want) { found = 1; exit }
+        if (substr(a, 1, 12) == "--directory=") {
+          v = substr(a, 13)
+          sub(/\/+$/, "", v)
+          if (v == want) { found = 1; exit }
+        }
+        prev = a
+      }
+      END { exit (found ? 0 : 1) }
+    ' 2>/dev/null; then
+      printf '%s\n' "${pid}"
+    fi
+  done
+  return 0
+}
+
+nspawn_running_for_root() {
+  pids=$(nspawn_pid_for_root "$1") || return 1
+  [ -n "${pids}" ]
+}
+
 layer9_running() {
   if [ -f "${NIX_LAYER9_STATE_DIR}/state" ]; then
     state=$(awk 'NR==1 {print; exit}' "${NIX_LAYER9_STATE_DIR}/state")
     [ "${state}" = "running" ] && return 0
   fi
-  if have ps; then
-    ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${NIX_LAYER9_GUEST_ROOT}" >/dev/null 2>&1 && return 0
-  fi
-  return 1
+  nspawn_running_for_root "${NIX_LAYER9_GUEST_ROOT}"
 }
 
 layer9_state() {
@@ -808,8 +863,7 @@ layer10_unit_active() {
 }
 
 layer10_process_running() {
-  have ps || return 1
-  ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${NIX_LAYER10_GUEST_ROOT}" >/dev/null 2>&1
+  nspawn_running_for_root "${NIX_LAYER10_GUEST_ROOT}"
 }
 
 layer10_running() {
@@ -1750,7 +1804,7 @@ cmd_guest_stop() {
     note "systemctl unavailable; clearing Layer 10 running metadata only"
   fi
   layer10_write_state stopped
-  if have ps && ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${NIX_LAYER10_GUEST_ROOT}" >/dev/null 2>&1; then
+  if nspawn_running_for_root "${NIX_LAYER10_GUEST_ROOT}"; then
     layer10_write_state failed
     fail "guest stop: nspawn process still appears to reference ${NIX_LAYER10_GUEST_ROOT}"
   fi

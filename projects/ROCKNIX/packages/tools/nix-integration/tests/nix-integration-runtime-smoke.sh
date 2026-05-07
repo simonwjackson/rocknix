@@ -9,6 +9,48 @@ PKG_DIR=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "${TMP_DIR}"' EXIT INT TERM
 
+# Shared running-detector for systemd-nspawn guests, used by all layer smokes.
+# Mirrors nixctl's nspawn_pid_for_root: identifies nspawn candidates by exec
+# name (/proc/<pid>/comm) or by argv[0] basename (so wrapper scripts named
+# 'systemd-nspawn' still match), then checks for the guest root in argv. This
+# replaces the ps|grep '[s]ystemd-nspawn' idiom that self-matched any caller
+# whose argv contained the literal substring.
+smoke_nspawn_running() {
+  root=$1
+  [ -n "${root}" ] || return 1
+  [ -d /proc ] || return 1
+  norm=${root%/}
+  for proc in /proc/[0-9]*; do
+    [ -r "${proc}/cmdline" ] || continue
+    args=$(tr '\0' '\n' <"${proc}/cmdline" 2>/dev/null) || continue
+    [ -n "${args}" ] || continue
+    argv0=$(printf '%s\n' "${args}" | head -n 1)
+    base=${argv0##*/}
+    comm=$(cat "${proc}/comm" 2>/dev/null) || comm=
+    if [ "${comm}" != "systemd-nspawn" ] && [ "${base}" != "systemd-nspawn" ]; then
+      continue
+    fi
+    if printf '%s\n' "${args}" | awk -v want="${norm}" '
+      {
+        a = $0
+        sub(/\/+$/, "", a)
+        if (a == want) { found = 1; exit }
+        if (prev == "--directory" && a == want) { found = 1; exit }
+        if (substr(a, 1, 12) == "--directory=") {
+          v = substr(a, 13)
+          sub(/\/+$/, "", v)
+          if (v == want) { found = 1; exit }
+        }
+        prev = a
+      }
+      END { exit (found ? 0 : 1) }
+    ' 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Layer 5 profile contract: the profile.d snippet must expose the root Nix
 # profile before Layer 4 and storage-local user env paths, and must be idempotent.
 PROFILE_ENV="${TMP_DIR}/profile-env"
@@ -724,6 +766,42 @@ NIX_LAYER6_PROFILE_D_DIR="${L7_TMP}/profile.d" \
 [ ! -e "${L7_TMP}/bin/rocknix-layer7-browser" ]
 [ ! -e "${L7_TMP}/profile.d/999-rocknix-layer7-browser" ]
 
+# nspawn running detector: regression for the self-match bug.
+# Spawn a process whose comm is 'sh' (not 'systemd-nspawn') and whose argv
+# contains the literal substring 'systemd-nspawn' AND the configured guest
+# root path. The legacy 'ps|grep [s]ystemd-nspawn|grep -F <root>' idiom
+# matched this. The new exec-name + argv[0]-basename detector must not.
+NSPAWN_IMPOSTOR_ROOT="${TMP_DIR}/layer10-impostor-root"
+mkdir -p "${NSPAWN_IMPOSTOR_ROOT}"
+NSPAWN_IMPOSTOR_STATE="${TMP_DIR}/layer10-impostor-state"
+mkdir -p "${NSPAWN_IMPOSTOR_STATE}"
+printf 'mode=bootable\nsource=test\nsource_path=test\nsha256=0\nguest_root=%s\n' \
+  "${NSPAWN_IMPOSTOR_ROOT}" >"${NSPAWN_IMPOSTOR_STATE}/rootfs-provenance"
+sh -c "sleep 30 # systemd-nspawn --boot --register=no --directory=${NSPAWN_IMPOSTOR_ROOT}" &
+NSPAWN_IMPOSTOR_PID=$!
+sleep 1
+if ! smoke_nspawn_running "${NSPAWN_IMPOSTOR_ROOT}"; then
+  : # detector correctly ignores the impostor (comm=sh, argv[0]=sh)
+else
+  kill "${NSPAWN_IMPOSTOR_PID}" 2>/dev/null || true
+  wait "${NSPAWN_IMPOSTOR_PID}" 2>/dev/null || true
+  echo 'FAIL: smoke_nspawn_running self-matched a non-nspawn impostor process' >&2
+  exit 1
+fi
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${NSPAWN_IMPOSTOR_ROOT}" \
+NIX_LAYER10_STATE_DIR="${NSPAWN_IMPOSTOR_STATE}" \
+  "${PKG_DIR}/scripts/nixctl" guest status >"${TMP_DIR}/nspawn-impostor-status.log" 2>&1
+if grep -q 'running:    yes' "${TMP_DIR}/nspawn-impostor-status.log"; then
+  kill "${NSPAWN_IMPOSTOR_PID}" 2>/dev/null || true
+  wait "${NSPAWN_IMPOSTOR_PID}" 2>/dev/null || true
+  echo 'FAIL: nixctl guest status reported running=yes for an impostor' >&2
+  cat "${TMP_DIR}/nspawn-impostor-status.log" >&2
+  exit 1
+fi
+kill "${NSPAWN_IMPOSTOR_PID}" 2>/dev/null || true
+wait "${NSPAWN_IMPOSTOR_PID}" 2>/dev/null || true
+
 printf 'nix-integration runtime smoke passed\n'
 
 # ---- Layer 4 device-side smoke (opt-in) ------------------------------------
@@ -1233,7 +1311,7 @@ log9() {
 }
 
 layer9_guest_running() {
-  ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${L9_ROOT}" >/dev/null 2>&1
+  smoke_nspawn_running "${L9_ROOT}"
 }
 
 layer9_no_enabled_unit() {
@@ -1322,7 +1400,7 @@ log10() {
 }
 
 layer10_guest_running() {
-  ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${L10_ROOT}" >/dev/null 2>&1
+  smoke_nspawn_running "${L10_ROOT}"
 }
 
 layer10_no_enabled_unit() {
@@ -1442,7 +1520,7 @@ log11() {
 }
 
 layer11_guest_running() {
-  ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${L11_ROOT}" >/dev/null 2>&1
+  smoke_nspawn_running "${L11_ROOT}"
 }
 
 log11 'pre-flight: Layer 11 bridge diagnostics'
@@ -1516,7 +1594,7 @@ log12() {
 }
 
 layer12_guest_running() {
-  ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${L12_ROOT}" >/dev/null 2>&1
+  smoke_nspawn_running "${L12_ROOT}"
 }
 
 layer12_stop_guest() {
