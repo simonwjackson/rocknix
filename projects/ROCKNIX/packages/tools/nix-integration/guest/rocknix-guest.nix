@@ -1,44 +1,8 @@
-{ lib, pkgs, ... }:
-
+# Default ROCKNIX Layer 10b/12 guest profile.
+#
+# Kept as the stable import target for existing flake consumers while the
+# implementation is split into reusable NixOS modules under guest/modules/ and
+# guest/profiles/.
 {
-  boot.isContainer = true;
-
-  networking.hostName = "rocknix-guest";
-  networking.useDHCP = false;
-
-  services.openssh = {
-    enable = true;
-    ports = [ 2222 ];
-    authorizedKeysFiles = [ "/etc/ssh/authorized_keys.d/%u" ];
-    settings = {
-      PasswordAuthentication = false;
-      KbdInteractiveAuthentication = false;
-      PermitRootLogin = "prohibit-password";
-    };
-  };
-
-  environment.etc."ssh/authorized_keys.d/root".text = "";
-
-  users.mutableUsers = true;
-  users.users.root.hashedPassword = "!";
-
-  environment.systemPackages = with pkgs; [
-    bashInteractive
-    coreutils
-    procps
-    util-linux
-  ];
-
-  systemd.services."getty@tty1".enable = lib.mkForce false;
-  systemd.services."serial-getty@hvc0".enable = lib.mkForce false;
-  systemd.services."serial-getty@ttyS0".enable = lib.mkForce false;
-
-  documentation.enable = false;
-  documentation.man.enable = false;
-  documentation.nixos.enable = false;
-
-  nix.settings.experimental-features = [ "nix-command" "flakes" ];
-  nix.gc.automatic = false;
-
-  system.stateVersion = "25.11";
+  imports = [ ./profiles/ssh.nix ];
 }
