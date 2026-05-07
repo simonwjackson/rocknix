@@ -51,6 +51,25 @@ smoke_nspawn_running() {
   return 1
 }
 
+# Autostart-eligibility check for a systemd unit. Returns 0 only when the
+# unit is enabled, enabled-runtime, or alias -- the three states that mean
+# "systemd will start this on boot." Static units (no [Install] section,
+# like the generated Layer 10 rocknix-guest.service) report 'static' from
+# 'systemctl is-enabled', which exits 0 even though the unit is NOT auto-
+# started. The legacy 'is-enabled --quiet' exit-code-only check therefore
+# misclassified static units as autostart-eligible. This helper inspects
+# stdout instead and only honours the documented autostart states.
+unit_autostarts() {
+  unit=$1
+  [ -n "${unit}" ] || return 1
+  command -v systemctl >/dev/null 2>&1 || return 1
+  state=$(systemctl is-enabled "${unit}" 2>/dev/null) || state=
+  case "${state}" in
+    enabled|enabled-runtime|alias) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Layer 5 profile contract: the profile.d snippet must expose the root Nix
 # profile before Layer 4 and storage-local user env paths, and must be idempotent.
 PROFILE_ENV="${TMP_DIR}/profile-env"
@@ -1315,11 +1334,7 @@ layer9_guest_running() {
 }
 
 layer9_no_enabled_unit() {
-  if command -v systemctl >/dev/null 2>&1; then
-    if systemctl is-enabled systemd-nspawn@rocknix-guest.service >/dev/null 2>&1; then
-      return 1
-    fi
-  fi
+  unit_autostarts systemd-nspawn@rocknix-guest.service && return 1
   return 0
 }
 
@@ -1404,10 +1419,8 @@ layer10_guest_running() {
 }
 
 layer10_no_enabled_unit() {
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl is-enabled rocknix-guest.service >/dev/null 2>&1 && return 1
-    systemctl is-enabled systemd-nspawn@rocknix-guest.service >/dev/null 2>&1 && return 1
-  fi
+  unit_autostarts rocknix-guest.service && return 1
+  unit_autostarts systemd-nspawn@rocknix-guest.service && return 1
   return 0
 }
 
