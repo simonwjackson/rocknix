@@ -1,9 +1,10 @@
-{ pkgs, ... }:
+{ ... }:
 let
-  hello = pkgs.writeShellScript "rocknix-fixture-module-hello" ''
+  hello = builtins.toFile "rocknix-fixture-module-hello" ''
+    #!/bin/sh
     echo rocknix-fixture-module-hello
   '';
-  profile = pkgs.writeText "999-rocknix-fixture-module" ''
+  profile = builtins.toFile "999-rocknix-fixture-module" ''
     export ROCKNIX_FIXTURE_MODULE=1
   '';
 in {

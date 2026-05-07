@@ -54,6 +54,9 @@ NIX_LAYER11_STATE_DIR="${NIX_LAYER11_STATE_DIR:-/storage/.config/nix-integration
 NIX_LAYER11_BIN_DIR="${NIX_LAYER11_BIN_DIR:-/storage/bin}"
 NIX_LAYER12_STATE_DIR="${NIX_LAYER12_STATE_DIR:-/storage/.config/nix-integration/layer12}"
 NIX_LAYER12_DEFAULT_SSH_PORT="${NIX_LAYER12_DEFAULT_SSH_PORT:-2222}"
+NIX_LAYER13_STATE_DIR="${NIX_LAYER13_STATE_DIR:-/storage/.config/nix-integration/layer13}"
+NIX_LAYER13_MODULE_KIT_DIR="${NIX_LAYER13_MODULE_KIT_DIR:-/usr/lib/nix-integration/modules}"
+NIX_LAYER13_HOST_WORKSPACE="${NIX_LAYER13_HOST_WORKSPACE:-/storage/.config/nix-integration/modules/host}"
 CHECK_NETWORK=1
 FAILURES=0
 WARNINGS=0
@@ -1266,6 +1269,44 @@ check_layer11() {
   ok "Layer 11 fallback: host SSH remains the recovery path; bridges must leave Layer 10 stopped"
 }
 
+check_layer13() {
+  state=inactive
+  [ -f "${NIX_LAYER13_STATE_DIR}/state" ] && state=$(awk 'NR==1 {print; exit}' "${NIX_LAYER13_STATE_DIR}/state")
+  ok "Layer 13 module state: ${state}"
+  ok "Layer 13 module state dir: ${NIX_LAYER13_STATE_DIR}"
+  if [ -d "${NIX_LAYER13_MODULE_KIT_DIR}" ]; then
+    ok "Layer 13 module kit present: ${NIX_LAYER13_MODULE_KIT_DIR}"
+  else
+    warn "Layer 13 module kit missing: ${NIX_LAYER13_MODULE_KIT_DIR}"
+  fi
+  if [ -d "${NIX_LAYER13_HOST_WORKSPACE}" ]; then
+    ok "Layer 13 host module workspace present: ${NIX_LAYER13_HOST_WORKSPACE}"
+  else
+    warn "Layer 13 host module workspace not initialized: ${NIX_LAYER13_HOST_WORKSPACE}"
+  fi
+  if [ "${state}" = "active" ]; then
+    [ -f "${NIX_LAYER13_STATE_DIR}/active-manifest" ] || fail_check "Layer 13 active state missing active manifest"
+    if [ -f "${NIX_LAYER13_STATE_DIR}/active-manifest" ]; then
+      while IFS='|' read -r kind a b c d rest; do
+        [ -n "${kind}" ] || continue
+        case "${kind}" in
+          file)
+            case "${a}" in
+              bin) target="/storage/bin/${b}" ;;
+              profile.d) target="/storage/.config/profile.d/${b}" ;;
+              *) target="" ;;
+            esac
+            [ -n "${target}" ] && [ -e "${target}" ] && ok "Layer 13 module file present: ${target}" || warn "Layer 13 module file missing: ${target:-${a}/${b}}"
+            ;;
+          bridge) [ -x "${NIX_LAYER11_BIN_DIR}/${a}" ] && ok "Layer 13 module bridge present: ${a}" || warn "Layer 13 module bridge missing: ${a}" ;;
+          guest-ssh) ok "Layer 13 module declares guest SSH on port ${a}" ;;
+        esac
+      done <"${NIX_LAYER13_STATE_DIR}/active-manifest"
+    fi
+  fi
+  ok "Layer 13 fallback: modules are storage-scoped and do not replace host SSH"
+}
+
 check_network() {
   if [ "${CHECK_NETWORK}" -eq 0 ]; then
     warn "network checks skipped"
@@ -1303,6 +1344,7 @@ check_layer9
 check_layer10
 check_layer11
 check_layer12
+check_layer13
 
 if [ "${FAILURES}" -eq 0 ]; then
   echo "nix-doctor: passed with ${WARNINGS} warning(s)"
