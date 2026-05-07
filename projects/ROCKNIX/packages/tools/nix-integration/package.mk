@@ -33,6 +33,12 @@ post_install() {
   cp ${PKG_DIR}/tests/nix-integration-runtime-smoke.sh ${INSTALL}/usr/lib/nix-integration/tests
   chmod 0755 ${INSTALL}/usr/lib/nix-integration/tests/nix-integration-runtime-smoke.sh
 
+  mkdir -p ${INSTALL}/usr/lib/nix-integration/modules
+  cp -PR ${PKG_DIR}/modules/. ${INSTALL}/usr/lib/nix-integration/modules/
+
+  mkdir -p ${INSTALL}/usr/lib/nix-integration/guest
+  cp -PR ${PKG_DIR}/guest/. ${INSTALL}/usr/lib/nix-integration/guest/
+
   enable_service nix-storage-setup.service
   enable_service nix.mount
 
