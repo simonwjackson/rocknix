@@ -26,17 +26,20 @@
           diffutils
           file
           gawk
-          # Pin gcc-14. nixpkgs-unstable's default gcc is gcc-15, which
-          # breaks ncurses-6.5's C++ bindings (NCURSES_BOOL=unsigned char
-          # vs libstdc++-15's distinct-bool type traits). gcc-13 was
-          # tried first but lacks the C23 <stdckdint.h> header that
-          # sed-4.9's gnulib unconditionally includes when GCC >= 10.1.
-          # gcc-14.3 ships <stdckdint.h> and has libstdc++-14 (no
-          # ncurses ABI clash). gcc-11/12 are removed from nixpkgs.
-          # CI uses ubuntu:jammy with gcc-11 and somehow works around
-          # the stdckdint issue (likely via a libc-supplied freestanding
-          # header) but reproducing that path locally is more invasive
-          # than just bumping our toolchain a little.
+          # NOTE: this FHS env is NOT what runs the actual cold-start
+          # build. `scripts/local-image-build` invokes CI's ubuntu:jammy
+          # container instead, because every nixpkgs gcc breaks a
+          # different host-phase package against the rocknix package set:
+          #   gcc-13.4: sed-4.9 (no <stdckdint.h>, gnulib needs it)
+          #   gcc-14.3: sed-4.9 (acl.h uses bool with no <stdbool.h>)
+          #   gcc-15.2: ncurses-6.5 (NCURSES_BOOL=unsigned char vs
+          #                          libstdc++-15 distinct-bool traits)
+          # CI uses ubuntu:jammy with the default `gcc` package =
+          # gcc-11.4, and rocknix is only validated against that. We
+          # pin gcc-14 here purely so this FHS env is still usable for
+          # ad-hoc inspection (running scripts/build_distro by hand,
+          # running tests under projects/.../tests/, etc.); the actual
+          # build path now goes through podman + ./Dockerfile.
           gcc14
           gnumake
           gnupatch

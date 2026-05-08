@@ -154,26 +154,44 @@ scripts/local-image-build --cpu-percent=600 --memory-max=12G
 
 ### Implementation
 
-The wrapper does not invoke `make image` directly — it goes through
-two layers:
+The wrapper layers four things together:
 
 ```text
 scripts/local-image-build
-  -> systemd-run --user --scope --collect
-       --property=CPUQuota=...
-       --property=CPUWeight=50
-       --property=MemoryHigh=...
-       --property=MemoryMax=...
-       --property=IOWeight=50
-       --setenv=PROJECT=ROCKNIX
-       --setenv=DEVICE=...
-       --setenv=THIN_HOST=...
-     -- rocknix-env -c "nice -n 19 ionice -c 3 make image"
+  -> nix shell nixpkgs#podman+helpers -c           # rootless podman from nix
+       systemd-run --user --scope --collect       # cgroup caps + clean abort
+         --property=CPUQuota=... CPUWeight=50
+         --property=MemoryHigh=... MemoryMax=...
+         --property=IOWeight=50
+       --
+       podman run --init --rm                     # mirrors CI's docker run
+         --user $(id -u):$(id -g) --userns=keep-id
+         --volume ${PWD}:${PWD} --workdir ${PWD}
+         --env PROJECT=ROCKNIX DEVICE=... THIN_HOST=...
+         rocknix-build:local-<sha>                # built from ./Dockerfile
+         bash -c "nice -n 19 ionice -c 3 make ${DEVICE}"
 ```
 
-`rocknix-env` is the FHS sandbox shell exposed by this repo's
-`flake.nix`. It provides `/usr/include` etc. for ROCKNIX's
-`scripts/checkdeps`. No docker / podman is needed.
+Why podman, not the FHS shell? Every nixpkgs gcc breaks a different
+host-phase package against the rocknix package set:
+
+| nixpkgs gcc | breaks on |
+|---|---|
+| 13.4 | sed-4.9 (no `<stdckdint.h>`, gnulib unconditionally includes it) |
+| 14.3 | sed-4.9 (acl.h uses `bool` with no `<stdbool.h>`) |
+| 15.2 | ncurses-6.5 (`NCURSES_BOOL=unsigned char` vs libstdc++-15 distinct-bool traits) |
+
+CI uses `ubuntu:jammy` with the default `gcc` package = gcc-11.4,
+and rocknix is only validated against that. Since gcc-11/12 are
+removed from nixpkgs there is no clean nixpkgs-only path. The
+repo's root `./Dockerfile` (the one CI publishes as
+`ghcr.io/<owner>/rocknix-build:latest`) is what we run instead.
+
+Why podman, not docker? Docker requires a system-installed daemon
+plus PolicyKit setup. Podman runs rootless from `nix shell` — no
+system install, no daemon, no NixOS module. This NixOS host
+already has the prereqs (subuid/subgid, newuidmap/newgidmap setuid,
+unprivileged userns).
 
 `Nice=` and `IOSchedulingClass=` are NOT accepted as `systemd-run
 --user` properties (PolicyKit blocks them in user mode). We get
@@ -181,13 +199,29 @@ the same effect by wrapping the inner command with `nice -n 19`
 and `ionice -c 3`, which the kernel honors in cgroup v2 just as
 well as the systemd properties.
 
-### Disk + memory pre-flight
+First run builds the container image (~5 min, ~600 MB) and tags it
+by Dockerfile content hash. Subsequent runs reuse it from rootless
+podman storage (`~/.local/share/containers/`). Editing `./Dockerfile`
+automatically forces a rebuild on next run; `--rebuild-image`
+forces it manually.
+
+The one piece of user-config state created on first run is
+`~/.config/containers/policy.json` (7 lines, universal
+"accept-anything" image-signature policy). Revert with
+`rm -f ~/.config/containers/policy.json`. Everything else lives
+under `~/.cache/rocknix-local-build/podman-config/` and can be
+deleted as a unit.
+
+### Disk + memory + container pre-flight
 
 The wrapper refuses to start unless:
 
 - ≥ 30 GB free on the cwd's filesystem
 - ≥ 4 GB available memory (`MemAvailable`)
 - The user slice has `memory` and `cpu` controllers delegated
+- `/etc/subuid` and `/etc/subgid` non-empty
+- `/run/wrappers/bin/newuidmap` exists
+- `./Dockerfile` exists at repo root
 
 If `MemAvailable` is below 4 GB it warns rather than aborts —
 the cgroup MemoryHigh will still throttle the build cleanly.
@@ -213,7 +247,7 @@ round-trip required.
 | Iterating on `nix-integration/package.mk` from any branch | A (fast-iter CI) |
 | First build on a branch (no base run yet) | B (local) — or one full CI build then A from then on |
 | Offline / on a plane / CI queue is busy | B (local) |
-| Need to compare reproducibility against CI | A (forces use of CI's docker container) |
+| Need to compare reproducibility against CI | A (CI artifacts) or B (same `./Dockerfile` as CI) |
 | Small one-line tweak to `system.d/*.service` | B (local) — turnaround in 25 min on hot ccache |
 | Big change spanning toolchain + nix-integration | Full "Build" workflow (no shortcut available) |
 
