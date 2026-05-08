@@ -287,6 +287,18 @@ grep -q 'safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-nspawn@.service' 
 
 [ ! -e "${REPO_ROOT}/nix-on-rocknix-bootstrap.sh" ] || fail "standalone nix-portable bootstrap should not exist in image-first flow"
 
+# Layer 14 U1: Tailscale autostart fix encoded as a fresh-flash default.
+# Without this, tailscaled is systemd-enabled but stopped by
+# /usr/lib/autostart/common/099-networkservices a few seconds later because
+# `get_setting tailscale.up` returns empty (key absent) which != "1". Encoding
+# tailscale.up=1 in the shipped defaults makes a freshly flashed device run
+# Tailscale on first cold boot, no manual `set_setting` required. Existing
+# users with tailscale.up=0 in /storage/.config/system/configs/system.cfg are
+# not overwritten on upgrade -- ROCKNIX's settings layer keeps user values.
+SYSTEM_CFG_DEFAULTS="${REPO_ROOT}/projects/ROCKNIX/packages/rocknix/config/system/configs/system.cfg"
+[ -f "${SYSTEM_CFG_DEFAULTS}" ] || fail "missing ROCKNIX system.cfg defaults"
+grep -q '^tailscale\.up=1$' "${SYSTEM_CFG_DEFAULTS}" || fail "system.cfg defaults missing tailscale.up=1 (Layer 14 U1)"
+
 [ -f "${PKG_DIR}/tests/fixtures/layer6-user-env/manifest" ] || fail "missing Layer 6 smoke fixture manifest"
 grep -q 'bin|rocknix-layer6-smoke' "${PKG_DIR}/tests/fixtures/layer6-user-env/manifest" || fail "Layer 6 smoke fixture missing bin target"
 grep -q 'profile.d|999-rocknix-layer6-smoke' "${PKG_DIR}/tests/fixtures/layer6-user-env/manifest" || fail "Layer 6 smoke fixture missing profile.d target"
