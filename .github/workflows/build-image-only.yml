@@ -1,0 +1,203 @@
+name: Build image only (fast-iter)
+
+# Fast-iter workflow for changes that ONLY touch the install / image
+# step (e.g. nix-integration/package.mk, nix-integration scripts,
+# system.d units, profile.d files, post_install logic). Reuses the
+# heavy artifacts -- toolchain, aarch64, arm, mame-lr, qt6,
+# emu-libretro, emu-standalone -- from a previous successful "Build"
+# run on the same DEVICE, then runs ONLY the image step. Cuts the
+# wall time from ~5h to ~30 min.
+#
+# Pre-requisites:
+#   1. The base run must have completed successfully and its
+#      artifacts must still exist (the "Build" workflow's cleanup
+#      step skips deletion on feature branches; verify in the
+#      run's Artifacts panel).
+#   2. The base run must be for the same DEVICE you want to image.
+#   3. THIN_HOST is independent of the base run: the base produces
+#      install_pkg/.tar artifacts which are passthrough; the image
+#      step is what runs nix-integration's post_install with the
+#      THIN_HOST gate. Use THIN_HOST=true here to produce a
+#      main-space image from a THIN_HOST=no base run, and vice versa.
+
+on:
+  workflow_dispatch:
+    inputs:
+      BASE_RUN_ID:
+        description: "Run ID of a successful 'Build' run on this branch (numeric, e.g. 25541232603). Find it under Actions -> Build."
+        required: true
+        type: string
+      DEVICE:
+        description: "Target device"
+        required: true
+        default: "SM8550"
+        type: choice
+        options:
+          - SM8550
+          - SM8650
+          - SM8250
+          - SM6115
+          - RK3326
+          - RK3399
+          - RK3566
+          - RK3576
+          - RK3588
+          - S922X
+          - H700
+      THIN_HOST:
+        description: "Layer 14 thin-host main-space build (SM8550 only)"
+        required: false
+        default: false
+        type: boolean
+      CLEAN_NIX_INTEGRATION:
+        description: "Force re-run of nix-integration's post_install by cleaning that package before image"
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  build-image-only:
+    runs-on: ubuntu-24.04
+    env:
+      JAVA_HOME: /usr
+      PROJECT: ROCKNIX
+      DEVICE: ${{ inputs.DEVICE }}
+      ARCH: aarch64
+      DISABLE_COLORS: yes
+      CCACHE_COMPILERCHECK: content
+      CCACHE_COMPRESS: 1
+      CCACHE_COMPRESSLEVEL: 6
+      CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
+      CHEEVOS_DEV_LOGIN: ${{ secrets.CHEEVOS_DEV_LOGIN }}
+      GAMESDB_APIKEY: ${{ secrets.GAMESDB_APIKEY }}
+      SCREENSCRAPER_DEV_LOGIN: ${{ secrets.SCREENSCRAPER_DEV_LOGIN }}
+      NIGHTLY: yes
+      OFFICIAL: no
+      THIN_HOST: ${{ inputs.THIN_HOST == true && 'yes' || 'no' }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      BASE_RUN_ID: ${{ inputs.BASE_RUN_ID }}
+    steps:
+      - name: Maximize build space
+        uses: justinthelaw/maximize-github-runner-space@v0.7.0
+        with:
+          skip-components: docker-engine
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify base run is on the same branch and successful
+        run: |
+          set -euo pipefail
+          run_json=$(gh api "repos/${GH_REPO}/actions/runs/${BASE_RUN_ID}")
+          base_branch=$(echo "${run_json}" | jq -r '.head_branch')
+          base_status=$(echo "${run_json}" | jq -r '.conclusion')
+          base_workflow=$(echo "${run_json}" | jq -r '.name')
+          echo "base run: ${BASE_RUN_ID}"
+          echo "  workflow: ${base_workflow}"
+          echo "  branch:   ${base_branch}"
+          echo "  status:   ${base_status}"
+          if [ "${base_status}" != "success" ]; then
+            echo "::error::base run ${BASE_RUN_ID} did not succeed (status=${base_status})"
+            exit 1
+          fi
+          if [ "${base_workflow}" != "Build" ]; then
+            echo "::error::base run ${BASE_RUN_ID} is not a 'Build' workflow run (was '${base_workflow}')"
+            exit 1
+          fi
+
+      - name: Download arm artifact from base run
+        if: ${{ inputs.DEVICE != 'SM8650' }}
+        run: |
+          set -euo pipefail
+          gh run download "${BASE_RUN_ID}" --name "arm (${DEVICE})" --dir .
+          tar --zstd -xf build.arm.tar.zst
+          rm build.arm.tar.zst
+
+      - name: Download emu-libretro artifact from base run
+        run: |
+          set -euo pipefail
+          gh run download "${BASE_RUN_ID}" --name "emu-libretro (${DEVICE})" --dir .
+          cat build.emu-libretro.tar.part* > build.emu-libretro.tar
+          tar -xf build.emu-libretro.tar
+          rm build.emu-libretro.tar*
+
+      - name: Download emu-standalone artifact from base run
+        run: |
+          set -euo pipefail
+          gh run download "${BASE_RUN_ID}" --name "emu-standalone (${DEVICE})" --dir .
+          cat build.emu-standalone.tar.part* > build.emu-standalone.tar
+          tar --skip-old-files -xf build.emu-standalone.tar
+          rm build.emu-standalone.tar*
+
+      # Need ${OWNER_LC} for the docker image tag.
+      - name: Set lowercase owner name
+        id: owner
+        run: echo "OWNER_LC=$(echo '${{ github.repository_owner }}' | tr A-Z a-z)" >> $GITHUB_OUTPUT
+
+      # Force a re-run of nix-integration's post_install by removing
+      # its install_pkg checkpoint. The build_distro detects the
+      # missing stamp and re-installs (no recompile needed since
+      # PKG_TOOLCHAIN="manual"). Without this, post_install changes
+      # would not take effect.
+      - name: Clean nix-integration to force post_install re-run
+        if: ${{ inputs.CLEAN_NIX_INTEGRATION }}
+        run: |
+          ./scripts/get_env > .env
+          docker run --init --env-file .env --rm --user $(id -u):$(id -g) \
+            -v ${PWD}:${PWD} -w ${PWD} \
+            "ghcr.io/${{ steps.owner.outputs.OWNER_LC }}/rocknix-build:latest" \
+            bash -c "./scripts/clean nix-integration || true"
+
+      - name: build
+        run: |
+          ./scripts/get_env > .env
+          set -e
+          { docker run --init --env-file .env --rm --user $(id -u):$(id -g) \
+              -v ${PWD}:${PWD} -w ${PWD} \
+              "ghcr.io/${{ steps.owner.outputs.OWNER_LC }}/rocknix-build:latest" \
+              bash -c "./scripts/build_distro"; echo $? > docker_exit_code; } \
+            | tee output.log \
+            | grep -E --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL" || true
+          exit_code=$(<docker_exit_code)
+          exit $exit_code
+
+      - name: Archive output.logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: output.logs (${{ inputs.DEVICE }}-image-only)
+          path: |
+            output.log
+            ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.threads/logs/
+
+      - name: Get date
+        run: echo "DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
+
+      - name: Compute artifact suffix
+        id: artifact-suffix
+        run: |
+          if [ "${THIN_HOST}" = "yes" ]; then
+            echo "suffix=-thin-host" >> $GITHUB_OUTPUT
+          else
+            echo "suffix=" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ROCKNIX-image-${{ inputs.DEVICE }}${{ steps.artifact-suffix.outputs.suffix }}-${{ env.DATE }}-fastiter
+          path: |
+            target/ROCKNIX-*.img.gz
+            target/ROCKNIX-*.img.gz.sha256
+          compression-level: 0
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ROCKNIX-update-${{ inputs.DEVICE }}${{ steps.artifact-suffix.outputs.suffix }}-${{ env.DATE }}-fastiter
+          path: |
+            target/ROCKNIX-*.tar
+            target/ROCKNIX-*.tar.sha256
+          compression-level: 0
+          if-no-files-found: error
