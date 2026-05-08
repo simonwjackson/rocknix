@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# Build a ROCKNIX image locally with strict cgroup caps so the SSH
+# session and host stay responsive throughout. Uses the same Nix
+# flake devShell + rocknix-env FHS env that interactive iteration
+# uses; no docker/podman required.
+#
+# SSH-safety contract:
+#   - Reserves 25% of CPU threads (minimum 2) for the host.
+#   - Caps memory below host total to leave headroom for the OS.
+#   - Hard-kills the build before the kernel OOM-kills the SSH
+#     session or the agent.
+#   - Build runs at nice=19 and ionice idle, so any foreground
+#     work (typing, ls, navigating, this script's status checks)
+#     preempts it instantly.
+#
+# Usage:
+#   scripts/local-image-build [options]
+#
+# Options:
+#   --device=DEVICE      ROCKNIX device target (default: SM8550)
+#   --thin-host          Set THIN_HOST=yes (Layer 14 main-space build)
+#   --background         Detach the build and tail logs to a file
+#   --check              Print resolved caps and exit (no build)
+#   --status             Show running local build (if any)
+#   --abort              Kill the running local build
+#   --memory-high=SIZE   Override soft memory limit (default: auto)
+#   --memory-max=SIZE    Override hard memory limit (default: auto)
+#   --cpu-percent=N      Override CPU cap (default: auto)
+#   -h, --help           This help
+
+set -u
+
+DEVICE="${DEVICE:-SM8550}"
+THIN_HOST="${THIN_HOST:-no}"
+BACKGROUND=0
+CHECK=0
+STATUS=0
+ABORT=0
+MEMORY_HIGH=""
+MEMORY_MAX=""
+CPU_PERCENT=""
+
+UNIT_NAME="rocknix-local-image-build"
+LOG_DIR="${HOME}/.cache/rocknix-local-build"
+LOG_FILE="${LOG_DIR}/$(date -u +%Y%m%dT%H%M%SZ).log"
+
+err() { printf '%s\n' "$*" >&2; }
+die() { err "FATAL: $*"; exit 1; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --device=*)        DEVICE="${1#*=}"; shift ;;
+    --thin-host)       THIN_HOST=yes; shift ;;
+    --no-thin-host)    THIN_HOST=no; shift ;;
+    --background)      BACKGROUND=1; shift ;;
+    --check)           CHECK=1; shift ;;
+    --status)          STATUS=1; shift ;;
+    --abort)           ABORT=1; shift ;;
+    --memory-high=*)   MEMORY_HIGH="${1#*=}"; shift ;;
+    --memory-max=*)    MEMORY_MAX="${1#*=}"; shift ;;
+    --cpu-percent=*)   CPU_PERCENT="${1#*=}"; shift ;;
+    -h|--help)         grep '^#' "$0" | sed 's/^# \?//'; exit 0 ;;
+    *)                 die "unknown arg: $1 (try --help)" ;;
+  esac
+done
+
+# ----- subcommand dispatch -----
+
+if [ "${STATUS}" = "1" ]; then
+  if systemctl --user is-active --quiet "${UNIT_NAME}.scope" 2>/dev/null; then
+    cgrp="/sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/app.slice/${UNIT_NAME}.scope"
+    printf 'rocknix-local-image-build is RUNNING\n'
+    printf '  cgroup:        %s\n' "${cgrp}"
+    [ -r "${cgrp}/cpu.max" ]    && printf '  cpu.max:       %s\n' "$(cat "${cgrp}/cpu.max")"
+    [ -r "${cgrp}/memory.high" ]&& printf '  memory.high:   %s\n' "$(cat "${cgrp}/memory.high")"
+    [ -r "${cgrp}/memory.max" ] && printf '  memory.max:    %s\n' "$(cat "${cgrp}/memory.max")"
+    [ -r "${cgrp}/memory.current" ]&& printf '  memory.current %s\n' "$(cat "${cgrp}/memory.current")"
+    [ -r "${cgrp}/cpu.stat" ]   && printf '  cpu.stat:\n'    && sed 's/^/    /' "${cgrp}/cpu.stat"
+    if [ -d "${LOG_DIR}" ]; then
+      latest=$(ls -1t "${LOG_DIR}"/*.log 2>/dev/null | head -1)
+      [ -n "${latest:-}" ] && printf '  latest log:    %s\n' "${latest}"
+    fi
+    exit 0
+  else
+    printf 'rocknix-local-image-build is NOT running\n'
+    exit 1
+  fi
+fi
+
+if [ "${ABORT}" = "1" ]; then
+  if systemctl --user is-active --quiet "${UNIT_NAME}.scope" 2>/dev/null; then
+    err "stopping ${UNIT_NAME}.scope ..."
+    systemctl --user stop "${UNIT_NAME}.scope"
+    sleep 1
+    systemctl --user is-active "${UNIT_NAME}.scope" 2>&1 || true
+    exit 0
+  else
+    err "no running local build"
+    exit 1
+  fi
+fi
+
+# ----- preflight -----
+
+[ -f "${PWD}/flake.nix" ] || die "must run from rocknix repo root (cwd=${PWD})"
+[ -f "${PWD}/Makefile" ]  || die "Makefile missing -- not a rocknix tree?"
+
+# Disk: ROCKNIX builds need ~25-30 GB scratch.
+free_kb=$(df --output=avail "${PWD}" | tail -1)
+free_gb=$((free_kb / 1024 / 1024))
+[ "${free_gb}" -ge 30 ] || die "need >=30 GB free in ${PWD}, have ${free_gb} GB"
+
+# Memory: at least 4 GB available before starting.
+mem_avail_mb=$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo)
+[ "${mem_avail_mb}" -ge 4096 ] || \
+  err "WARNING: only ${mem_avail_mb} MB available memory; build may throttle hard"
+
+# Cgroup delegation: confirm user slice has memory + cpu controllers.
+slice_ctrls=$(cat "/sys/fs/cgroup/user.slice/user-$(id -u).slice/cgroup.controllers" 2>/dev/null || echo "")
+case "${slice_ctrls}" in
+  *memory*) ;; *) die "user slice missing 'memory' controller; cannot enforce caps" ;;
+esac
+case "${slice_ctrls}" in
+  *cpu*) ;; *) die "user slice missing 'cpu' controller; cannot enforce caps" ;;
+esac
+
+# rocknix-env binary: come from the dev shell or via nix run.
+if ! command -v rocknix-env >/dev/null 2>&1; then
+  err "WARNING: rocknix-env not on PATH; will use 'nix run .#rocknix-env -- -c'"
+  ROCKNIX_ENV_CMD="nix run --quiet '${PWD}#rocknix-env' --"
+else
+  ROCKNIX_ENV_CMD="rocknix-env"
+fi
+
+# ----- compute caps (auto unless overridden) -----
+
+NPROC=$(nproc)
+TOTAL_MB=$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo)
+
+# Reserve 25% of threads (min 2, max 6) for the host.
+reserve_cpu=$((NPROC / 4))
+[ "${reserve_cpu}" -lt 2 ] && reserve_cpu=2
+[ "${reserve_cpu}" -gt 6 ] && reserve_cpu=6
+build_cpu=$((NPROC - reserve_cpu))
+
+if [ -z "${CPU_PERCENT}" ]; then
+  CPU_PERCENT=$((build_cpu * 100))
+fi
+
+# Reserve max(4 GB, 12% of RAM) for the host on MemoryMax.
+host_reserve_mb=$((TOTAL_MB * 12 / 100))
+[ "${host_reserve_mb}" -lt 4096 ] && host_reserve_mb=4096
+
+if [ -z "${MEMORY_MAX}" ]; then
+  MEMORY_MAX="$((TOTAL_MB - host_reserve_mb))M"
+fi
+
+if [ -z "${MEMORY_HIGH}" ]; then
+  # Soft limit 25% below MemoryMax so kernel throttles before it kills.
+  high_mb=$(( (TOTAL_MB - host_reserve_mb) * 75 / 100 ))
+  MEMORY_HIGH="${high_mb}M"
+fi
+
+# ----- print resolved caps -----
+
+cat << EOF
+======================================================================
+  ROCKNIX local image build
+======================================================================
+  PROJECT          ROCKNIX
+  DEVICE           ${DEVICE}
+  THIN_HOST        ${THIN_HOST}
+  cwd              ${PWD}
+
+  Host capacity
+    CPUs           ${NPROC} threads
+    RAM total      ${TOTAL_MB} MB
+    Disk free      ${free_gb} GB
+    Memory free    ${mem_avail_mb} MB
+
+  Build cgroup caps (SSH stays responsive)
+    CPUQuota       ${CPU_PERCENT}%   (= ${build_cpu} of ${NPROC} threads, ${reserve_cpu} reserved)
+    MemoryHigh     ${MEMORY_HIGH}   (soft, kernel throttles)
+    MemoryMax      ${MEMORY_MAX}   (hard, kernel kills the build before host swaps/OOMs)
+    IOWeight       50      (default 100 -> half-weight, NVMe stays responsive)
+    Nice           19      (lowest CPU priority -- SSH and shell preempt instantly)
+    IOSchedClass   idle    (build only gets disk when nothing else needs it)
+
+  Output
+    ${PWD}/target/ROCKNIX-${DEVICE}*.tar
+    ${PWD}/target/ROCKNIX-${DEVICE}*.img.gz
+    Log: ${LOG_FILE}
+EOF
+
+if [ "${CHECK}" = "1" ]; then
+  echo "(--check: not running build)"
+  exit 0
+fi
+
+# ----- bail if a build is already running -----
+
+if systemctl --user is-active --quiet "${UNIT_NAME}.scope" 2>/dev/null; then
+  die "${UNIT_NAME}.scope is already running; use --status or --abort"
+fi
+
+mkdir -p "${LOG_DIR}"
+
+# ----- the actual launch -----
+
+# We use --scope (not --service) so the parent process stays in our
+# shell, which means Ctrl+C cleanly terminates the build cgroup.
+# --collect garbage-collects the unit on exit.
+# --setenv carries DEVICE / THIN_HOST through buildFHSEnv.
+# Note: Nice= and IOSchedulingClass= are NOT accepted as systemd-run
+# --user properties (PolicyKit blocks them). We achieve the same
+# effect with `nice -n 19 ionice -c 3` wrapping the inner command.
+RUN_CMD=(
+  systemd-run
+    --user
+    --scope
+    --collect
+    --quiet
+    --unit="${UNIT_NAME}"
+    --description="ROCKNIX local image build (${DEVICE} THIN_HOST=${THIN_HOST})"
+    --property="CPUQuota=${CPU_PERCENT}%"
+    --property="CPUWeight=50"
+    --property="MemoryHigh=${MEMORY_HIGH}"
+    --property="MemoryMax=${MEMORY_MAX}"
+    --property="IOWeight=50"
+    --setenv="PROJECT=ROCKNIX"
+    --setenv="DEVICE=${DEVICE}"
+    --setenv="THIN_HOST=${THIN_HOST}"
+    --setenv="LC_ALL=C.UTF-8"
+)
+
+# Inside the FHS shell we run `make image` -- same entrypoint as the
+# README/shellHook. The nice + ionice wrap gives the build idle CPU
+# priority and idle disk priority; SSH and shell preempt instantly.
+INNER_CMD="nice -n 19 ionice -c 3 make image"
+
+if [ "${BACKGROUND}" = "1" ]; then
+  err "==> launching in background; tailing ${LOG_FILE} (Ctrl+C detaches)"
+  nohup "${RUN_CMD[@]}" -- ${ROCKNIX_ENV_CMD} -c "${INNER_CMD}" \
+    > "${LOG_FILE}" 2>&1 < /dev/null &
+  bg_pid=$!
+  disown "${bg_pid}" 2>/dev/null || true
+  sleep 2
+  if systemctl --user is-active --quiet "${UNIT_NAME}.scope" 2>/dev/null; then
+    err "==> background scope active. status:  scripts/local-image-build --status"
+    err "==>                          abort:   scripts/local-image-build --abort"
+    err "==> tailing log (Ctrl+C detaches; build keeps running)..."
+    tail -f "${LOG_FILE}"
+  else
+    err "FAILED to start background build; see ${LOG_FILE}"
+    tail -30 "${LOG_FILE}" >&2 || true
+    exit 1
+  fi
+else
+  err "==> launching foreground; logs to ${LOG_FILE}"
+  err "==> Ctrl+C will stop the build cleanly (SIGINT propagates to scope)"
+  "${RUN_CMD[@]}" -- ${ROCKNIX_ENV_CMD} -c "${INNER_CMD}" 2>&1 | tee "${LOG_FILE}"
+fi
