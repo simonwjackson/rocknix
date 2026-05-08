@@ -543,14 +543,59 @@ grep -q 'rocknix-host-reclaim' "${PKG_DIR}/package.mk" \
   || fail "package.mk does not install Layer 14 reclaim helper (U7)"
 grep -q 'rocknix-recovery-toggle' "${PKG_DIR}/package.mk" \
   || fail "package.mk does not install Layer 14 recovery-toggle script (U4)"
-grep -q 'enable_service rocknix-recovery-toggle' "${PKG_DIR}/package.mk" \
-  || fail "package.mk does not enable recovery-toggle service (U4)"
-grep -q 'enable_service rocknix-graphical.target' "${PKG_DIR}/package.mk" \
-  || fail "package.mk does not enable rocknix-graphical.target under THIN_HOST=yes (U6)"
-grep -q 'enable_service rocknix-guest-v2.service' "${PKG_DIR}/package.mk" \
-  || fail "package.mk does not enable rocknix-guest-v2.service under THIN_HOST=yes (U6)"
-grep -q 'flash/HOW-TO-FALL-BACK.md' "${PKG_DIR}/package.mk" \
+# Structural assertion: the THIN_HOST=yes branch must enable
+# recovery-toggle, rocknix-graphical.target, and rocknix-guest-v2;
+# the THIN_HOST=no branch must NOT enable any of those AND must
+# scrub the rocknix-graphical.target file that scripts/install's
+# system.d glob otherwise drops in unconditionally. (Lesson from
+# the first Thor flash 2026-05-08: shipping the target on a
+# THIN_HOST=no image let the toggle's existence-check fire and
+# rewrite default.target.)
+thin_host_block_yes=$(awk '
+  /if \[ "\$\{THIN_HOST\}" = "yes" \]; then/ { in_yes=1; next }
+  in_yes && /^  else/ { in_yes=0 }
+  in_yes && /^  fi/   { in_yes=0 }
+  in_yes
+' "${PKG_DIR}/package.mk")
+thin_host_block_no=$(awk '
+  /if \[ "\$\{THIN_HOST\}" = "yes" \]; then/ { in_yes=1; next }
+  in_yes && /^  else/ { in_yes=0; in_no=1; next }
+  in_no  && /^  fi/   { in_no=0 }
+  in_no
+' "${PKG_DIR}/package.mk")
+
+[ -n "${thin_host_block_yes}" ] || fail "package.mk: THIN_HOST=yes block is empty (U6)"
+[ -n "${thin_host_block_no}" ]  || fail "package.mk: THIN_HOST=no else-branch missing (U6, fix-after-flash regression guard)"
+
+printf '%s\n' "${thin_host_block_yes}" | grep -q 'enable_service rocknix-recovery-toggle' \
+  || fail "package.mk: enable_service rocknix-recovery-toggle must live INSIDE the THIN_HOST=yes block (U4)"
+printf '%s\n' "${thin_host_block_yes}" | grep -q 'enable_service rocknix-graphical.target' \
+  || fail "package.mk: enable_service rocknix-graphical.target must live inside THIN_HOST=yes block (U6)"
+printf '%s\n' "${thin_host_block_yes}" | grep -q 'enable_service rocknix-guest-v2.service' \
+  || fail "package.mk: enable_service rocknix-guest-v2.service must live inside THIN_HOST=yes block (U6)"
+printf '%s\n' "${thin_host_block_yes}" | grep -q 'flash/HOW-TO-FALL-BACK.md' \
   || fail "package.mk does not ship HOW-TO-FALL-BACK.md to /flash under THIN_HOST=yes (U9)"
+
+printf '%s\n' "${thin_host_block_no}" | grep -q 'safe_remove .*rocknix-graphical.target' \
+  || fail "package.mk: THIN_HOST=no else-branch must safe_remove rocknix-graphical.target (regression: 2026-05-08 first-flash contract violation)"
+
+# And the negative shape: NONE of the enable_service / cp HOW-TO
+# lines may live OUTSIDE both branches (i.e., at top level of
+# post_install before the if).
+post_install_top=$(awk '
+  /^post_install/ { in_post=1; next }
+  /if \[ "\$\{THIN_HOST\}" = "yes" \]; then/ && in_post { in_post=0 }
+  in_post
+' "${PKG_DIR}/package.mk")
+if printf '%s\n' "${post_install_top}" | grep -q 'enable_service rocknix-recovery-toggle'; then
+  fail "package.mk: enable_service rocknix-recovery-toggle must NOT be unconditional (regression: 2026-05-08 first-flash bug)"
+fi
+if printf '%s\n' "${post_install_top}" | grep -q 'enable_service rocknix-graphical.target'; then
+  fail "package.mk: enable_service rocknix-graphical.target must NOT be unconditional (U6)"
+fi
+if printf '%s\n' "${post_install_top}" | grep -q 'enable_service rocknix-guest-v2.service'; then
+  fail "package.mk: enable_service rocknix-guest-v2.service must NOT be unconditional (U6)"
+fi
 
 # U8: standalone soak harness.
 check_script "${PKG_DIR}/scripts/rocknix-layer14-soak"
