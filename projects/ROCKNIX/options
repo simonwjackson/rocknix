@@ -46,5 +46,15 @@
   # Experimental systemd-nspawn preservation for Layer 9 validation (yes / no)
     NIX_NSPAWN_SUPPORT="${NIX_NSPAWN_SUPPORT:-yes}"
 
+  # Layer 14 thin-host main-space build (yes / no). When yes AND DEVICE=SM8550,
+  # the produced image boots into the Nix guest as the default graphical.target.
+  # Legacy ROCKNIX userland (sway, essway, pipewire, wireplumber, bluetooth,
+  # connman, iwd, wpa_supplicant, host inputplumber) stays installed but is
+  # not Wanted by the new target -- recovery (/flash/rocknix.no-nspawn or
+  # rocknix.safe=1 cmdline) brings the legacy userland up via the recovery
+  # toggle. SM8550-only; nix-integration package.mk hard-fails on other
+  # devices when THIN_HOST=yes.
+    THIN_HOST="${THIN_HOST:-no}"
+
   # Satisfy legacy build dependencies
     SWAP_SUPPORT="yes"

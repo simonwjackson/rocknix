@@ -237,7 +237,25 @@ grep -R -q 'KbdInteractiveAuthentication = false' "${PKG_DIR}/guest" || fail "La
 grep -R -q 'PermitRootLogin = "prohibit-password"' "${PKG_DIR}/guest" || fail "Layer 12 guest root SSH must be key-only"
 grep -R -q 'users.users.root.hashedPassword = "!"' "${PKG_DIR}/guest" || fail "Layer 10b guest must lock root password"
 ! grep -R -q 'ssh-rsa\|ssh-ed25519\|ecdsa-sha2-' "${PKG_DIR}/guest" || fail "Layer 12 guest must not ship authorized keys"
-! grep -R --include='*.nix' -q '/dev/dri\|PipeWire\|PulseAudio\|/dev/input\|Steam\|FEX\|WAYLAND_DISPLAY' "${PKG_DIR}/guest" || fail "Layer 10b guest must not reference forbidden passthrough surfaces"
+# Layer 10b guest must not reference forbidden passthrough surfaces in the
+# files that flow into the bootable rootfs artifact (rocknix-guest config
+# and its transitive imports). Layer 14 deliberately adds passthrough-aware
+# modules under guest/modules/{display,audio,network}.nix and
+# guest/profiles/main-space.nix; those compose into a SEPARATE NixOS
+# configuration (rocknix-guest-main-space) and must NOT contaminate the
+# Layer 10b artifact. This check enforces that scoping by listing the
+# Layer 10b/12 file set explicitly.
+LAYER10B_GUEST_FILES="\
+${PKG_DIR}/guest/rocknix-guest.nix \
+${PKG_DIR}/guest/profiles/minimal.nix \
+${PKG_DIR}/guest/profiles/ssh.nix \
+${PKG_DIR}/guest/modules/base.nix \
+${PKG_DIR}/guest/modules/ssh.nix \
+${PKG_DIR}/guest/modules/tools.nix"
+for f in ${LAYER10B_GUEST_FILES}; do
+  [ -f "${f}" ] || fail "Layer 10b guest file missing: ${f}"
+done
+! grep -q '/dev/dri\|PipeWire\|PulseAudio\|/dev/input\|Steam\|FEX\|WAYLAND_DISPLAY' ${LAYER10B_GUEST_FILES} || fail "Layer 10b guest must not reference forbidden passthrough surfaces"
 grep -q 'layer10_nspawn_bin' "${PKG_DIR}/scripts/nixctl" || fail "nixctl must resolve current compatible Layer 10 nspawn"
 grep -q 'nspawn_bin=' "${PKG_DIR}/scripts/nixctl" || fail "Layer 10 provenance must record resolved nspawn"
 grep -q 'sha256sum result/tarball' "${PKG_DIR}/guest/README.md" || fail "Layer 10b guest README must document artifact checksum capture"
@@ -371,5 +389,202 @@ l11_requested_refs=$(grep -c 'LAYER11_REQUESTED' "${SCRIPT_DIR}/nix-integration-
 l12_requested_refs=$(grep -c 'LAYER12_REQUESTED' "${SCRIPT_DIR}/nix-integration-runtime-smoke.sh")
 [ "${l11_requested_refs}" -ge 8 ] || fail "hardware Layer 11 request must survive earlier layer skip gates (U4)"
 [ "${l12_requested_refs}" -ge 9 ] || fail "hardware Layer 12 request must survive earlier layer skip gates (U4)"
+
+# =============================================================================
+# Layer 14: thin host, Nix main-space
+# =============================================================================
+
+# U2: rocknix-guest-v2.service shape (the clean shopping-list nspawn unit).
+L14_UNIT="${PKG_DIR}/system.d/rocknix-guest-v2.service"
+[ -f "${L14_UNIT}" ] || fail "missing Layer 14 unit (U2)"
+
+# Required binds (positive shape).
+for required_bind in \
+  '/dev/snd' \
+  '/dev/rfkill' \
+  '/dev/dri/card0' \
+  '/dev/dri/renderD128' \
+  '/dev/console' \
+  '/dev/input' \
+  '/sys/class/backlight' \
+  '/sys/class/leds' \
+  '/sys/class/devfreq' \
+  '/sys/devices/system/cpu/cpufreq' \
+  '/storage/roms' \
+  '/storage/.guest'; do
+  grep -qF -- "${required_bind}" "${L14_UNIT}" \
+    || fail "Layer 14 unit missing required bind: ${required_bind} (U2)"
+done
+
+# Forbidden binds (negative shape; the lessons of Tier A-E). Strip comment
+# lines first so descriptive prose explaining what NOT to do does not
+# itself trip the check.
+L14_UNIT_BODY=$(grep -v '^[[:space:]]*#' "${L14_UNIT}")
+for forbidden in \
+  '--bind-ro=/usr' \
+  '--bind-ro=/lib' \
+  '--bind-ro=/etc/profile' \
+  '--bind=/etc/resolv.conf' \
+  '--bind-ro=/etc/resolv.conf' \
+  '--bind-ro=/etc/ssh/authorized_keys' \
+  '--bind=/run/0-runtime-dir' \
+  '--bind=/tmp/.X11-unix' \
+  '--bind=/storage:/storage'; do
+  if printf '%s\n' "${L14_UNIT_BODY}" | grep -qF -- "${forbidden}"; then
+    fail "Layer 14 unit contains forbidden bind matching: ${forbidden} (U2)"
+  fi
+done
+
+# Lifecycle and safety knobs.
+grep -q 'WorkingDirectory=/storage/machines/rocknix-guest' "${L14_UNIT}" \
+  || fail "Layer 14 unit missing WorkingDirectory= (U2)"
+grep -qE '^Restart=on-failure' "${L14_UNIT}" \
+  || fail "Layer 14 unit must Restart=on-failure (U2)"
+grep -qE '^WatchdogSec=' "${L14_UNIT}" \
+  || fail "Layer 14 unit missing WatchdogSec= (U2)"
+grep -q 'ExecStartPre=/usr/bin/rocknix-layer14-prep' "${L14_UNIT}" \
+  || fail "Layer 14 unit missing prep ExecStartPre (U2)"
+grep -q 'ExecStopPost=/usr/bin/rocknix-host-reclaim' "${L14_UNIT}" \
+  || fail "Layer 14 unit missing reclaim ExecStopPost (U2/U7)"
+grep -q -- '--register=no' "${L14_UNIT}" \
+  || fail "Layer 14 unit must use --register=no (U2)"
+if printf '%s\n' "${L14_UNIT_BODY}" | grep -qF -- '--private-network'; then
+  fail "Layer 14 unit must NOT use --private-network -- shared netns is the main-space contract (U2)"
+fi
+if printf '%s\n' "${L14_UNIT_BODY}" | grep -q 'WantedBy=multi-user.target'; then
+  fail "Layer 14 unit must NOT WantedBy=multi-user.target -- THIN_HOST=yes wires it via rocknix-graphical.target (U2)"
+fi
+grep -q 'WantedBy=rocknix-graphical.target' "${L14_UNIT}" \
+  || fail "Layer 14 unit must WantedBy=rocknix-graphical.target (U2)"
+
+# U2 helpers: prep + reclaim scripts.
+check_script "${PKG_DIR}/scripts/rocknix-layer14-prep"
+check_script "${PKG_DIR}/scripts/rocknix-host-reclaim"
+grep -q 'ROCKNIX_LAYER14_GUEST_ROOT' "${PKG_DIR}/scripts/rocknix-layer14-prep" \
+  || fail "prep script missing fixtureable guest-root override (U2)"
+grep -q 'resolv.conf.layer14-owned' "${PKG_DIR}/scripts/rocknix-layer14-prep" \
+  || fail "prep script missing resolv.conf ownership marker (U2)"
+grep -q 'SERVICE_RESULT' "${PKG_DIR}/scripts/rocknix-host-reclaim" \
+  || fail "reclaim script must distinguish exits via SERVICE_RESULT (U7)"
+grep -q 'reclaim skipped' "${PKG_DIR}/scripts/rocknix-host-reclaim" \
+  || fail "reclaim script must have a graceful-exit skip path (U7)"
+grep -q 'sway essway' "${PKG_DIR}/scripts/rocknix-host-reclaim" \
+  || fail "reclaim script must restart legacy host UI services on crash (U7)"
+
+# U4 + U5: recovery toggle service + script + graphical target.
+L14_TOGGLE_UNIT="${PKG_DIR}/system.d/rocknix-recovery-toggle.service"
+L14_TOGGLE_SCRIPT="${PKG_DIR}/scripts/rocknix-recovery-toggle"
+L14_TARGET_UNIT="${PKG_DIR}/system.d/rocknix-graphical.target"
+[ -f "${L14_TOGGLE_UNIT}" ] || fail "missing Layer 14 recovery-toggle unit (U4)"
+[ -f "${L14_TARGET_UNIT}" ] || fail "missing Layer 14 graphical target (U5)"
+check_script "${L14_TOGGLE_SCRIPT}"
+grep -q 'DefaultDependencies=no' "${L14_TOGGLE_UNIT}" \
+  || fail "recovery-toggle must DefaultDependencies=no (U4)"
+grep -q 'Before=sysinit.target' "${L14_TOGGLE_UNIT}" \
+  || fail "recovery-toggle must run Before=sysinit.target (U4)"
+grep -q 'WantedBy=sysinit.target' "${L14_TOGGLE_UNIT}" \
+  || fail "recovery-toggle must be WantedBy=sysinit.target (U4)"
+grep -q '/flash/rocknix.no-nspawn' "${L14_TOGGLE_SCRIPT}" \
+  || fail "recovery-toggle script missing flag-file path (U4)"
+grep -q 'rocknix\\.safe=1' "${L14_TOGGLE_SCRIPT}" \
+  || fail "recovery-toggle script missing kernel cmdline pattern (U4)"
+grep -q 'systemctl set-default' "${L14_TOGGLE_SCRIPT}" \
+  || fail "recovery-toggle script must call systemctl set-default (U4)"
+grep -q 'rocknix-graphical.target' "${L14_TOGGLE_SCRIPT}" \
+  || fail "recovery-toggle script must reference rocknix-graphical.target (U4)"
+grep -q 'graphical.target' "${L14_TOGGLE_SCRIPT}" \
+  || fail "recovery-toggle script must reference legacy graphical.target (U4)"
+grep -q 'Wants=rocknix-guest-v2.service' "${L14_TARGET_UNIT}" \
+  || fail "rocknix-graphical.target must Wants= the v2 guest unit (U5)"
+grep -q 'Alias=default.target' "${L14_TARGET_UNIT}" \
+  || fail "rocknix-graphical.target must Alias=default.target so set-default works (U5)"
+
+# U3: guest NixOS modules for Layer 14 main-space.
+for f in \
+  "${PKG_DIR}/guest/modules/display.nix" \
+  "${PKG_DIR}/guest/modules/audio.nix" \
+  "${PKG_DIR}/guest/modules/network.nix" \
+  "${PKG_DIR}/guest/profiles/main-space.nix"; do
+  [ -f "${f}" ] || fail "missing Layer 14 guest module: ${f} (U3)"
+done
+grep -q 'programs.sway' "${PKG_DIR}/guest/modules/display.nix" \
+  || fail "Layer 14 display module must enable sway (U3)"
+grep -q 'hardware.graphics' "${PKG_DIR}/guest/modules/display.nix" \
+  || fail "Layer 14 display module must enable hardware.graphics (U3)"
+grep -q 'services.pipewire' "${PKG_DIR}/guest/modules/audio.nix" \
+  || fail "Layer 14 audio module must enable pipewire (U3)"
+grep -q 'services.dbus' "${PKG_DIR}/guest/modules/audio.nix" \
+  || fail "Layer 14 audio module must enable D-Bus (bluez prerequisite) (U3)"
+grep -q 'hardware.bluetooth' "${PKG_DIR}/guest/modules/audio.nix" \
+  || fail "Layer 14 audio module must enable bluetooth (U3)"
+grep -q 'networking.networkmanager' "${PKG_DIR}/guest/modules/network.nix" \
+  || fail "Layer 14 network module must enable NetworkManager (U3)"
+grep -q 'networking.nftables' "${PKG_DIR}/guest/modules/network.nix" \
+  || fail "Layer 14 network module must use nftables (kernel lacks ip_tables) (U3)"
+grep -q 'networking.resolvconf' "${PKG_DIR}/guest/modules/network.nix" \
+  || fail "Layer 14 network module must disable resolvconf (DNS-bleed lesson) (U3)"
+grep -q 'time.timeZone' "${PKG_DIR}/guest/profiles/main-space.nix" \
+  || fail "Layer 14 main-space profile must set time.timeZone (Tier E2 tz-data lesson) (U3)"
+grep -q 'imports' "${PKG_DIR}/guest/profiles/main-space.nix" \
+  || fail "Layer 14 main-space profile must compose modules via imports (U3)"
+grep -q 'nixosConfigurations.rocknix-guest-main-space' "${PKG_DIR}/guest/flake.nix" \
+  || fail "guest flake must expose rocknix-guest-main-space (U3)"
+
+# U6: THIN_HOST build flag, gated SM8550-only, wired into the package install.
+grep -q 'THIN_HOST=' "${REPO_ROOT}/projects/ROCKNIX/options" \
+  || fail "missing THIN_HOST build option (U6)"
+grep -q 'THIN_HOST=' "${PKG_DIR}/package.mk" \
+  || fail "package.mk missing THIN_HOST plumbing (U6)"
+grep -q 'THIN_HOST.*=.*"yes".*DEVICE.*!=.*"SM8550"' "${PKG_DIR}/package.mk" \
+  || fail "package.mk missing SM8550-only hard guard for THIN_HOST=yes (U6/R7)"
+grep -q 'rocknix-layer14-prep' "${PKG_DIR}/package.mk" \
+  || fail "package.mk does not install Layer 14 prep helper (U2)"
+grep -q 'rocknix-host-reclaim' "${PKG_DIR}/package.mk" \
+  || fail "package.mk does not install Layer 14 reclaim helper (U7)"
+grep -q 'rocknix-recovery-toggle' "${PKG_DIR}/package.mk" \
+  || fail "package.mk does not install Layer 14 recovery-toggle script (U4)"
+grep -q 'enable_service rocknix-recovery-toggle' "${PKG_DIR}/package.mk" \
+  || fail "package.mk does not enable recovery-toggle service (U4)"
+grep -q 'enable_service rocknix-graphical.target' "${PKG_DIR}/package.mk" \
+  || fail "package.mk does not enable rocknix-graphical.target under THIN_HOST=yes (U6)"
+grep -q 'enable_service rocknix-guest-v2.service' "${PKG_DIR}/package.mk" \
+  || fail "package.mk does not enable rocknix-guest-v2.service under THIN_HOST=yes (U6)"
+grep -q 'flash/HOW-TO-FALL-BACK.md' "${PKG_DIR}/package.mk" \
+  || fail "package.mk does not ship HOW-TO-FALL-BACK.md to /flash under THIN_HOST=yes (U9)"
+
+# U8: standalone soak harness.
+check_script "${PKG_DIR}/scripts/rocknix-layer14-soak"
+grep -q 'rocknix-layer14-soak' "${PKG_DIR}/package.mk" \
+  || fail "package.mk does not install rocknix-layer14-soak (U8)"
+grep -q 'check_resolv_owned' "${PKG_DIR}/scripts/rocknix-layer14-soak" \
+  || fail "soak harness missing resolv.conf bleed check (U8)"
+grep -q 'check_no_host_usr_in_guest_path' "${PKG_DIR}/scripts/rocknix-layer14-soak" \
+  || fail "soak harness missing host /usr leak check (U8)"
+grep -q 'check_host_ssh_responsive' "${PKG_DIR}/scripts/rocknix-layer14-soak" \
+  || fail "soak harness missing host SSH check (U8)"
+grep -q 'check_memory_no_growth' "${PKG_DIR}/scripts/rocknix-layer14-soak" \
+  || fail "soak harness missing memory-growth check (U8)"
+
+# U9: HOW-TO-FALL-BACK.md exists and is self-contained.
+L14_FALLBACK_DOC="${PKG_DIR}/docs/HOW-TO-FALL-BACK.md"
+[ -f "${L14_FALLBACK_DOC}" ] || fail "missing HOW-TO-FALL-BACK.md (U9)"
+grep -q '/flash/rocknix.no-nspawn' "${L14_FALLBACK_DOC}" \
+  || fail "HOW-TO-FALL-BACK.md missing flag-file recovery instructions (U9)"
+grep -q 'rocknix.safe=1' "${L14_FALLBACK_DOC}" \
+  || fail "HOW-TO-FALL-BACK.md missing kernel cmdline recovery instructions (U9)"
+
+# U10: Layer 14 contract doc.
+L14_CONTRACT="${PKG_DIR}/docs/layer14-main-space-contract.md"
+[ -f "${L14_CONTRACT}" ] || fail "missing Layer 14 contract doc (U10)"
+grep -q 'THIN_HOST' "${L14_CONTRACT}" \
+  || fail "Layer 14 contract must document THIN_HOST build flag (U10)"
+grep -q 'rocknix-guest-v2.service' "${L14_CONTRACT}" \
+  || fail "Layer 14 contract must document the v2 guest unit (U10)"
+grep -q 'reclaim' "${L14_CONTRACT}" \
+  || fail "Layer 14 contract must document the reclaim contract (U10)"
+grep -q 'soak' "${L14_CONTRACT}" \
+  || fail "Layer 14 contract must document the soak gate (U10)"
+grep -q 'SM8550' "${L14_CONTRACT}" \
+  || fail "Layer 14 contract must document SM8550-only scope (U10)"
 
 printf 'nix-integration static checks passed\n'

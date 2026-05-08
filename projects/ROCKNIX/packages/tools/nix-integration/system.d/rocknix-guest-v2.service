@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# Layer 14: Nix main-space guest unit (v2).
+#
+# This unit replaces the experimental broad-bind unit that lived at
+# /storage/.config/system.d/rocknix-guest.service during the Tier A-E
+# spike series. The shopping list applied here is the direct lesson
+# of those spikes:
+#
+#   - NO host /usr leak  -> drop --bind-ro=/usr (Vulkan/EGL ICD pollution,
+#                           Mesa store-path mismatch)
+#   - NO host /lib leak  -> drop --bind-ro=/lib  (same class of pollution)
+#   - NO /etc/profile leak -> drop --bind-ro=/etc/profile{,/.d}
+#                             (PATH clobber from 098-busybox)
+#   - NO /etc/resolv.conf bind -> guest owns its own resolv.conf
+#                                 (host resolvconf was clobbering guest DNS)
+#   - NO /run/0-runtime-dir bind -> guest runs its own wayland compositor
+#   - NO /tmp/.X11-unix bind     -> guest does not need host X11
+#   - NO /etc/ssh/authorized_keys.d bind -> Layer 12 guest SSH lives on a
+#                                           non-22 port with its own keys
+#   - NO blanket /storage bind   -> only narrow subdirs (roms RO, guest area RW)
+#
+# Network:
+#   --register=no  -> avoid machinectl coupling, per Layer 10 contract
+#   no --private-network -> shared host netns; guest's NetworkManager owns
+#                           wlan0 directly (Tier C finding)
+#
+# Lifecycle:
+#   ExecStartPre seeds /run/current-system + /run/booted-system from
+#     /nix/var/nix/profiles/system (Tier E3 finding: /run is tmpfs and
+#     does not persist across cold boot)
+#   ExecStopPost runs reclaim contract: if guest exited unexpectedly under
+#     THIN_HOST=yes, restart host fallback userland so the device stays
+#     usable until the next boot.
+#
+# This unit is INSTALLED but NOT enabled by package.mk. It is enabled by
+# the THIN_HOST=yes build path (Layer 14 U6) via Wants= on the new
+# rocknix-graphical.target.
+
+[Unit]
+Description=ROCKNIX Layer 14 guest (Nix main-space, v2)
+Documentation=file:///usr/lib/nix-integration/docs/layer14-main-space-contract.md
+RequiresMountsFor=/storage /nix
+After=local-fs.target nix.mount network-pre.target rocknix-automount.service
+Requires=nix.mount
+ConditionPathExists=/storage/machines/rocknix-guest
+ConditionPathExists=/usr/bin/systemd-nspawn
+
+[Service]
+Type=notify
+NotifyAccess=all
+KillMode=mixed
+Delegate=yes
+TasksMax=4096
+
+# Resource policy mirrors the experimental unit and Layer 10
+# CPUWeight/MemoryMax conventions.
+CPUWeight=100
+IOWeight=100
+MemoryMax=6G
+
+WorkingDirectory=/storage/machines/rocknix-guest
+
+# Seed /run/current-system + /run/booted-system; touch the resolv.conf
+# ownership marker; verify the rootfs is shaped for Layer 14.
+ExecStartPre=/usr/bin/rocknix-layer14-prep
+
+ExecStart=/usr/bin/systemd-nspawn \
+  --machine=rocknix-guest \
+  --directory=/storage/machines/rocknix-guest \
+  --boot \
+  --register=no \
+  --keep-unit \
+  --bind=/dev/snd \
+  --bind=/dev/rfkill \
+  --bind=/dev/dri/card0 \
+  --bind=/dev/dri/renderD128 \
+  --bind=/dev/console \
+  --bind=/dev/input \
+  --bind=/sys/class/backlight \
+  --bind=/sys/class/leds \
+  --bind=/sys/class/devfreq \
+  --bind=/sys/devices/system/cpu/cpufreq \
+  --bind-ro=/storage/roms \
+  --bind=/storage/.guest
+
+# When systemd-nspawn exits, hand off to reclaim. Reclaim distinguishes
+# graceful from crash exits via $EXIT_CODE / $EXIT_STATUS.
+ExecStopPost=/usr/bin/rocknix-host-reclaim
+
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=60s
+TimeoutStopSec=30s
+WatchdogSec=30s
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+# Intentionally NOT WantedBy=multi-user.target. The Layer 14 build flag
+# (THIN_HOST=yes) wires this into rocknix-graphical.target instead.
+# Under THIN_HOST=no, this unit stays inert: installed on disk, never
+# started by default boot.
+WantedBy=rocknix-graphical.target
