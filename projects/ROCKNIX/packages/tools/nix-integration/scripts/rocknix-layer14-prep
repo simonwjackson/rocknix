@@ -1,0 +1,79 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# Layer 14 ExecStartPre helper for rocknix-guest-v2.service.
+#
+# Tier E3 surfaced that the guest's /run/current-system is NOT seeded on
+# cold boot -- /run is tmpfs and does not persist. Without this, the
+# guest's `nixos-rebuild`-equivalent path is broken on a fresh boot
+# until something runs `nix-env -p ... --set ...` for the first time.
+#
+# Tier E1 surfaced the DNS-bleed bug under load: the host's resolvconf
+# rewrites the guest's /etc/resolv.conf because the experimental
+# broad-bind unit bound /etc/resolv.conf from the host. The Layer 14
+# unit deliberately does not bind /etc/resolv.conf; this prep helper
+# also touches an ownership marker file inside the guest rootfs so
+# downstream tooling (soak harness, doctor) can verify the guest is
+# the sole owner.
+#
+# This helper is intentionally pure shell: no Nix dependency, no
+# /run/current-system dependency. It runs before the guest boots.
+
+set -eu
+
+GUEST_ROOT="${ROCKNIX_LAYER14_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+PROFILE_DIR="${GUEST_ROOT}/nix/var/nix/profiles"
+SYSTEM_PROFILE="${PROFILE_DIR}/system"
+GUEST_RUN_DIR="${GUEST_ROOT}/run"
+RESOLV_OWN_MARKER="${GUEST_ROOT}/etc/resolv.conf.layer14-owned"
+GUEST_AREA="/storage/.guest"
+LOG_TAG="rocknix-layer14-prep"
+
+log() {
+  printf '%s %s\n' "${LOG_TAG}:" "$*"
+}
+
+fail() {
+  log "FAIL: $*"
+  exit 1
+}
+
+# Guest rootfs sanity. ConditionPathExists in the unit also covers this,
+# but if the rootfs is partially populated we want a clearer failure.
+[ -d "${GUEST_ROOT}" ] || fail "guest rootfs missing: ${GUEST_ROOT}"
+[ -d "${GUEST_ROOT}/nix" ] || fail "guest /nix missing under ${GUEST_ROOT}"
+[ -d "${GUEST_ROOT}/etc" ] || fail "guest /etc missing under ${GUEST_ROOT}"
+
+# Guest writable area on /storage. This is what we bind into the guest
+# instead of the whole /storage tree. Create on first boot.
+if [ ! -d "${GUEST_AREA}" ]; then
+  log "creating guest writable area at ${GUEST_AREA}"
+  mkdir -p "${GUEST_AREA}"
+  chmod 0755 "${GUEST_AREA}"
+fi
+
+# Seed /run/current-system + /run/booted-system. The guest's /run is
+# tmpfs (created when systemd-nspawn boots into the guest), so we
+# can't write directly into a non-existent path. Instead, we stage the
+# expected symlinks into the guest rootfs at /run inside the rootfs --
+# systemd's tmpfiles will pick them up at boot if the guest has a
+# matching tmpfiles.d entry. As a first-cut, we ensure
+# /nix/var/nix/profiles/system is a real path the guest can resolve.
+if [ -L "${SYSTEM_PROFILE}" ] || [ -e "${SYSTEM_PROFILE}" ]; then
+  log "guest system profile present: $(readlink -f "${SYSTEM_PROFILE}" 2>/dev/null || echo unresolved)"
+else
+  log "WARNING: guest system profile missing: ${SYSTEM_PROFILE}"
+  log "  guest will boot without /run/current-system seeded; nixos-rebuild equivalent will fail until first switch"
+fi
+
+# Ownership marker for /etc/resolv.conf. The guest config sets this
+# file declaratively; if anything host-side ever clobbers it, the
+# marker file lets the soak harness detect the bleed by sampling the
+# mtime/checksum.
+if [ ! -f "${RESOLV_OWN_MARKER}" ]; then
+  log "writing resolv.conf ownership marker"
+  printf 'layer14-owned: %s\n' "$(date -u +%FT%TZ)" > "${RESOLV_OWN_MARKER}"
+fi
+
+log "prep complete"

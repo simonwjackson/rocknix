@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# Layer 14 main-space target. Replaces graphical.target as the default
+# under THIN_HOST=yes builds. Wants the guest unit; does NOT Want the
+# legacy host sway/essway/pipewire/wireplumber/bluetooth/inputplumber
+# stack -- those stay installed but un-Wanted, ready for the recovery
+# path or the reclaim contract to bring them up.
+#
+# Shipped only when THIN_HOST=yes; absent under THIN_HOST=no so the
+# recovery toggle's existence-check falls back cleanly to
+# graphical.target.
+
+[Unit]
+Description=ROCKNIX Nix main-space (Layer 14)
+Documentation=file:///usr/lib/nix-integration/docs/layer14-main-space-contract.md
+Requires=multi-user.target rocknix-automount.service nix.mount
+After=multi-user.target rocknix-automount.service nix.mount network-online.target
+Wants=rocknix-guest-v2.service
+AllowIsolate=yes
+
+[Install]
+Alias=default.target
