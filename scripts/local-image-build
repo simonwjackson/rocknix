@@ -127,12 +127,27 @@ case "${slice_ctrls}" in
   *cpu*) ;; *) die "user slice missing 'cpu' controller; cannot enforce caps" ;;
 esac
 
-# rocknix-env binary: come from the dev shell or via nix run.
-if ! command -v rocknix-env >/dev/null 2>&1; then
-  err "WARNING: rocknix-env not on PATH; will use 'nix run .#rocknix-env -- -c'"
-  ROCKNIX_ENV_CMD="nix run --quiet '${PWD}#rocknix-env' --"
-else
-  ROCKNIX_ENV_CMD="rocknix-env"
+# rocknix-env binary: ALWAYS resolve via a fresh `nix build` so we
+# pick up flake.nix changes. Relying on `command -v rocknix-env`
+# from PATH is unsafe -- direnv loads a profile once per shell
+# session, so a flake edit (e.g. switching gcc-15 -> gcc-13) is not
+# reflected on PATH until the user `direnv reload`s AND opens a
+# fresh shell. The Nix evaluator's own caching means subsequent
+# `nix build` calls are fast (~50ms when nothing changed).
+FRESH_ENV=$(nix build --no-link --print-out-paths "${PWD}#rocknix-env" 2>/dev/null)
+if [ -z "${FRESH_ENV}" ] || [ ! -x "${FRESH_ENV}/bin/rocknix-env" ]; then
+  die "failed to build .#rocknix-env via nix build (check flake.nix)"
+fi
+ROCKNIX_ENV_BIN="${FRESH_ENV}/bin/rocknix-env"
+# Diagnostic: warn if the rocknix-env on PATH is stale (different
+# from the freshly-built one). Useful when iterating on flake.nix.
+if command -v rocknix-env >/dev/null 2>&1; then
+  path_env=$(realpath "$(command -v rocknix-env)" 2>/dev/null || echo "")
+  fresh_env=$(realpath "${ROCKNIX_ENV_BIN}" 2>/dev/null || echo "")
+  if [ -n "${path_env}" ] && [ -n "${fresh_env}" ] && [ "${path_env}" != "${fresh_env}" ]; then
+    err "NOTE: rocknix-env on PATH is stale (probably from old direnv profile);"
+    err "      using fresh build at ${ROCKNIX_ENV_BIN}"
+  fi
 fi
 
 # ----- compute caps (auto unless overridden) -----
@@ -249,7 +264,7 @@ INNER_CMD="nice -n 19 ionice -c 3 make ${DEVICE}"
 
 if [ "${BACKGROUND}" = "1" ]; then
   err "==> launching in background; tailing ${LOG_FILE} (Ctrl+C detaches)"
-  nohup "${RUN_CMD[@]}" -- ${ROCKNIX_ENV_CMD} -c "${INNER_CMD}" \
+  nohup "${RUN_CMD[@]}" -- "${ROCKNIX_ENV_BIN}" -c "${INNER_CMD}" \
     > "${LOG_FILE}" 2>&1 < /dev/null &
   bg_pid=$!
   disown "${bg_pid}" 2>/dev/null || true
@@ -267,5 +282,5 @@ if [ "${BACKGROUND}" = "1" ]; then
 else
   err "==> launching foreground; logs to ${LOG_FILE}"
   err "==> Ctrl+C will stop the build cleanly (SIGINT propagates to scope)"
-  "${RUN_CMD[@]}" -- ${ROCKNIX_ENV_CMD} -c "${INNER_CMD}" 2>&1 | tee "${LOG_FILE}"
+  "${RUN_CMD[@]}" -- "${ROCKNIX_ENV_BIN}" -c "${INNER_CMD}" 2>&1 | tee "${LOG_FILE}"
 fi

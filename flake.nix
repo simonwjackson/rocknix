@@ -26,12 +26,18 @@
           diffutils
           file
           gawk
-          # Pin gcc-13. CI uses ubuntu:jammy which ships gcc-11;
-          # gcc-13 is the closest still-maintained version in nixpkgs
-          # (gcc-11/12 are removed). gcc-15 (the nixpkgs-unstable default)
-          # breaks ncurses-6.5's C++ bindings: NCURSES_BOOL=unsigned char
-          # collides with libstdc++-15's distinct-bool type traits.
-          gcc13
+          # Pin gcc-14. nixpkgs-unstable's default gcc is gcc-15, which
+          # breaks ncurses-6.5's C++ bindings (NCURSES_BOOL=unsigned char
+          # vs libstdc++-15's distinct-bool type traits). gcc-13 was
+          # tried first but lacks the C23 <stdckdint.h> header that
+          # sed-4.9's gnulib unconditionally includes when GCC >= 10.1.
+          # gcc-14.3 ships <stdckdint.h> and has libstdc++-14 (no
+          # ncurses ABI clash). gcc-11/12 are removed from nixpkgs.
+          # CI uses ubuntu:jammy with gcc-11 and somehow works around
+          # the stdckdint issue (likely via a libc-supplied freestanding
+          # header) but reproducing that path locally is more invasive
+          # than just bumping our toolchain a little.
+          gcc14
           gnumake
           gnupatch
           gperf
