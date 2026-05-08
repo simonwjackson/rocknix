@@ -54,6 +54,17 @@ KillMode=mixed
 Delegate=yes
 TasksMax=4096
 
+# Force unified cgroup hierarchy inside the guest container. The host
+# kernel cmdline sets systemd.unified_cgroup_hierarchy=1, but
+# systemd-nspawn from systemd-255 (host) still mounts a cgroup-v1 view
+# inside the container by default for legacy compat. The guest's
+# systemd-258 refuses to run on legacy v1 hierarchy and aborts with
+# "Detected unsupported legacy cgroup hierarchy, refusing execution."
+#
+# Validated on Thor 2026-05-08: without this env, the guest aborts
+# at PID 1; with it, the guest reaches Multi-User System target.
+Environment=SYSTEMD_NSPAWN_UNIFIED_HIERARCHY=1
+
 # Resource policy mirrors the experimental unit and Layer 10
 # CPUWeight/MemoryMax conventions.
 CPUWeight=100
@@ -76,7 +87,6 @@ ExecStart=/usr/bin/systemd-nspawn \
   --bind=/dev/rfkill \
   --bind=/dev/dri/card0 \
   --bind=/dev/dri/renderD128 \
-  --bind=/dev/console \
   --bind=/dev/input \
   --bind=/sys/class/backlight \
   --bind=/sys/class/leds \

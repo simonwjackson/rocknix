@@ -45,6 +45,40 @@ fail() {
 [ -d "${GUEST_ROOT}/nix" ] || fail "guest /nix missing under ${GUEST_ROOT}"
 [ -d "${GUEST_ROOT}/etc" ] || fail "guest /etc missing under ${GUEST_ROOT}"
 
+# Repair stale /init and /sbin/init symlinks. The Layer 10b staging path
+# wrote these once, then any subsequent `nixos-rebuild switch` inside the
+# guest (or a host-side rebuild that re-staged the system profile) updated
+# /nix/var/nix/profiles/system to a NEW store path while leaving /init
+# symlinked at the OLD store path. systemd-nspawn --boot then aborts with
+# `execv(...) failed: No such file or directory` because the old path no
+# longer exists in the guest /nix/store.
+#
+# Validated on Thor 2026-05-08: prior boot's /init pointed at
+# izcw1v5...nixos-system... (host-only), guest /nix/store had
+# dlsz2rf...nixos-system... only. Relinking /init to the current
+# system profile fixed the boot.
+if [ -L "${SYSTEM_PROFILE}" ]; then
+  current_system="$(readlink -f "${SYSTEM_PROFILE}" 2>/dev/null || true)"
+  if [ -n "${current_system}" ] && [ -x "${current_system}/init" ]; then
+    desired="${current_system#${GUEST_ROOT}}/init"
+    case "${desired}" in
+      /nix/*) : ;;  # ok, already absolute under /nix
+      *)      desired="/nix/store/$(basename "${current_system}")/init" ;;
+    esac
+    for init_path in "${GUEST_ROOT}/init" "${GUEST_ROOT}/sbin/init"; do
+      if [ -L "${init_path}" ]; then
+        cur="$(readlink "${init_path}")"
+        if [ "${cur}" != "${desired}" ]; then
+          log "relinking ${init_path}: ${cur} -> ${desired}"
+          ln -sfn "${desired}" "${init_path}"
+        fi
+      fi
+    done
+  else
+    log "WARNING: system profile resolves to missing path: ${current_system:-unresolved}"
+  fi
+fi
+
 # Guest writable area on /storage. This is what we bind into the guest
 # instead of the whole /storage tree. Create on first boot.
 if [ ! -d "${GUEST_AREA}" ]; then

@@ -25,7 +25,15 @@ set -u
 FLAG_FILE="/flash/rocknix.no-nspawn"
 CMDLINE_FILE="/proc/cmdline"
 NORMAL_TARGET="rocknix-graphical.target"
-RECOVERY_TARGET="graphical.target"
+# RECOVERY_TARGET must be the legacy entry point that ROCKNIX userland
+# is wired to. essway/sway/rocknix-autostart/etc are WantedBy=rocknix.target,
+# NOT WantedBy=graphical.target. Setting default to graphical.target leaves
+# the device on a blank/login-only screen with no ROCKNIX UI.
+#
+# Validated on Thor 2026-05-08: with default=graphical.target, neither
+# essway nor sway came up; with default=rocknix.target, both became active
+# and the device reached the legacy UI normally.
+RECOVERY_TARGET="rocknix.target"
 LOG_TAG="rocknix-recovery-toggle"
 
 ts() {
@@ -51,7 +59,7 @@ fi
 
 if [ "${mode}" = "recovery" ]; then
   target="${RECOVERY_TARGET}"
-  log "recovery mode (reasons:${reasons }); setting default.target=${target}"
+  log "recovery mode (reasons:${reasons}); setting default.target=${target}"
 else
   target="${NORMAL_TARGET}"
   log "normal mode; setting default.target=${target}"
