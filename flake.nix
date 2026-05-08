@@ -26,7 +26,12 @@
           diffutils
           file
           gawk
-          gcc
+          # Pin gcc-13. CI uses ubuntu:jammy which ships gcc-11;
+          # gcc-13 is the closest still-maintained version in nixpkgs
+          # (gcc-11/12 are removed). gcc-15 (the nixpkgs-unstable default)
+          # breaks ncurses-6.5's C++ bindings: NCURSES_BOOL=unsigned char
+          # collides with libstdc++-15's distinct-bool type traits.
+          gcc13
           gnumake
           gnupatch
           gperf
