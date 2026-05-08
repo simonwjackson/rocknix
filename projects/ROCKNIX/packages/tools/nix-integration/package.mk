@@ -65,27 +65,42 @@ post_install() {
   enable_service nix-storage-setup.service
   enable_service nix.mount
 
-  # rocknix-recovery-toggle.service runs before sysinit on every boot.
-  # Under THIN_HOST=no it falls back cleanly to graphical.target (the
-  # rocknix-graphical.target unit is absent), so it is safe to enable
-  # unconditionally and provides the per-boot recovery hook even on
-  # legacy builds where someone wants to opt-in via cmdline later.
-  enable_service rocknix-recovery-toggle.service
-
-  # Layer 14 main-space wiring. Only enabled under THIN_HOST=yes; the
-  # unit and target are SHIPPED on disk regardless so a soak run
-  # (running rocknix-guest-v2 alongside the legacy host UI) is
-  # possible without rebuilding the image.
+  # Layer 14 main-space wiring. The whole boot-routing / runtime block
+  # (recovery-toggle service, rocknix-graphical.target, guest unit
+  # WantedBy that target) is gated strictly behind THIN_HOST=yes so a
+  # legacy (THIN_HOST=no) image is byte-equivalent to today's modulo
+  # inert files in /usr/bin/ and /usr/lib/systemd/system/.
+  #
+  # Lesson from the first flash on Thor (2026-05-08): scripts/install
+  # globs system.d/*.* unconditionally, so rocknix-graphical.target
+  # ends up on disk even when this conditional `cp` is skipped. The
+  # target's mere presence let the toggle's existence-check fire and
+  # rewrite default.target, breaking the THIN_HOST=no contract. Fix
+  # below: under THIN_HOST=no, safe_remove the target after the glob
+  # has copied it; under THIN_HOST=yes, leave it in place.
   if [ "${THIN_HOST}" = "yes" ]; then
-    cp ${PKG_DIR}/system.d/rocknix-graphical.target ${INSTALL}/usr/lib/systemd/system/
     enable_service rocknix-graphical.target
     enable_service rocknix-guest-v2.service
+
+    # rocknix-recovery-toggle.service runs Before=sysinit.target and
+    # is what selects between rocknix-graphical.target (main-space)
+    # and graphical.target (legacy recovery) on every THIN_HOST=yes
+    # boot. It must NOT be enabled under THIN_HOST=no -- there is no
+    # rocknix-graphical.target to escape FROM, and silently rewriting
+    # default.target would violate the legacy-equivalent contract.
+    enable_service rocknix-recovery-toggle.service
 
     # Ship the recovery readme to /flash/. Built from the in-package
     # docs/HOW-TO-FALL-BACK.md so a teardown / SD-card reader on
     # another machine can read it without booting Thor.
     mkdir -p ${INSTALL}/flash
     cp ${PKG_DIR}/docs/HOW-TO-FALL-BACK.md ${INSTALL}/flash/HOW-TO-FALL-BACK.md
+  else
+    # THIN_HOST=no: scrub the target file that scripts/install's glob
+    # copied. The file's mere presence on disk would let any future
+    # boot-time logic (or a stray manual `systemctl set-default`) flip
+    # the device into main-space mode without the build flag's consent.
+    safe_remove ${INSTALL}/usr/lib/systemd/system/rocknix-graphical.target
   fi
 
   if [ "${NIX_DAEMON_SUPPORT}" = "yes" ]; then
