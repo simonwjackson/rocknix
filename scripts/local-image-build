@@ -236,10 +236,16 @@ RUN_CMD=(
     --setenv="LC_ALL=C.UTF-8"
 )
 
-# Inside the FHS shell we run `make image` -- same entrypoint as the
-# README/shellHook. The nice + ionice wrap gives the build idle CPU
-# priority and idle disk priority; SSH and shell preempt instantly.
-INNER_CMD="nice -n 19 ionice -c 3 make image"
+# Inside the FHS shell we run `make ${DEVICE}` (the per-device target),
+# NOT `make image`. The Makefile's per-device target runs build_distro
+# twice (arm then aarch64); build_distro builds packages AND triggers
+# the image-rolling step at the end. By contrast `make image` is
+# image-rolling only -- it assumes you have already built both arm
+# and aarch64 sides, and fails when box86:target's install tries to
+# copy from a non-existent arm install_pkg.
+#
+# nice + ionice idle wrap so SSH preempts and NVMe stays responsive.
+INNER_CMD="nice -n 19 ionice -c 3 make ${DEVICE}"
 
 if [ "${BACKGROUND}" = "1" ]; then
   err "==> launching in background; tailing ${LOG_FILE} (Ctrl+C detaches)"
