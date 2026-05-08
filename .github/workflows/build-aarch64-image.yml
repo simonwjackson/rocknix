@@ -20,6 +20,11 @@ on:
         description: "build official version"
         type: string
         required: true
+      THIN_HOST:
+        description: "Layer 14 thin-host main-space build (yes/no). SM8550 only; nix-integration package.mk hard-fails for other devices when yes."
+        type: string
+        required: false
+        default: "no"
 
 jobs:
   build-aarch64-image:
@@ -40,6 +45,7 @@ jobs:
       SCREENSCRAPER_DEV_LOGIN: ${{ secrets.SCREENSCRAPER_DEV_LOGIN }}
       NIGHTLY: ${{ inputs.NIGHTLY }}
       OFFICIAL: ${{ inputs.OFFICIAL }}
+      THIN_HOST: ${{ inputs.THIN_HOST }}
     steps:
       - name: Maximize build space
         uses: justinthelaw/maximize-github-runner-space@v0.7.0
@@ -124,9 +130,22 @@ jobs:
       - name: Get date
         run: echo "DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
 
+      # When THIN_HOST=yes, suffix the artifact names with -thin-host so a
+      # subsequent THIN_HOST=no build (or vice versa) does not clobber the
+      # previous run's artifacts on the same date. THIN_HOST=no keeps the
+      # legacy artifact name unchanged for byte-equivalence with today.
+      - name: Compute artifact suffix
+        id: artifact-suffix
+        run: |
+          if [ "${THIN_HOST}" = "yes" ]; then
+            echo "suffix=-thin-host" >> $GITHUB_OUTPUT
+          else
+            echo "suffix=" >> $GITHUB_OUTPUT
+          fi
+
       - uses: actions/upload-artifact@v7
         with:
-          name: ROCKNIX-image-${{ inputs.DEVICE }}-${{ env.DATE }}
+          name: ROCKNIX-image-${{ inputs.DEVICE }}${{ steps.artifact-suffix.outputs.suffix }}-${{ env.DATE }}
           path: |
             target/ROCKNIX-*.img.gz
             target/ROCKNIX-*.img.gz.sha256
@@ -135,7 +154,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ROCKNIX-update-${{ inputs.DEVICE }}-${{ env.DATE }}
+          name: ROCKNIX-update-${{ inputs.DEVICE }}${{ steps.artifact-suffix.outputs.suffix }}-${{ env.DATE }}
           path: |
             target/ROCKNIX-*.tar
             target/ROCKNIX-*.tar.sha256
