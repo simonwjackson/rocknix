@@ -23,6 +23,11 @@ on:
         description: "build official version"
         type: string
         required: true
+      THIN_HOST:
+        description: "Layer 14 thin-host main-space build (yes/no). SM8550 only."
+        type: string
+        required: false
+        default: "no"
 
 jobs:
   build-arm:
@@ -107,6 +112,7 @@ jobs:
       OWNER_LC: ${{ inputs.OWNER_LC }}
       NIGHTLY: ${{ inputs.NIGHTLY }}
       OFFICIAL: ${{ inputs.OFFICIAL }}
+      THIN_HOST: ${{ inputs.THIN_HOST }}
 
   purge-artifact:
     name: Artifacts cleanup
