@@ -91,11 +91,16 @@ esac
 LOG="$LOG_DIR/cemu-botw-$PROFILE.log"
 echo "[$(date)] BOTW profile=$PROFILE res=$RES fps=$FPS_LIMIT framerate=$FRAMERATE p3=$P3_MAX p7=$P7_MAX gpu=$GPU_GOV(${GPU_MIN:-_}->${GPU_MAX:-_})" | tee "$LOG"
 
-# ---- settings.xml mutation (sed) ----
+# ---- settings.xml mutation ----
+#
+# The XML stores `<category>...</category>` and the matching
+# `<preset>...</preset>` on adjacent lines with indentation between
+# them. Standard sed is line-buffered so `[[:space:]]*` cannot cross
+# the newline. We use `sed -z` (GNU extension) which slurps the
+# whole file as one record so the pattern matches across lines.
 if [ -f "$SETTINGS" ]; then
   cp -f "$SETTINGS" "$SETTINGS.bak.$$"
-  # graphic-pack preset values: Resolution, FPS Limit, Framerate Limit
-  sed -i \
+  sed -zi \
     -e "s|\(<category>Resolution</category>[[:space:]]*<preset>\)[^<]*\(</preset>\)|\1${RES}\2|" \
     -e "s|\(<category>FPS Limit</category>[[:space:]]*<preset>\)[^<]*\(</preset>\)|\1${FPS_LIMIT}\2|" \
     -e "s|\(<category>Framerate Limit</category>[[:space:]]*<preset>\)[^<]*\(</preset>\)|\1${FRAMERATE}\2|" \
@@ -104,6 +109,16 @@ if [ -f "$SETTINGS" ]; then
     -e 's|<vkAccurateBarriers>true</vkAccurateBarriers>|<vkAccurateBarriers>false</vkAccurateBarriers>|' \
     -e 's|<VSync>1</VSync>|<VSync>0</VSync>|' \
     "$SETTINGS"
+
+  # Verify the mutation actually took -- if it didn't, abort the
+  # launch instead of running cemu with the wrong preset and giving
+  # the user a confusing low-FPS experience.
+  if ! grep -q "<preset>${RES}</preset>" "$SETTINGS"; then
+    echo "FATAL: settings.xml Resolution preset did not become '${RES}'." >&2
+    echo "       Restoring backup and aborting launch." >&2
+    mv -f "$SETTINGS.bak.$$" "$SETTINGS"
+    exit 2
+  fi
 fi
 
 # Mirror controller profile (host script does this so a fresh boot

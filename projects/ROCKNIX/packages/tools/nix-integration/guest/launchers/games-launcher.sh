@@ -25,10 +25,15 @@ if [ -n "$SOCK" ]; then
 fi
 
 # Render the launcher on DSI-1 (Thor's bottom panel; DSI-2 is the
-# main top screen where games render). fuzzel uses focused output.
-if [ -n "${SWAYSOCK:-}" ]; then
-  swaymsg "focus output DSI-1" >/dev/null 2>&1 || true
-fi
+# main top screen where games render). fuzzel uses the focused
+# output, so we have to re-focus DSI-1 before EVERY fuzzel call --
+# launchers like botw-guest.sh focus DSI-2 to put cemu on the main
+# screen, and that focus change carries over after the game exits.
+focus_launcher_screen() {
+  if [ -n "${SWAYSOCK:-}" ]; then
+    swaymsg "focus output DSI-1" >/dev/null 2>&1 || true
+  fi
+}
 
 # Game catalogue. Add entries here as more launchers are validated.
 # Format:  Display Name|/path/to/launcher.sh [args...]
@@ -48,6 +53,7 @@ EOF
 
 # Loop forever so fuzzel reopens after the chosen launcher returns.
 while :; do
+  focus_launcher_screen
   CHOICE=$(printf '%s\n' "$ENTRIES" \
     | awk -F'|' '{ print $1 }' \
     | fuzzel \
