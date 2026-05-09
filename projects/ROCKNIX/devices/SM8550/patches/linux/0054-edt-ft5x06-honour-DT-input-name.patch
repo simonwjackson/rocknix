@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Simon W. Jackson <simonwjackson@gmail.com>
+Date: Thu, 8 May 2026 22:00:00 -0500
+Subject: [PATCH] Input: edt-ft5x06 - honour DT 'input-name' property
+
+When two ft5x06 controllers share an SoC (e.g. AYN Thor's
+dual-touchscreen design with one ft5426 on i2c4 driving the top panel
+and one ft5452 on i2c-hub-3 driving the bottom panel), both expose
+vendor=0 product=0 to libinput and the driver names both input devices
+"generic ft5x06 (8d)" because the chip-id-based model detection falls
+through to the same generic branch.
+
+Wayland compositors that build input identifiers as
+vendor:product:name (sway / wlroots, in particular) cannot tell the
+two controllers apart and have no escape syntax for path-based
+identifiers, so per-device 'map_to_output' rules become impossible
+and one panel's touch events can end up routed to the wrong surface.
+
+Allow the devicetree to override input->name via a new optional
+'input-name' property. When present, it wins over the chip-detected
+model name. Existing devicetree blobs that don't set the property
+keep their current behaviour.
+
+Signed-off-by: Simon W. Jackson <simonwjackson@gmail.com>
+---
+ drivers/input/touchscreen/edt-ft5x06.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+--- a/drivers/input/touchscreen/edt-ft5x06.c
++++ b/drivers/input/touchscreen/edt-ft5x06.c
+@@ -1348,7 +1348,14 @@
+ 		"Model \"%s\", Rev. \"%s\", %dx%d sensors\n",
+ 		tsdata->name, tsdata->fw_version, tsdata->num_x, tsdata->num_y);
+ 
+-	input->name = tsdata->name;
++	/*
++	 * Allow devicetree to override the input device name. Lets boards
++	 * with multiple ft5x06 controllers (which all otherwise report the
++	 * same chip-detected model name) hand Wayland compositors distinct
++	 * vendor:product:name identifiers for per-device routing.
++	 */
++	if (device_property_read_string(&client->dev, "input-name", &input->name))
++		input->name = tsdata->name;
+ 	input->id.bustype = BUS_I2C;
+ 	input->dev.parent = &client->dev;
+ 
+-- 
+2.45.0
