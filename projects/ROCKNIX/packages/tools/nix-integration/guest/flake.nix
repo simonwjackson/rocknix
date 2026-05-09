@@ -18,6 +18,10 @@
         system = targetSystem;
         modules = [ ./profiles/main-space.nix ];
       };
+      devEnvConfiguration = nixpkgs.lib.nixosSystem {
+        system = targetSystem;
+        modules = [ ./profiles/dev-env.nix ];
+      };
       toplevel = configuration.config.system.build.toplevel;
       mkRootfs = hostSystem:
         let
@@ -55,6 +59,7 @@
     in {
       nixosConfigurations.rocknix-guest = configuration;
       nixosConfigurations.rocknix-guest-main-space = mainSpaceConfiguration;
+      nixosConfigurations.rocknix-guest-dev-env = devEnvConfiguration;
       packages = forAllHostSystems (hostSystem:
         let
           rootfs = mkRootfs hostSystem;
