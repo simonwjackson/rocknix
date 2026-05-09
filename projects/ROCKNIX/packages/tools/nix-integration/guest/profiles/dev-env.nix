@@ -131,11 +131,19 @@ in
 
     output DSI-2 transform 90
     output DSI-2 scale 2.0
+    output DSI-2 pos 0 0
     output DSI-2 bg #1a1a1a solid_color
     output DSI-2 allow_tearing yes
     output DSI-2 max_render_time off
 
-    output DSI-1 disable
+    # Thor's bottom panel: 1080x1240 native, same physical orientation
+    # as DSI-2. transform 90 + scale 2.0 yields 620x540 logical,
+    # stacked under DSI-2's 960x540 starting at y=540.
+    output DSI-1 enable
+    output DSI-1 transform 90
+    output DSI-1 scale 2.0
+    output DSI-1 pos 0 540
+    output DSI-1 bg #1a1a1a solid_color
 
     # Touch routing -- copied verbatim from main-space.nix. See its
     # comment block for the full kernel-patch / DT-input-name story.
