@@ -50,24 +50,39 @@
   # Instead, ship a bare systemd service that runs sway directly.
   # wlroots's seatd backend (built into sway) takes /dev/dri/card0 and
   # /dev/tty1 master without needing PAM or logind sessions.
+  #
+  # Why no TTYPath / StandardInput=tty / PAMName: live validation on Thor
+  # 2026-05-08 showed that the moment systemd is asked to claim a TTY for
+  # the unit it tries to run a PAM auth pre-exec step that fails silently
+  # inside nspawn (no logind, no pam_systemd) and the unit exits 127
+  # before sway is even reached. wlroots's libseat backend acquires its
+  # own VT directly from /dev/tty0 / /dev/tty1 (which the host nspawn
+  # unit binds in) when sway initialises the DRM session, so there is no
+  # need to hand the unit a TTY explicitly.
   systemd.services.rocknix-sway-kiosk = {
     description = "ROCKNIX Layer 14 sway kiosk session";
     wantedBy = [ "multi-user.target" ];
     after = [ "multi-user.target" "systemd-user-sessions.service" ];
+
+    # sway's wrapper invokes dbus-run-session which spawns dbus-daemon.
+    # Without dbus on the unit's PATH the wrapper fails with
+    # "dbus-run-session: failed to execute message bus daemon
+    # 'dbus-daemon': No such file or directory" before sway is reached.
+    #
+    # Sway client commands (foot, swaybg, swaylock) inherit sway's PATH;
+    # add them here so `swaymsg exec foot` works without requiring the
+    # caller to set absolute paths.
+    path = with pkgs; [ dbus foot swaybg swaylock ];
+
     serviceConfig = {
       Type = "simple";
       User = "root";
-      PAMName = "";
-      StandardInput = "tty";
-      StandardOutput = "tty";
-      TTYPath = "/dev/tty1";
-      TTYReset = "yes";
-      TTYVHangup = "yes";
-      TTYVTDisallocate = "yes";
       ExecStartPre = "${pkgs.coreutils}/bin/install -d -m 0700 -o 0 -g 0 /run/user/0";
       ExecStart = "${pkgs.sway}/bin/sway -c /etc/sway/config";
       Restart = "on-failure";
       RestartSec = 3;
+      StandardOutput = "journal";
+      StandardError = "journal";
     };
     environment = {
       XDG_RUNTIME_DIR = "/run/user/0";
