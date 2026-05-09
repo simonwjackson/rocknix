@@ -231,10 +231,15 @@ in
     # of an empty dark screen. They can close it with Mod+Shift+Q.
     exec foot
 
-    # Games launcher pinned to DSI-1 (Thor's bottom touch panel).
-    # Loops fuzzel on its own so the bottom screen always shows a
-    # tap-target as long as the script is on disk. Mod+G also
-    # respawns it on demand.
-    exec /storage/.guest/games-launcher.sh
+    # NOTE: games-launcher.sh autostart was removed because the
+    # current kernel build does not yet apply the
+    # 0054-edt-ft5x06-honour-DT-input-name patch -- both touchscreens
+    # report the same identifier 0:0:generic_ft5x06_(8d), so sway
+    # cannot route bottom-panel taps to DSI-1 surfaces and the menu
+    # never receives a usable touch event. Mod+G keybind still works
+    # if the controller maps Super+G; otherwise launch BOTW directly
+    # via:
+    #   /storage/.guest/host-tune.sh <profile>     # on host
+    #   /storage/.guest/botw-guest.sh <profile>    # in guest
   '';
 }

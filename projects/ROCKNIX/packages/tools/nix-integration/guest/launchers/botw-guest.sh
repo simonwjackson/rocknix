@@ -137,9 +137,14 @@ if [ -d "$P7" ]; then
   echo schedutil > "$P7/scaling_governor" 2>/dev/null || echo ondemand > "$P7/scaling_governor" 2>/dev/null || true
   echo "$P7_MAX" > "$P7/scaling_max_freq" 2>/dev/null || true
 fi
+# GPU sysfs is bind-mounted but read-only inside nspawn (sysfs RO by
+# default). Writes here always fail. The companion script
+#   /storage/.guest/host-tune.sh <profile>
+# runs on the HOST and applies the same governor + freq table to
+# /sys/class/devfreq/3d00000.gpu where the writes actually take.
+# We still attempt the writes here so the values land if anything
+# changes the bind in the future -- but failures are silent.
 if [ -d "$GPU" ]; then
-  # GPU sysfs is bind-mounted but ro inside guest on Thor; failures
-  # are non-fatal -- the host's defaults remain in effect.
   echo "$GPU_GOV" > "$GPU/governor" 2>/dev/null || true
   [ -n "$GPU_MIN" ] && echo "$GPU_MIN" > "$GPU/min_freq" 2>/dev/null || true
   [ -n "$GPU_MAX" ] && echo "$GPU_MAX" > "$GPU/max_freq" 2>/dev/null || true
