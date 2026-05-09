@@ -1,0 +1,34 @@
+From: ROCKNIX Layer 14 cemu flake
+Subject: [PATCH] ScreenSaver::SetInhibit no-op on Linux
+
+nixpkgs SDL2 is sdl2-compat (a SDL3 shim). SDL3's video-subsystem
+initialization path invokes std::regex code that segfaults on aarch64
+during cemu's first ScreenSaver::SetInhibit(true) call (which happens
+on every ROM load).
+
+Cemu already has a #if BOOST_OS_MACOS bypass for the same crash on
+macOS. We add #if BOOST_OS_LINUX since we observe the identical
+crash signature on Linux/aarch64 with sdl2-compat.
+
+Cost of the bypass: cemu does not inhibit the screensaver while a
+game is running. In our Layer 14 sway-kiosk profile there is no
+screensaver running anyway, and any future inhibition would be
+handled at the sway layer.
+
+--- a/src/util/ScreenSaver/ScreenSaver.h
++++ b/src/util/ScreenSaver/ScreenSaver.h
+@@ -6,9 +6,12 @@ class ScreenSaver
+ public:
+   static void SetInhibit(bool inhibit)
+   {
+-	  // temporary workaround because feature crashes on macOS
++    // temporary workaround because feature crashes on macOS
+ #if BOOST_OS_MACOS
+-	  return;
++    return;
++#endif
++#if BOOST_OS_LINUX
++    return;
+ #endif
+     // Initialize video subsystem if necessary
+     if (SDL_WasInit(SDL_INIT_VIDEO) == 0)

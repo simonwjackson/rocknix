@@ -39,6 +39,11 @@
         patches = [
           ./000-build-fixes.patch
           ./003-disable-cmake-interprocedural-optimization.patch
+          # nixpkgs SDL2 is sdl2-compat (SDL3 shim); SDL3's video-init
+          # path crashes on aarch64 inside cemu's ScreenSaver::SetInhibit
+          # on first ROM load. Bypass the call on Linux, mirroring
+          # cemu's existing macOS workaround.
+          ./004-screensaver-noop-linux.patch
         ];
         # Need libwebp's sharpyuv added to inputs (referenced by build-fixes patch).
         buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.libwebp ];
