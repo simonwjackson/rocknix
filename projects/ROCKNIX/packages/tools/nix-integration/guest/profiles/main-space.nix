@@ -112,5 +112,18 @@
     output DSI-2 max_render_time off
 
     output DSI-1 disable
+
+    # Both Thor touchscreens currently report identical libinput
+    # identifiers (vendor:product:name = 0:0:generic_ft5x06_(8d))
+    # because the ft5x06 driver doesn't synthesise distinct names per
+    # i2c instance. sway 1.11 has no path-based input identifier syntax,
+    # so we cannot per-device map them. Coarse workaround: pin all touch
+    # input to DSI-2 (the active panel). Bottom-panel taps still produce
+    # libinput events but are silently dropped at the wlroots routing
+    # stage instead of landing on the wrong surface.
+    #
+    # See docs/brainstorms/2026-05-08-001-rocknix-thor-multi-touchscreen-routing.md
+    # for the proper kernel-patch + DT fix.
+    input type:touch map_to_output DSI-2
   '';
 }
