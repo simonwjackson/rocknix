@@ -1,7 +1,7 @@
 ---
 title: "feat: ROCKNIX Layer 14 interactive dev-env profile"
 type: feat
-status: active
+status: completed
 date: 2026-05-08
 origin: in-conversation synthesis (no requirements doc on disk)
 ---
