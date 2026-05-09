@@ -31,9 +31,18 @@ if [ -n "${SWAYSOCK:-}" ]; then
 fi
 
 # Game catalogue. Add entries here as more launchers are validated.
-# Format:  Display Name|/path/to/launcher.sh
+# Format:  Display Name|/path/to/launcher.sh [args...]
+#
+# All BOTW entries call the same parametric script with a profile name.
+# Order: most aggressive at top, most conservative at bottom.
 ENTRIES=$(cat <<'EOF'
-🗡️  BOTW · 540p / 30 FPS|/storage/.guest/botw-540p-30-guest.sh
+🗡️  BOTW · 720p / 45 FPS  (FAST)|/storage/.guest/botw-guest.sh 720p-45
+🗡️  BOTW · 540p / 45 FPS  (FAST)|/storage/.guest/botw-guest.sh 540p-45
+🗡️  BOTW · 1080p / 30 FPS (NATIVE)|/storage/.guest/botw-guest.sh native-30
+🗡️  BOTW · 900p / 30 FPS|/storage/.guest/botw-guest.sh 900p-30
+🗡️  BOTW · 720p / 30 FPS|/storage/.guest/botw-guest.sh 720p-30
+🗡️  BOTW · 540p / 30 FPS|/storage/.guest/botw-guest.sh 540p-30
+🗡️  BOTW · 360p / 30 FPS (POTATO)|/storage/.guest/botw-guest.sh potato-30
 EOF
 )
 
@@ -44,9 +53,9 @@ while :; do
     | fuzzel \
         --dmenu \
         --prompt="🎮 " \
-        --lines=8 \
-        --width=28 \
-        --font="monospace:size=20" \
+        --lines=10 \
+        --width=36 \
+        --font="monospace:size=18" \
         --no-icons \
         --background-color=000000ee \
         --text-color=ffffffff \
@@ -67,13 +76,16 @@ while :; do
   LAUNCHER=$(printf '%s\n' "$ENTRIES" \
     | awk -F'|' -v want="$CHOICE" '$1 == want { print $2; exit }')
 
-  if [ -z "$LAUNCHER" ] || [ ! -x "$LAUNCHER" ]; then
-    # Fallback: notify and loop. Foot is available if notify-send is not.
+  # Split launcher path from any args (sh-style word split is fine here).
+  LAUNCHER_BIN=$(printf '%s\n' "$LAUNCHER" | awk '{ print $1 }')
+
+  if [ -z "$LAUNCHER_BIN" ] || [ ! -x "$LAUNCHER_BIN" ]; then
     swaymsg "exec foot --title=launcher-error sh -c 'echo \"Launcher not found: $CHOICE -> $LAUNCHER\"; sleep 3'" >/dev/null 2>&1 || true
     sleep 1
     continue
   fi
 
   # Run launcher in foreground; menu blocks until game exits.
-  "$LAUNCHER" || true
+  # Use sh -c so the args after $LAUNCHER_BIN are word-split.
+  sh -c "$LAUNCHER" || true
 done
