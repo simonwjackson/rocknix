@@ -117,6 +117,7 @@
     default_border none
 
     output DSI-2 transform 90
+    output DSI-2 scale 2.0
     output DSI-2 bg #000000 solid_color
     output DSI-2 allow_tearing yes
     output DSI-2 max_render_time off
