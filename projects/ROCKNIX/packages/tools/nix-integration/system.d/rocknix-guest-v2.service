@@ -77,6 +77,15 @@ WorkingDirectory=/storage/machines/rocknix-guest
 # ownership marker; verify the rootfs is shaped for Layer 14.
 ExecStartPre=/usr/bin/rocknix-layer14-prep
 
+# Stage a scrubbed copy of /run/udev under /run/.guest-udev. libseat
+# walks the kernel udev DB during DRM session bring-up; if it finds an
+# entry for a device InputPlumber has already hot-removed (the AYN
+# gamepad source on event3) it aborts and cascades into a wlroots GPU
+# reset. The stage script removes any data file tagged
+# `inputplumber/by-hidden` from a private copy. The bind below then
+# replaces the guest's /run/udev with the cleaned tree.
+ExecStartPre=/usr/bin/rocknix-guest-udev-stage
+
 ExecStart=/usr/bin/systemd-nspawn \
   --machine=rocknix-guest \
   --directory=/storage/machines/rocknix-guest \
@@ -90,6 +99,7 @@ ExecStart=/usr/bin/systemd-nspawn \
   --bind=/dev/input \
   --bind=/dev/tty0 \
   --bind=/dev/tty1 \
+  --bind-ro=/run/.guest-udev:/run/udev \
   --bind=/sys/class/backlight \
   --bind=/sys/class/leds \
   --bind=/sys/class/devfreq \

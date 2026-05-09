@@ -39,6 +39,7 @@ post_install() {
   cp ${PKG_DIR}/scripts/rocknix-host-reclaim ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-recovery-toggle ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-layer14-soak ${INSTALL}/usr/bin
+  cp ${PKG_DIR}/scripts/rocknix-guest-udev-stage ${INSTALL}/usr/bin
   chmod 0755 \
     ${INSTALL}/usr/bin/nix-doctor \
     ${INSTALL}/usr/bin/nix-layer-activate \
@@ -46,7 +47,8 @@ post_install() {
     ${INSTALL}/usr/bin/rocknix-layer14-prep \
     ${INSTALL}/usr/bin/rocknix-host-reclaim \
     ${INSTALL}/usr/bin/rocknix-recovery-toggle \
-    ${INSTALL}/usr/bin/rocknix-layer14-soak
+    ${INSTALL}/usr/bin/rocknix-layer14-soak \
+    ${INSTALL}/usr/bin/rocknix-guest-udev-stage
 
   mkdir -p ${INSTALL}/usr/lib/nix-integration/tests
   cp ${PKG_DIR}/tests/nix-integration-runtime-smoke.sh ${INSTALL}/usr/lib/nix-integration/tests
