@@ -113,17 +113,24 @@
 
     output DSI-1 disable
 
-    # Both Thor touchscreens currently report identical libinput
-    # identifiers (vendor:product:name = 0:0:generic_ft5x06_(8d))
-    # because the ft5x06 driver doesn't synthesise distinct names per
-    # i2c instance. sway 1.11 has no path-based input identifier syntax,
-    # so we cannot per-device map them. Coarse workaround: pin all touch
-    # input to DSI-2 (the active panel). Bottom-panel taps still produce
-    # libinput events but are silently dropped at the wlroots routing
-    # stage instead of landing on the wrong surface.
+    # Touch routing for Thor's dual-screen design.
     #
-    # See docs/brainstorms/2026-05-08-001-rocknix-thor-multi-touchscreen-routing.md
-    # for the proper kernel-patch + DT fix.
+    # Default: pin all touch sources to the active (top) panel. This
+    # is the safe behaviour on kernels that don't yet name the two
+    # ft5x06 controllers distinctly -- without it, bottom-panel taps
+    # would either be dropped or land on the wrong surface because
+    # both controllers report identical libinput identifiers
+    # (vendor:product:name = 0:0:generic_ft5x06_(8d)).
     input type:touch map_to_output DSI-2
+
+    # After-patch identifiers (see SM8550 kernel patch
+    # 0054-edt-ft5x06-honour-DT-input-name.patch and DT input-name
+    # properties on the touchscreen@38 nodes in qcs8550-ayn-thor.dts):
+    # the two controllers expose distinct names that sway can address
+    # individually, and these per-device rules override the type:touch
+    # default above (last-write-wins on map_to_output). On older
+    # kernels both rules are no-ops because no input matches them.
+    input "0:0:ft5x06-top"    map_to_output DSI-2
+    input "0:0:ft5x06-bottom" map_to_output DSI-1
   '';
 }

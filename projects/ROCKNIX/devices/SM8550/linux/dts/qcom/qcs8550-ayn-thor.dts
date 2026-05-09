@@ -272,6 +272,12 @@
 		touchscreen-size-y = <1920>;
 		touchscreen-swapped-x-y;
 		touchscreen-inverted-x;
+
+		/* Distinct input-device name so Wayland compositors can
+		 * tell this top-panel touchscreen apart from the bottom one
+		 * (both chips otherwise report identical libinput identifiers).
+		 * Requires the edt-ft5x06 "honour DT 'input-name'" patch. */
+		input-name = "ft5x06-top";
 	};
 };
 
@@ -390,6 +396,11 @@
 		touchscreen-inverted-x;
 
 		no-regmap-bulk-read;
+
+		/* Bottom panel: paired with DSI-1. See ft5x06-top above for
+		 * the full rationale; the input-name override requires the
+		 * edt-ft5x06 "honour DT 'input-name'" patch. */
+		input-name = "ft5x06-bottom";
 	};
 };
 
