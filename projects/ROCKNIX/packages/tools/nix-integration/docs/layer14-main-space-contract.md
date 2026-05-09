@@ -145,10 +145,18 @@ SM8550 only:
 The build flag hard-fails on any other device. Other ROCKNIX devices
 continue to build the legacy path with no behavior change.
 
+## Sibling profiles
+
+- `dev-env` — interactive sway session for on-device development
+  (Korri-adjacent dev environment). Same nspawn substrate, different
+  guest profile. See `layer14-dev-env-profile.md` for the contract
+  and the live-swap procedure.
+
 ## Origin and references
 
 - Brief: `docs/brainstorms/2026-05-07-002-rocknix-thin-host-nix-main-space.md`
 - Plan: `docs/plans/2026-05-07-003-feat-rocknix-layer-14-thin-host-main-space-plan.md`
+- Sibling: `docs/plans/2026-05-08-001-feat-rocknix-interactive-dev-env-profile-plan.md`
 - Predecessor contracts:
   - `layer10-guest-lifecycle-contract.md` — guest lifecycle
   - `layer12-guest-ssh-contract.md` — opt-in SSH on port 2222
