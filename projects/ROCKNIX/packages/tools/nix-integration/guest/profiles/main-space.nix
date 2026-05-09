@@ -72,7 +72,17 @@
     # Sway client commands (foot, swaybg, swaylock) inherit sway's PATH;
     # add them here so `swaymsg exec foot` works without requiring the
     # caller to set absolute paths.
-    path = with pkgs; [ dbus foot swaybg swaylock ];
+    #
+    # bashInteractive is required because sway's exec mechanism
+    # (both `swaymsg exec` over IPC and `bindsym ... exec ...` keybinds)
+    # calls `execlp("sh", "sh", "-c", cmd, NULL)`. Without bash on the
+    # unit's PATH that lookup fails with ENOENT and sway logs
+    # `[sway/commands/exec_always.c:65] execve failed: No such file or
+    # directory` for every exec attempt. The systemd default service
+    # PATH on NixOS does not include any shell. Verified live on Thor
+    # 2026-05-08: PATH inspection of sway's /proc/<pid>/environ showed
+    # only nix store package bin/ dirs, none containing `sh`.
+    path = with pkgs; [ dbus foot swaybg swaylock bashInteractive ];
 
     serviceConfig = {
       Type = "simple";
