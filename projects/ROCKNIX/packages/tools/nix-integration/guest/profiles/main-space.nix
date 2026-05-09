@@ -20,6 +20,7 @@
     ../modules/display.nix
     ../modules/audio.nix
     ../modules/network.nix
+    ../modules/lid.nix
   ];
 
   # Layer 14 hostname: distinguish from the Layer 10b minimal "rocknix-guest"
