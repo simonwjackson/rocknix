@@ -25,11 +25,21 @@
     dns = "default";
   };
 
-  networking.firewall = {
-    enable = true;
-    allowedTCPPorts = [ 2222 ];
-  };
-  networking.nftables.enable = true;
+  # Firewall + nftables disabled inside the nspawn guest. systemd-nspawn
+  # without --capability=CAP_NET_ADMIN/CAP_NET_RAW (and without the host
+  # exposing nf_tables.ko caps cleanly) makes nftables.service abort with
+  # "netlink: Error: cache initialization failed: Operation not permitted"
+  # on every activation, leaving a permanently-failed unit.
+  #
+  # The trust boundary lives at the host (rocknix-graphical.target wires
+  # the guest, the host enforces network policy). The guest doesn't need
+  # its own firewall ruleset under the shared-netns Layer-14 model.
+  #
+  # Validated on Thor 2026-05-08: nftables.service failed every guest
+  # boot under enable=true; with enable=false, no failed units (apart
+  # from independently-known sshd.socket port-conflict).
+  networking.firewall.enable = false;
+  networking.nftables.enable = false;
 
   networking.resolvconf.enable = false;
 

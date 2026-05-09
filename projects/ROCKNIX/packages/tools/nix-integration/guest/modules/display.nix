@@ -8,10 +8,12 @@
 #
 # WLR_LIBINPUT_NO_DEVICES=1 was needed under the broad-bind unit because
 # host libinput was fighting guest sway over input devices. Layer 14
-# Strategy A (per E4) keeps host InputPlumber, guest reads virtual
-# event7/event8; the workaround is no longer required, but we keep it
-# disabled by setting it explicitly to "0" so a future regression
-# surfaces in soak.
+# main-space rediscovered the same need on Thor 2026-05-08 -- under
+# nspawn with --bind=/dev/input but without udev/sysfs symlink support,
+# libinput sees zero devices and aborts wlroots backend init with:
+#   [ERROR] backend/libinput/backend.c:111 libinput initialization failed
+# Setting WLR_LIBINPUT_NO_DEVICES=1 makes wlroots skip libinput's device
+# probe; sway then reaches the DRM backend cleanly.
 { pkgs, ... }:
 
 {
@@ -38,6 +40,6 @@
 
   environment.sessionVariables = {
     WLR_NO_HARDWARE_CURSORS = "1";
-    WLR_LIBINPUT_NO_DEVICES = "0";
+    WLR_LIBINPUT_NO_DEVICES = "1";
   };
 }
