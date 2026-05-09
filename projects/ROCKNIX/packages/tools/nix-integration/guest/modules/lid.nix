@@ -22,14 +22,21 @@
 #   1. Snapshot governors + nmcli wifi state + rfkill bluetooth state
 #      to /run/rocknix-lid/ so lid-open can restore.
 #   2. swaymsg 'output * power off' on both DSI panels.
-#   3. systemctl stop pipewire / wireplumber if active (releases the
+#   3. SIGSTOP every PID inside the sway-kiosk cgroup that is NOT sway
+#      itself or one of its bar/bg helpers. Targets the actual battery
+#      drain: apps that keep submitting frames after DPMS off (e.g.
+#      glmark2 with --run-forever, cemu with --run-forever shaders).
+#      The stopped PIDs are recorded in /run/rocknix-lid/stopped.pids
+#      so lid-open only SIGCONTs the ones we paused (avoiding races
+#      with new processes started during the closed window).
+#   4. systemctl stop pipewire / wireplumber if active (releases the
 #      audio DSP path; safe no-op if audio.nix isn't running yet).
-#   4. nmcli radio wifi off  -- WILL DISCONNECT ACTIVE SSH. If you need
+#   5. nmcli radio wifi off  -- WILL DISCONNECT ACTIVE SSH. If you need
 #      SSH to survive lid-cycle testing, touch the master kill switch:
-#        touch /storage/.config/rocknix/lid-suspend.disabled
+#        touch /storage/.guest/lid-suspend.disabled
 #      The whole handler is then a no-op until that file is removed.
-#   5. rfkill block bluetooth.
-#   6. echo powersave > scaling_governor  for every cpufreq policy.
+#   6. rfkill block bluetooth.
+#   7. echo powersave > scaling_governor  for every cpufreq policy.
 #
 # Lid open: reverse in opposite order, restoring snapshotted state from
 # /run/rocknix-lid/. swaymsg 'output * power on' last so the screen
@@ -86,19 +93,48 @@ let
       SWAYSOCK="$SOCK" swaymsg 'output * power off' >/dev/null 2>&1 || true
     fi
 
-    # ---- 3. stop audio if running ----
+    # ---- 3. SIGSTOP non-keep PIDs inside the sway-kiosk cgroup ----
+    # Allowlist (process /proc/PID/comm names we keep alive so sway can
+    # repaint on lid-open instantly):
+    #   sway, swaybg, swaybar, sway-bar-stat (truncated comm of
+    #   sway-bar-status). Anything else in the cgroup gets SIGSTOPped:
+    #   foot, fuzzel, glmark2-wayland, cemu, retroarch, etc. The
+    #   stopped-PID list is recorded so lid-open only thaws those.
+    SWAY_CG=/sys/fs/cgroup/system.slice/rocknix-sway-kiosk.service
+    : > "${stateDir}/stopped.pids"
+    if [ -r "$SWAY_CG/cgroup.procs" ]; then
+      while IFS= read -r pid; do
+        [ -n "$pid" ] || continue
+        comm=$(cat "/proc/$pid/comm" 2>/dev/null || echo "")
+        # NixOS wraps binaries: real comm is often `.swaybg-wrapped`
+        # rather than `swaybg`. Match both forms.
+        case "$comm" in
+          sway|swaybg|swaybar|sway-bar-stat|sway-bar-statu|sd-pam) ;;
+          .sway-wrapped|.swaybg-wrapped|.swaybar-wrapped) ;;
+          dbus-daemon|dbus-run-sessio|dbus-run-session) ;;
+          bash|sh) ;;
+          *)
+            if kill -STOP "$pid" 2>/dev/null; then
+              echo "$pid $comm" >> "${stateDir}/stopped.pids"
+            fi
+            ;;
+        esac
+      done < "$SWAY_CG/cgroup.procs"
+    fi
+
+    # ---- 4. stop audio if running ----
     if [ -f "${stateDir}/pipewire.state" ]; then
       systemctl stop pipewire.service wireplumber.service 2>/dev/null || true
     fi
 
-    # ---- 4. Wi-Fi off (kills SSH if you're connected -- by design) ----
+    # ---- 5. Wi-Fi off (kills SSH if you're connected -- by design) ----
     nmcli radio wifi off 2>/dev/null || true
 
-    # ---- 5. Bluetooth off ----
+    # ---- 6. Bluetooth off ----
     /run/wrappers/bin/rfkill block bluetooth 2>/dev/null \
       || rfkill block bluetooth 2>/dev/null || true
 
-    # ---- 6. CPU governors -> powersave ----
+    # ---- 7. CPU governors -> powersave ----
     for p in /sys/devices/system/cpu/cpufreq/policy*; do
       [ -d "$p" ] || continue
       if [ -w "$p/scaling_governor" ]; then
@@ -157,7 +193,18 @@ let
       rm -f "${stateDir}/pipewire.state"
     fi
 
-    # ---- 5. DPMS on (last so radios are up before the screen wakes) ----
+    # ---- 5. SIGCONT the apps we stopped on close ----
+    # Only thaw PIDs we recorded -- a process that exited during the
+    # closed window won't exist anymore and that's fine.
+    if [ -f "${stateDir}/stopped.pids" ]; then
+      while IFS=' ' read -r pid comm; do
+        [ -n "$pid" ] || continue
+        kill -CONT "$pid" 2>/dev/null || true
+      done < "${stateDir}/stopped.pids"
+      rm -f "${stateDir}/stopped.pids"
+    fi
+
+    # ---- 6. DPMS on (last so radios are up before the screen wakes) ----
     SOCK=$(ls /run/user/0/sway-ipc.0.*.sock 2>/dev/null | head -1)
     if [ -n "$SOCK" ]; then
       SWAYSOCK="$SOCK" swaymsg 'output * power on' >/dev/null 2>&1 || true
