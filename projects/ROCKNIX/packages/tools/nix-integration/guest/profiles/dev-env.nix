@@ -159,6 +159,7 @@ in
     # Launch core apps
     bindsym $mod+Return exec foot
     bindsym $mod+d exec fuzzel
+    bindsym $mod+g exec /storage/.guest/games-launcher.sh
     bindsym $mod+Shift+q kill
     bindsym $mod+Shift+e exec swaymsg exit
 
@@ -229,5 +230,11 @@ in
     # One terminal so the user lands on something interactive instead
     # of an empty dark screen. They can close it with Mod+Shift+Q.
     exec foot
+
+    # Games launcher pinned to DSI-1 (Thor's bottom touch panel).
+    # Loops fuzzel on its own so the bottom screen always shows a
+    # tap-target as long as the script is on disk. Mod+G also
+    # respawns it on demand.
+    exec /storage/.guest/games-launcher.sh
   '';
 }
