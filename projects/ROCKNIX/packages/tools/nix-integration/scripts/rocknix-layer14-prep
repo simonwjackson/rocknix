@@ -57,14 +57,32 @@ fail() {
 # izcw1v5...nixos-system... (host-only), guest /nix/store had
 # dlsz2rf...nixos-system... only. Relinking /init to the current
 # system profile fixed the boot.
+#
+# Bug 6 fix (also surfaced 2026-05-08): the early version of this script
+# tested `[ -x "${current_system}/init" ]` against the HOST filesystem.
+# But the system profile path is absolute under /nix/store -- valid
+# inside the guest's /nix/store, not the host's. The check would always
+# fail on a clean install and the relink would silently skip. Test
+# against `${GUEST_ROOT}${path}` instead.
 if [ -L "${SYSTEM_PROFILE}" ]; then
-  current_system="$(readlink -f "${SYSTEM_PROFILE}" 2>/dev/null || true)"
-  if [ -n "${current_system}" ] && [ -x "${current_system}/init" ]; then
-    desired="${current_system#${GUEST_ROOT}}/init"
-    case "${desired}" in
-      /nix/*) : ;;  # ok, already absolute under /nix
-      *)      desired="/nix/store/$(basename "${current_system}")/init" ;;
-    esac
+  # Read the symlink target without -f resolution so we get the absolute
+  # /nix/store/... path as written, not as the host would resolve it.
+  link_target="$(readlink "${SYSTEM_PROFILE}")"
+  case "${link_target}" in
+    /nix/*)
+      desired_system="${link_target}"
+      ;;
+    *)
+      # Indirect symlink (system -> system-N-link -> /nix/store/...).
+      # Resolve one level via the profile dir.
+      profile_dir="$(dirname "${SYSTEM_PROFILE}")"
+      indirect="$(readlink "${profile_dir}/${link_target}" 2>/dev/null || true)"
+      desired_system="${indirect}"
+      ;;
+  esac
+
+  if [ -n "${desired_system}" ] && [ -d "${GUEST_ROOT}${desired_system}" ]; then
+    desired="${desired_system}/init"
     for init_path in "${GUEST_ROOT}/init" "${GUEST_ROOT}/sbin/init"; do
       if [ -L "${init_path}" ]; then
         cur="$(readlink "${init_path}")"
@@ -75,7 +93,8 @@ if [ -L "${SYSTEM_PROFILE}" ]; then
       fi
     done
   else
-    log "WARNING: system profile resolves to missing path: ${current_system:-unresolved}"
+    log "WARNING: guest system profile resolves to: ${desired_system:-unresolved}"
+    log "  (expected GUEST_ROOT${desired_system} to exist)"
   fi
 fi
 

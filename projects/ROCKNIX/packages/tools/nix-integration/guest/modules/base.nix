@@ -24,5 +24,17 @@
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
   nix.gc.automatic = false;
 
+  # Disable build sandboxing inside the guest: systemd-nspawn does not
+  # expose the kernel namespaces (CLONE_NEWUSER + CLONE_NEWNS in the
+  # right combo) that nix's sandboxed-builds path requires. With sandbox
+  # on, every `nixos-rebuild switch` from inside the guest aborts with
+  # "this system does not support the kernel namespaces that are
+  # required for sandboxing; use --no-sandbox to disable sandboxing."
+  #
+  # Validated on Thor 2026-05-08: sandbox=true -> rebuild aborts before
+  # the activation step; sandbox=false -> rebuild completes, including
+  # building the system closure derivation.
+  nix.settings.sandbox = false;
+
   system.stateVersion = "25.11";
 }
