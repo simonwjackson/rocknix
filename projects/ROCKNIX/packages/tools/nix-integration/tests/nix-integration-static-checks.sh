@@ -399,13 +399,24 @@ L14_UNIT="${PKG_DIR}/system.d/rocknix-guest-v2.service"
 [ -f "${L14_UNIT}" ] || fail "missing Layer 14 unit (U2)"
 
 # Required binds (positive shape).
+#
+# /dev/console was on this list before 2026-05-08; live validation on
+# Thor showed --bind=/dev/console clashes with the nspawn pty allocation
+# ("Failed to copy bytes from %s to /dev/console") and the unit aborts
+# at PID 1. Bug #5 fix removed the bind and is reflected here.
+#
+# /dev/tty0 + /dev/tty1 were added 2026-05-08 to let libseat acquire
+# vt1 inside the guest; without them seatd cannot canonicalize a target
+# tty and DRM session bring-up fails.
 for required_bind in \
   '/dev/snd' \
   '/dev/rfkill' \
   '/dev/dri/card0' \
   '/dev/dri/renderD128' \
-  '/dev/console' \
   '/dev/input' \
+  '/dev/tty0' \
+  '/dev/tty1' \
+  '/run/.guest-udev:/run/udev' \
   '/sys/class/backlight' \
   '/sys/class/leds' \
   '/sys/class/devfreq' \
@@ -415,6 +426,24 @@ for required_bind in \
   grep -qF -- "${required_bind}" "${L14_UNIT}" \
     || fail "Layer 14 unit missing required bind: ${required_bind} (U2)"
 done
+
+# Forbidden binds we KNOW broke things on Thor.
+#
+# /dev/console: clashes with nspawn pty allocation (Bug #5).
+# Raw /run/udev (without scrubbing): InputPlumber-hidden devices
+#   propagate into the guest and crash libseat / wlroots GPU init.
+L14_UNIT_BODY_FOR_DEV_CONSOLE=$(grep -v '^[[:space:]]*#' "${L14_UNIT}")
+if printf '%s\n' "${L14_UNIT_BODY_FOR_DEV_CONSOLE}" | grep -qE -- '--bind(-ro)?=/dev/console([[:space:]]|$|\\)'; then
+  fail "Layer 14 unit must NOT bind /dev/console (Bug #5, nspawn pty clash)"
+fi
+if printf '%s\n' "${L14_UNIT_BODY_FOR_DEV_CONSOLE}" | grep -qE -- '--bind(-ro)?=/run/udev([[:space:]]|$|\\)'; then
+  fail "Layer 14 unit must NOT bind raw /run/udev; bind the staged /run/.guest-udev tree instead (libseat InputPlumber-hidden enumeration crash)"
+fi
+
+# Layer 14 unit must run the udev-stage hook before nspawn so the
+# scrubbed tree exists when systemd-nspawn attempts the bind-ro mount.
+grep -q 'ExecStartPre=/usr/bin/rocknix-guest-udev-stage' "${L14_UNIT}" \
+  || fail "Layer 14 unit missing ExecStartPre=/usr/bin/rocknix-guest-udev-stage (U2)"
 
 # Forbidden binds (negative shape; the lessons of Tier A-E). Strip comment
 # lines first so descriptive prose explaining what NOT to do does not
