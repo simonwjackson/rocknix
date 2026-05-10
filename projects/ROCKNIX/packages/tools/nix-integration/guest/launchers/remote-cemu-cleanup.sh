@@ -37,6 +37,29 @@ run_guest() {
   timeout 10 nsenter -t "$gp" -m -u -i -n -p -r -w /bin/sh -c "$1" 2>/dev/null || true
 }
 
+EMULATOR_NAMES="Cemu cemu gamescope gamescope-wl gamescopereaper mangohud"
+
+report_remaining_processes() {
+  rc=0
+  for name in $EMULATOR_NAMES; do
+    pids="$(pgrep -x "$name" 2>/dev/null || true)"
+    if [ -n "$pids" ]; then
+      log "STALE host pids named '$name': $pids"
+      rc=1
+    fi
+  done
+
+  guest_remaining="$(run_guest "PATH=/run/current-system/sw/bin:/bin:/usr/bin:/nix/var/nix/profiles/per-user/root/profile/bin; for name in $EMULATOR_NAMES; do pids=\$(pgrep -x \"\$name\" 2>/dev/null || true); [ -n \"\$pids\" ] && printf '%s %s\\n' \"\$name\" \"\$pids\"; done" || true)"
+  if [ -n "$guest_remaining" ]; then
+    printf '%s\n' "$guest_remaining" | while IFS= read -r line; do
+      log "STALE guest pids: $line"
+    done
+    rc=1
+  fi
+
+  return "$rc"
+}
+
 log "cleanup start"
 
 # Guest processes. Use exact process names only. Do not use broad
@@ -44,7 +67,7 @@ log "cleanup start"
 # `/storage/.config/Cemu` in its bind list and must never be killed by
 # cleanup. UI shells are opt-in: killing fuzzel/foot can terminate an
 # unrelated operator menu/terminal during diagnostics.
-guest_names="Cemu cemu gamescope gamescope-wl gamescopereaper mangohud"
+guest_names="$EMULATOR_NAMES"
 if [ "${CLEANUP_KILL_UI:-0}" = "1" ]; then
   guest_names="$guest_names fuzzel foot"
 fi
@@ -71,4 +94,10 @@ else
   systemctl start rocknix-guest-v2.service 2>/dev/null || true
 fi
 
-log "cleanup done"
+if report_remaining_processes; then
+  log "cleanup done"
+else
+  log "cleanup incomplete: emulator processes remain"
+  [ "${CLEANUP_ALLOW_STALE:-0}" = "1" ] || exit 1
+  log "CLEANUP_ALLOW_STALE=1 set; continuing despite stale processes"
+fi
