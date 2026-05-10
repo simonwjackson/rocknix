@@ -18,11 +18,12 @@ or host Cemu binaries.
 | `games-launcher.sh` | Touch-friendly fuzzel menu pinned to DSI-1 (Thor's bottom panel). Kept available, but not autostarted while touch/menu behavior is under validation. |
 | `host-tune.sh` | Host-side sysfs tuning helper. Runs on ROCKNIX host, not inside the guest. |
 | `remote-cemu-cleanup.sh` | Host-side cleanup script for unattended Cemu/gamescope experiments. |
-| `remote-cemu-runner.sh` | Host-side benchmark harness. Creates `/storage/.guest/runs/<timestamp>-<variant>-<profile>/` with logs, title samples, screenshot, governor/thermal/process state. Supports `RUNNER_CEMU_START` for candidate Cemu launchers. |
+| `remote-cemu-runner.sh` | Host-side benchmark harness. Creates `/storage/.guest/runs/<timestamp>-<variant>-<profile>/` with logs, title samples, screenshot, governor/thermal/process state. Supports `RUNNER_CEMU_START` for guest candidates and `RUNNER_HOST_LAUNCHER` for typed host-control cases. |
 | `remote-cemu-single-run-validation.sh` | Host-side one-command orchestrator. Runs a compact headless benchmark matrix, analyzes MangoHud CSVs, writes a parent `report.md`, and restores safe state. |
 | `remote-cemu-build-fingerprint.sh` | Host-side build/runtime fingerprint report for ROCKNIX host Cemu, current guest Nix Cemu, and an optional candidate Cemu. |
 | `remote-cemu-runtime-ab.sh` | Host-side current-vs-candidate Cemu A/B harness, including a live checkpoint mode for in-game sampling. |
-| `remote-cemu-live-campaign.sh` | Host-side one-session live campaign. Runs current Nix Cemu and classic-SDL candidate sequentially, waits for in-game checkpoint notes, captures maps/thread/cache/CSV evidence, then cleans up and restores power state. |
+| `remote-cemu-live-campaign.sh` | Host-side one-session live campaign. Runs typed guest and host-control cases sequentially, waits for in-game checkpoint notes, captures maps/thread/cache/CSV evidence, then cleans up and restores power state. Child run directories are indexed so A/B/A repeats do not overwrite evidence. |
+| `remote-cemu-promote.sh` | Host-side promotion helper. Installs an already-imported direct `cemu-rocknix-package` output into `/nix/var/nix/profiles/per-user/root/cemu-promoted` inside the guest so the product launcher has a stable GC-rooted Cemu path. |
 
 ## BOTW profiles
 
@@ -56,29 +57,26 @@ and `/sys/class/devfreq/`, both bind-mounted into the guest by the
 nspawn drop-in. Failures on read-only sysfs paths are non-fatal -- the
 host's defaults remain in effect.
 
-## Cemu store path coupling
+## Cemu promotion and override contract
 
-`start_cemu_guest.sh` defaults to the nix-built cemu by its full
-`/nix/store/<hash>-cemu-2.999.0/bin/Cemu` path. Update on every
-flake rebuild that changes inputs.
+`start_cemu_guest.sh` defaults to the promoted direct-package profile:
 
-Build-parity diagnostics may override the binary with `CEMU_BIN` via
-`start_cemu_guest_candidate.sh`; this keeps settings, saves, XDG paths,
-and logging identical while changing only the Cemu binary under test.
-Do not use `CEMU_BIN` to point at host `/usr/bin/cemu` as a product
-path; host binaries are diagnostic-only and must not become the Layer 14
-runtime contract.
+```text
+/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/Cemu
+```
 
-The direct ROCKNIX package replica is built as
-`cemu-rocknix-package` from `guest/flakes/cemu/rocknix-package.nix`.
-Build it on Fuji or another aarch64 builder, then import its closure into the
-Thor guest store when Thor is back online. Record the resolved store path in the
-fingerprint report before live testing; do not edit the default launcher just to
-try one candidate.
+Promote only an already-imported `cemu-rocknix-package` output:
 
-Future improvement: read the default from a `nix profile` symlink under
-`/storage/.guest/profile/bin/Cemu` so the launcher does not need
-editing on each cemu rebuild.
+```sh
+/storage/.guest/remote-cemu-promote.sh \
+  /nix/store/...-cemu-rocknix-package-2.999.0-rocknix-package/bin/Cemu
+```
+
+The helper installs the package output into a dedicated Nix profile/GC root and refuses outputs that lack the direct package's `nix-support/rocknix-cemu-build/vulkan-loader-lib-path` evidence. The launcher resolves the profile symlink with `readlink -f` before reading package metadata, so Vulkan loader discovery still comes from the real store output.
+
+Build-parity diagnostics may override the binary with `CEMU_BIN` via `start_cemu_guest_candidate.sh`; this keeps settings, saves, XDG paths, and logging identical while changing only the Cemu binary under test. Do not use `CEMU_BIN` to point at host `/usr/bin/cemu` as a product path; host binaries are diagnostic controls only and must not become the Layer 14 runtime contract.
+
+The direct ROCKNIX package replica is built as `cemu-rocknix-package` from `guest/flakes/cemu/rocknix-package.nix`. Build it on Fuji or another aarch64 builder, import its closure into the Thor guest store when Thor is back online, fingerprint it, live-test it against same-session host control, then promote it with `remote-cemu-promote.sh` if it passes the parity gate.
 
 ## Required nspawn binds
 
@@ -148,6 +146,17 @@ The campaign defaults to `720p-45` through `guest-gamescope-mangohud` and runs:
 2. `cemu-rocknix-style-classic-sdl`, and
 3. any optional `FAITHFUL_CEMU` or `ROCKNIX_PACKAGE_CEMU` path you provide.
 
+For the final parity gate, use typed cases so host controls and guest candidates are explicit. Recommended shape is A/B/A or B/A/B, for example:
+
+```sh
+CAMPAIGN_CASES="host:host-control:/storage/.guest/launch-host-cemu-through-guest-display.sh:720p-45
+guest:rocknix-package:/nix/store/...-cemu-rocknix-package-2.999.0-rocknix-package/bin/Cemu
+host:host-control-repeat:/storage/.guest/launch-host-cemu-through-guest-display.sh:720p-45" \
+  /storage/.guest/remote-cemu-live-campaign.sh
+```
+
+A host-control launcher must run host `/usr/bin/cemu` through the same guest-visible display path, accept `RUN_DIR`, `PROFILE`, `VARIANT`, `CEMU_ROM`, `MANGOHUD_CONFIGFILE`, `XDG_RUNTIME_DIR`, and `WAYLAND_DISPLAY`, and write comparable host-side Cemu/MangoHud/log evidence into `RUN_DIR`. If that contract cannot be proven, the case is inconclusive rather than a parity result.
+
 For each case, get BOTW to a real in-game scene, then from another SSH shell write the observed FPS and notes:
 
 ```sh
@@ -156,7 +165,7 @@ echo 'visible FPS: <value>; notes: <loading/stutter>' > /storage/.guest/live-che
 
 The script samples for 45 seconds after each checkpoint, records process maps, hot threads, pressure, shader-cache shape, screenshot, and recent MangoHud FPS stats, then advances to the next case. The final report lands in `/storage/.guest/runs/<timestamp>-cemu-live-campaign/report.md`.
 
-Override cases with newline-separated `label=/nix/store/.../bin/Cemu` entries:
+Legacy guest-only overrides still work with newline-separated `label=/nix/store/.../bin/Cemu` entries:
 
 ```sh
 CAMPAIGN_CASES="current=$CURRENT_CEMU
@@ -191,6 +200,7 @@ Each run creates a directory under `/storage/.guest/runs/` containing:
 
 Safety notes:
 
+- `remote-cemu-cleanup.sh` exits non-zero if exact-name Cemu/gamescope/MangoHud processes survive cleanup. Use `CLEANUP_ALLOW_STALE=1` only for manual diagnostics, never for parity promotion.
 - Do not bind all of `/storage/.cache` into the guest. Host and guest Mesa shader caches may belong to different Mesa versions.
 - Do not mix host and Nix Vulkan loaders in the Cemu process. The host-Mesa hot-swap experiment reached Mesa 26 in `vulkaninfo` but crashed Cemu due to an incoherent two-loader process.
 - Nix Mesa 26.0.2 can be made visible to the guest with `VK_ICD_FILENAMES`, but it failed Cemu with `failed to submit command buffer. Error -4`; keep that as negative evidence.
