@@ -29,6 +29,12 @@ RUNNER_SNAPSHOT_SETTINGS="${RUNNER_SNAPSHOT_SETTINGS:-1}"
 # changing the default Cemu path for normal runs.
 RUNNER_CEMU_START="${RUNNER_CEMU_START:-}"
 RUNNER_CEMU_AFFINITY_MASK="${RUNNER_CEMU_AFFINITY_MASK:-0xF8}"
+# Host-control is diagnostic only. It must be a launcher that knows how to run
+# host /usr/bin/cemu through the same guest-visible display path used for the
+# candidate run. The runner passes RUN_DIR/PROFILE/VARIANT and display/MangoHud
+# env so the launcher can write comparable evidence into RUN_DIR.
+RUNNER_HOST_LAUNCHER="${RUNNER_HOST_LAUNCHER:-/storage/bin/botw-potato-30.sh}"
+RUNNER_HOST_DISPLAY_ENV="${RUNNER_HOST_DISPLAY_ENV:-XDG_RUNTIME_DIR=/run/user/0 WAYLAND_DISPLAY=wayland-1}"
 ROM="/storage/roms/wiiu/The Legend of Zelda - Breath of the Wild (USA) (DLC) (v208).wua"
 RUNNER_CEMU_ROM="${RUNNER_CEMU_ROM:-$ROM}"
 TS="$(date '+%Y%m%d-%H%M%S')"
@@ -197,32 +203,7 @@ ensure_guest_tool() {
   run_guest "PATH=/run/current-system/sw/bin:/bin:/usr/bin:/nix/var/nix/profiles/per-user/root/profile/bin:/root/.nix-profile/bin; command -v $tool >/dev/null 2>&1 || nix profile install nixpkgs#$attr" >/dev/null 2>&1 || true
 }
 
-prepare_guest_launcher() {
-  start='/storage/.guest/start_cemu_guest.sh'
-  CEMU_START_LAUNCH='/storage/.guest/start_cemu_guest.sh'
-  case "$VARIANT" in
-    guest-direct) start='/storage/.guest/start_cemu_guest.sh' ;;
-    guest-direct-mangohud) ensure_guest_tool mangohud mangohud; start='/storage/.guest/start_cemu_guest_mangohud.sh' ;;
-    guest-direct-rocknixmesa) start='/storage/.guest/start_cemu_guest_rocknixmesa.sh'; CEMU_START_LAUNCH='/storage/.guest/start_cemu_guest_rocknixmesa.sh' ;;
-    guest-direct-rocknixmesa-mangohud) ensure_guest_tool mangohud mangohud; start='/storage/.guest/start_cemu_guest_mangohud.sh'; CEMU_START_LAUNCH='/storage/.guest/start_cemu_guest_rocknixmesa.sh' ;;
-    guest-gamescope) ensure_guest_tool gamescope gamescope; start='/storage/.guest/start_cemu_guest_gamescope.sh' ;;
-    guest-gamescope-mangohud) ensure_guest_tool gamescope gamescope; ensure_guest_tool mangohud mangohud; start='/storage/.guest/start_cemu_guest_gamescope.sh' ;;
-    guest-gamescope-rocknixmesa) ensure_guest_tool gamescope gamescope; start='/storage/.guest/start_cemu_guest_gamescope.sh'; CEMU_START_LAUNCH='/storage/.guest/start_cemu_guest_rocknixmesa.sh' ;;
-    guest-gamescope-rocknixmesa-mangohud) ensure_guest_tool gamescope gamescope; ensure_guest_tool mangohud mangohud; start='/storage/.guest/start_cemu_guest_gamescope.sh'; CEMU_START_LAUNCH='/storage/.guest/start_cemu_guest_rocknixmesa.sh' ;;
-    host-control) return 0 ;;
-    *) echo "unknown variant: $VARIANT" >&2; exit 2 ;;
-  esac
-
-  [ -n "$RUNNER_CEMU_START" ] && CEMU_START_LAUNCH="$RUNNER_CEMU_START"
-
-  # Create a per-run launcher so experiments do not mutate the normal BOTW script.
-  # botw-guest.sh itself uses swaymsg exec for the final launch, so any
-  # experiment env must be injected into that inner sway command as well.
-  LAUNCH_ENV="MANGOHUD_CONFIGFILE=/storage/.config/MangoHud/MangoHud.conf CEMU_START=$CEMU_START_LAUNCH CEMU_AFFINITY_MASK=$RUNNER_CEMU_AFFINITY_MASK GS_NESTED_W=640 GS_NESTED_H=360 GS_OUT_W=1920 GS_OUT_H=1080 GS_REFRESH=60 GS_FILTER=fsr GS_SHARPNESS=5 USE_MANGOHUD=0"
-  case "$VARIANT" in *mangohud*) LAUNCH_ENV="MANGOHUD_CONFIGFILE=/storage/.config/MangoHud/MangoHud.conf CEMU_START=$CEMU_START_LAUNCH CEMU_AFFINITY_MASK=$RUNNER_CEMU_AFFINITY_MASK GS_NESTED_W=640 GS_NESTED_H=360 GS_OUT_W=1920 GS_OUT_H=1080 GS_REFRESH=60 GS_FILTER=fsr GS_SHARPNESS=5 USE_MANGOHUD=1" ;; esac
-  run_guest "PATH=/run/current-system/sw/bin:/bin:/usr/bin; cp -f /storage/.guest/botw-guest.sh /storage/.guest/.runner-botw-${VARIANT}.sh && sed -i 's|/storage/.guest/start_cemu_guest.sh|$start|g; s|swaymsg \"exec |swaymsg \"exec env $LAUNCH_ENV |' /storage/.guest/.runner-botw-${VARIANT}.sh && chmod +x /storage/.guest/.runner-botw-${VARIANT}.sh"
-
-  # MangoHud CSV/log config. The overlay is useful locally; CSV/logs are useful remotely.
+write_mangohud_config() {
   run_guest "mkdir -p /storage/.config/MangoHud '$RUN_DIR'; cat > /storage/.config/MangoHud/MangoHud.conf <<'EOF'
 legacy_layout=0
 fps
@@ -246,12 +227,47 @@ log_duration=$DURATION
 EOF"
 }
 
+prepare_guest_launcher() {
+  start='/storage/.guest/start_cemu_guest.sh'
+  CEMU_START_LAUNCH='/storage/.guest/start_cemu_guest.sh'
+  write_mangohud_config
+  case "$VARIANT" in
+    guest-direct) start='/storage/.guest/start_cemu_guest.sh' ;;
+    guest-direct-mangohud) ensure_guest_tool mangohud mangohud; start='/storage/.guest/start_cemu_guest_mangohud.sh' ;;
+    guest-direct-rocknixmesa) start='/storage/.guest/start_cemu_guest_rocknixmesa.sh'; CEMU_START_LAUNCH='/storage/.guest/start_cemu_guest_rocknixmesa.sh' ;;
+    guest-direct-rocknixmesa-mangohud) ensure_guest_tool mangohud mangohud; start='/storage/.guest/start_cemu_guest_mangohud.sh'; CEMU_START_LAUNCH='/storage/.guest/start_cemu_guest_rocknixmesa.sh' ;;
+    guest-gamescope) ensure_guest_tool gamescope gamescope; start='/storage/.guest/start_cemu_guest_gamescope.sh' ;;
+    guest-gamescope-mangohud) ensure_guest_tool gamescope gamescope; ensure_guest_tool mangohud mangohud; start='/storage/.guest/start_cemu_guest_gamescope.sh' ;;
+    guest-gamescope-rocknixmesa) ensure_guest_tool gamescope gamescope; start='/storage/.guest/start_cemu_guest_gamescope.sh'; CEMU_START_LAUNCH='/storage/.guest/start_cemu_guest_rocknixmesa.sh' ;;
+    guest-gamescope-rocknixmesa-mangohud) ensure_guest_tool gamescope gamescope; ensure_guest_tool mangohud mangohud; start='/storage/.guest/start_cemu_guest_gamescope.sh'; CEMU_START_LAUNCH='/storage/.guest/start_cemu_guest_rocknixmesa.sh' ;;
+    host-control) return 0 ;;
+    *) echo "unknown variant: $VARIANT" >&2; exit 2 ;;
+  esac
+
+  [ -n "$RUNNER_CEMU_START" ] && CEMU_START_LAUNCH="$RUNNER_CEMU_START"
+
+  # Create a per-run launcher so experiments do not mutate the normal BOTW script.
+  # botw-guest.sh itself uses swaymsg exec for the final launch, so any
+  # experiment env must be injected into that inner sway command as well.
+  LAUNCH_ENV="MANGOHUD_CONFIGFILE=/storage/.config/MangoHud/MangoHud.conf CEMU_START=$CEMU_START_LAUNCH CEMU_AFFINITY_MASK=$RUNNER_CEMU_AFFINITY_MASK GS_NESTED_W=640 GS_NESTED_H=360 GS_OUT_W=1920 GS_OUT_H=1080 GS_REFRESH=60 GS_FILTER=fsr GS_SHARPNESS=5 USE_MANGOHUD=0"
+  case "$VARIANT" in *mangohud*) LAUNCH_ENV="MANGOHUD_CONFIGFILE=/storage/.config/MangoHud/MangoHud.conf CEMU_START=$CEMU_START_LAUNCH CEMU_AFFINITY_MASK=$RUNNER_CEMU_AFFINITY_MASK GS_NESTED_W=640 GS_NESTED_H=360 GS_OUT_W=1920 GS_OUT_H=1080 GS_REFRESH=60 GS_FILTER=fsr GS_SHARPNESS=5 USE_MANGOHUD=1" ;; esac
+  run_guest "PATH=/run/current-system/sw/bin:/bin:/usr/bin; cp -f /storage/.guest/botw-guest.sh /storage/.guest/.runner-botw-${VARIANT}.sh && sed -i 's|/storage/.guest/start_cemu_guest.sh|$start|g; s|swaymsg \"exec |swaymsg \"exec env $LAUNCH_ENV |' /storage/.guest/.runner-botw-${VARIANT}.sh && chmod +x /storage/.guest/.runner-botw-${VARIANT}.sh"
+
+}
+
 launch_variant() {
   case "$VARIANT" in
     host-control)
-      log "launching host control via /storage/bin/botw-potato-30.sh"
-      [ -x /storage/bin/botw-potato-30.sh ] || { log "missing host control script"; return 2; }
-      /storage/bin/botw-potato-30.sh > "$RUN_DIR/host-control-launch.log" 2>&1 &
+      log "launching host control via $RUNNER_HOST_LAUNCHER"
+      [ -x "$RUNNER_HOST_LAUNCHER" ] || { log "missing host control launcher: $RUNNER_HOST_LAUNCHER"; return 2; }
+      env \
+        RUN_DIR="$RUN_DIR" \
+        PROFILE="$PROFILE" \
+        VARIANT="$VARIANT" \
+        CEMU_ROM="$RUNNER_CEMU_ROM" \
+        MANGOHUD_CONFIGFILE=/storage/.config/MangoHud/MangoHud.conf \
+        $RUNNER_HOST_DISPLAY_ENV \
+        "$RUNNER_HOST_LAUNCHER" "$PROFILE" > "$RUN_DIR/host-control-launch.log" 2>&1 &
       ;;
     guest-gamescope|guest-gamescope-mangohud|guest-gamescope-rocknixmesa|guest-gamescope-rocknixmesa-mangohud)
       use_mh=0
@@ -264,7 +280,38 @@ launch_variant() {
   esac
 }
 
+collect_host_control_state() {
+  [ "$VARIANT" = "host-control" ] || return 0
+  {
+    printf '=== host-control launcher ===\n'
+    printf 'RUNNER_HOST_LAUNCHER=%s\n' "$RUNNER_HOST_LAUNCHER"
+    printf 'RUNNER_HOST_DISPLAY_ENV=%s\n' "$RUNNER_HOST_DISPLAY_ENV"
+    printf 'PROFILE=%s\n' "$PROFILE"
+    printf 'RUN_DIR=%s\n' "$RUN_DIR"
+    printf '=== process list ===\n'
+    ps | grep -E 'Cemu|cemu|gamescope|mangohud' | grep -v grep || true
+    PID=$( (pgrep -x Cemu; pgrep -x cemu) 2>/dev/null | head -1 || true)
+    printf 'CEMU_PID=%s\n' "${PID:-NONE}"
+    if [ -n "${PID:-}" ]; then
+      printf '=== cemu ps ===\n'
+      ps -o pid,stat,pcpu,pmem,rss,vsz,comm,args -p "$PID" || true
+      printf '=== cemu env ===\n'
+      tr '\0' '\n' < /proc/$PID/environ | grep -E '^(MANGOHUD|LD_PRELOAD|VK_|MESA|XDG_|HOME|WAYLAND|SDL)=' | sort || true
+      printf '=== cemu maps runtime ===\n'
+      awk '{print $6}' /proc/$PID/maps | grep -E 'vulkan|mesa|freedreno|Mango|gamescope|libdrm|wayland|gbm|SDL|wx|gtk' | sort -u || true
+      printf '=== hot threads ===\n'
+      ps -T -p "$PID" -o tid,pcpu,comm | sort -k2 -nr | head -20 || true
+    fi
+    printf '=== host cemu log tail ===\n'
+    tail -240 /storage/.config/Cemu/share/log.txt 2>/dev/null || true
+  } > "$RUN_DIR/host-control-state.txt" 2>&1
+}
+
 collect_guest_state() {
+  if [ "$VARIANT" = "host-control" ]; then
+    collect_host_control_state
+    return 0
+  fi
   gp="$(guest_pid || true)"
   [ -n "$gp" ] || return 0
   timeout 12 nsenter -t "$gp" -m -u -i -n -p -r -w /bin/sh <<EOF > "$RUN_DIR/guest-state.txt" 2>&1 || true
@@ -315,7 +362,10 @@ log "runner start variant=$VARIANT profile=$PROFILE duration=$DURATION power=$PO
 snapshot_settings
 collect_host_state
 
-/storage/.guest/remote-cemu-cleanup.sh >> "$RUN_DIR/cleanup.log" 2>&1 || true
+if ! /storage/.guest/remote-cemu-cleanup.sh >> "$RUN_DIR/cleanup.log" 2>&1; then
+  log "initial cleanup failed; stale emulator processes remain"
+  exit 4
+fi
 prepare_guest_launcher
 ensure_guest_sway
 set_power
@@ -337,7 +387,10 @@ sample_titles
 collect_guest_state
 collect_host_state
 if [ "$RUNNER_FINAL_CLEANUP" = "1" ]; then
-  /storage/.guest/remote-cemu-cleanup.sh >> "$RUN_DIR/cleanup.log" 2>&1 || true
+  if ! /storage/.guest/remote-cemu-cleanup.sh >> "$RUN_DIR/cleanup.log" 2>&1; then
+    log "final cleanup failed; stale emulator processes remain"
+    exit 5
+  fi
 fi
 log "runner done: $RUN_DIR"
 printf '%s\n' "$RUN_DIR"

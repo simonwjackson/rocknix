@@ -10,15 +10,23 @@
 # /usr/bin/start_cemu.sh inside the guest.
 set -eu
 
-# Use latest nix-built cemu (with screensaver-noop-linux patch) by
-# default. Build-parity A/B harnesses may override this with CEMU_BIN
-# to test another guest-native Cemu derivation without rewriting this
-# stable launcher.
-CEMU=${CEMU_BIN:-/nix/store/wl4g8jjlw6pck4sh4ayah9pdl03z8brp-cemu-2.999.0/bin/Cemu}
+# Default to the promoted direct ROCKNIX package profile. This avoids
+# baking a stale /nix/store hash into the product launcher while keeping
+# CEMU_BIN available for parity/rollback diagnostics.
+PROMOTED_CEMU=${CEMU_PROMOTED_BIN:-/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/Cemu}
+CEMU=${CEMU_BIN:-$PROMOTED_CEMU}
 
 ROM="${1:-}"
 [ -z "$ROM" ] && { echo "usage: start_cemu_guest.sh <rom> [system]"; exit 2; }
-[ -x "$CEMU" ] || { echo "Cemu binary is not executable: $CEMU" >&2; exit 127; }
+if [ ! -x "$CEMU" ]; then
+  if [ -z "${CEMU_BIN:-}" ] && [ "$CEMU" = "$PROMOTED_CEMU" ]; then
+    echo "Promoted Cemu profile is missing or not executable: $PROMOTED_CEMU" >&2
+    echo "Promote an imported direct package with remote-cemu-promote.sh, or pass CEMU_BIN=/nix/store/.../bin/Cemu for diagnostics." >&2
+  else
+    echo "Cemu binary is not executable: $CEMU" >&2
+  fi
+  exit 127
+fi
 
 CEMU_CONFIG_ROOT=/storage/.config/Cemu
 CEMU_HOME_CONFIG="${CEMU_CONFIG_ROOT}/share"
@@ -33,7 +41,11 @@ mkdir -p "$CEMU_HOME_CONFIG"
 # A direct ROCKNIX-package Cemu output carries the same SM8550 default
 # settings.xml that cemu-sa installs to /usr/config/Cemu. Seed only clean
 # guests; never overwrite user/device-mutated settings.
-CEMU_OUT="$(dirname "$(dirname "$CEMU")")"
+# Resolve profile/symlinked binaries back to the real store output before
+# reading package metadata. Nix profile user-envs do not reliably expose
+# the direct package's nix-support evidence files themselves.
+CEMU_REAL="$(readlink -f "$CEMU" 2>/dev/null || printf '%s' "$CEMU")"
+CEMU_OUT="$(dirname "$(dirname "$CEMU_REAL")")"
 CEMU_DEFAULT_SETTINGS="${CEMU_OUT}/share/Cemu/config/SM8550/settings.xml"
 CEMU_VULKAN_LOADER_LIB_PATH="${CEMU_OUT}/nix-support/rocknix-cemu-build/vulkan-loader-lib-path"
 if [ ! -f "${CEMU_CONFIG_ROOT}/settings.xml" ] && [ -f "$CEMU_DEFAULT_SETTINGS" ]; then
@@ -93,6 +105,6 @@ export XDG_DATA_HOME=/storage/.local/share
 # overwrite, so multi-launch sessions still leave a trail.
 LOG_OUT=/storage/.guest/runs/cemu-stdout.log
 mkdir -p "$(dirname "$LOG_OUT")"
-echo "[$(date)] launching cemu (guest) binary=$CEMU ROM: $ROM" | tee -a "$LOG_OUT" >&2
+echo "[$(date)] launching cemu (guest) binary=$CEMU real_binary=$CEMU_REAL ROM: $ROM" | tee -a "$LOG_OUT" >&2
 exec >>"$LOG_OUT" 2>&1
 exec "$CEMU" --verbose -f -g "$ROM"

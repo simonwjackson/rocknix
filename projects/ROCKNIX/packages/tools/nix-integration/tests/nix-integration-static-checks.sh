@@ -569,6 +569,7 @@ for launcher in \
   remote-cemu-build-fingerprint.sh \
   remote-cemu-runtime-ab.sh \
   remote-cemu-live-campaign.sh \
+  remote-cemu-promote.sh \
   start_cemu_guest.sh \
   start_cemu_guest_candidate.sh \
   start_cemu_guest_gamescope.sh \
@@ -576,10 +577,18 @@ for launcher in \
   start_cemu_guest_rocknixmesa.sh; do
   check_script "${PKG_DIR}/guest/launchers/${launcher}"
 done
-grep -q 'CEMU_BIN:-/nix/store/' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
-  || fail "start_cemu_guest.sh must default CEMU through CEMU_BIN override"
+grep -q 'PROMOTED_CEMU=' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
+  || fail "start_cemu_guest.sh must default through promoted Cemu profile"
+grep -q 'CEMU_BIN:-$PROMOTED_CEMU' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
+  || fail "start_cemu_guest.sh must preserve CEMU_BIN override over promoted profile"
+grep -q 'readlink -f "$CEMU"' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
+  || fail "start_cemu_guest.sh must resolve promoted profile symlink before reading package metadata"
 grep -q 'RUNNER_CEMU_START=' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
   || fail "remote-cemu-runner.sh missing candidate launcher override"
+grep -q 'RUNNER_HOST_LAUNCHER=' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
+  || fail "remote-cemu-runner.sh missing typed host-control launcher contract"
+grep -q 'collect_host_control_state' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
+  || fail "remote-cemu-runner.sh must collect host-side process/runtime evidence for host controls"
 grep -q 'RUNNER_LAUNCH_ONLY=' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
   || fail "remote-cemu-runner.sh missing launch-only mode for live campaign"
 grep -q 'RUNNER_LOCK_DIR=' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
@@ -590,6 +599,10 @@ grep -q 'restore_power_state' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh"
   || fail "remote-cemu-runner.sh missing power-state restore trap"
 grep -q 'CLEANUP_KILL_UI' "${PKG_DIR}/guest/launchers/remote-cemu-cleanup.sh" \
   || fail "remote-cemu-cleanup.sh must gate non-emulator UI process cleanup"
+grep -q 'report_remaining_processes' "${PKG_DIR}/guest/launchers/remote-cemu-cleanup.sh" \
+  || fail "remote-cemu-cleanup.sh must fail when exact-name emulator processes survive cleanup"
+grep -q 'CLEANUP_ALLOW_STALE' "${PKG_DIR}/guest/launchers/remote-cemu-cleanup.sh" \
+  || fail "remote-cemu-cleanup.sh must require an explicit override for stale-process diagnostics"
 grep -q 'CANDIDATE_LABEL=' "${PKG_DIR}/guest/launchers/remote-cemu-runtime-ab.sh" \
   || fail "remote-cemu-runtime-ab.sh must allow candidate labels beyond rocknix-style"
 grep -q 'classic-sdl-cemu' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
@@ -600,6 +613,12 @@ grep -q 'rocknix-package-cemu' "${PKG_DIR}/guest/launchers/remote-cemu-live-camp
   || fail "remote-cemu-live-campaign.sh missing direct package Cemu case hook"
 grep -q 'CAMPAIGN_LOCK_DIR=' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
   || fail "remote-cemu-live-campaign.sh missing live-campaign run lock"
+grep -q 'parse_case_spec' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
+  || fail "remote-cemu-live-campaign.sh missing typed guest/host case parser"
+grep -q 'host:<label>' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
+  || fail "remote-cemu-live-campaign.sh must document host:<label>:<launcher>:<profile> cases"
+grep -q "printf '%03d'" "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
+  || fail "remote-cemu-live-campaign.sh must index child run directories for A/B/A safety"
 grep -q -- "-name '\*.csv'" "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
   || fail "remote-cemu-live-campaign.sh must detect MangoHud CSV independent of binary name"
 grep -q 'start_cemu_guest_rocknixmesa.sh' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
@@ -678,6 +697,10 @@ grep -q 'vulkan-loader-lib-path' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
   || fail "direct Cemu package must record its Vulkan loader path"
 grep -q 'CEMU_VULKAN_LOADER_LIB_PATH' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
   || fail "start_cemu_guest.sh must expose the packaged Vulkan loader to dlopen-based Cemu"
+grep -q 'cemu-promoted' "${PKG_DIR}/guest/launchers/remote-cemu-promote.sh" \
+  || fail "remote-cemu-promote.sh must install direct Cemu into a dedicated promoted profile"
+grep -q 'vulkan-loader-lib-path' "${PKG_DIR}/guest/launchers/remote-cemu-promote.sh" \
+  || fail "remote-cemu-promote.sh must verify direct-package Vulkan loader evidence before promotion"
 grep -q 'build evidence' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
   || fail "remote-cemu-build-fingerprint.sh must report direct package build evidence"
 

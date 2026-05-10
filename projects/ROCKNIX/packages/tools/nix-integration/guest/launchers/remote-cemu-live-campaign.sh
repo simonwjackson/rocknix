@@ -146,7 +146,10 @@ preflight() {
     ps | grep -E 'Cemu|cemu|gamescope|remote-cemu' | grep -v grep || true
   } > "$PARENT/preflight-host.txt" 2>&1
 
-  /storage/.guest/remote-cemu-cleanup.sh > "$PARENT/preflight-cleanup.log" 2>&1 || true
+  if ! /storage/.guest/remote-cemu-cleanup.sh > "$PARENT/preflight-cleanup.log" 2>&1; then
+    log "preflight failed: stale emulator processes survived cleanup"
+    return 1
+  fi
 
   run_guest 20 'PATH=/run/current-system/sw/bin:/bin:/usr/bin
 if ! ls /run/user/0/sway-ipc.0.*.sock >/dev/null 2>&1; then
@@ -225,8 +228,9 @@ field_from_stats() {
 
 collect_snapshot() {
   label="$1"
-  bin="$2"
-  run_dir="$3"
+  kind="$2"
+  target="$3"
+  run_dir="$4"
   snap="$run_dir/live-checkpoint"
   mkdir -p "$snap"
   log "collecting checkpoint snapshot for $label"
@@ -234,7 +238,8 @@ collect_snapshot() {
     echo "=== checkpoint ==="
     date -Iseconds
     echo "label=$label"
-    echo "bin=$bin"
+    echo "kind=$kind"
+    echo "target=$target"
     echo "profile=$PROFILE"
     echo "variant=$VARIANT"
     echo "--- user signal ---"
@@ -251,6 +256,22 @@ collect_snapshot() {
       echo "$(basename "$p") gov=$(cat "$p/scaling_governor" 2>/dev/null) cur=$(cat "$p/scaling_cur_freq" 2>/dev/null) min=$(cat "$p/scaling_min_freq" 2>/dev/null) max=$(cat "$p/scaling_max_freq" 2>/dev/null)"
     done
   } > "$snap/host.txt" 2>&1
+
+  if [ "$kind" = "host" ]; then
+    {
+      echo '=== host-control process list ==='
+      ps | grep -E 'Cemu|cemu|gamescope|mangohud' | grep -v grep || true
+      PID=$( (pgrep -x Cemu; pgrep -x cemu) 2>/dev/null | head -1 || true)
+      echo "CEMU_PID=${PID:-NONE}"
+      if [ -n "${PID:-}" ]; then
+        ps -o pid,stat,pcpu,pmem,rss,vsz,comm,args -p "$PID" || true
+        echo '=== host-control env runtime ==='
+        tr '\0' '\n' < /proc/$PID/environ | grep -E '^(MANGOHUD|LD_PRELOAD|VK_|MESA|XDG_|HOME|WAYLAND|SDL)=' | sort || true
+        echo '=== host-control maps runtime ==='
+        awk '{print $6}' /proc/$PID/maps | grep -E 'vulkan|mesa|freedreno|Mango|gamescope|libdrm|wayland|gbm|SDL|wx|gtk' | sort -u || true
+      fi
+    } > "$snap/host-control.txt" 2>&1
+  fi
 
   run_guest 12 "PATH=/run/current-system/sw/bin:/bin:/usr/bin:/nix/var/nix/profiles/per-user/root/profile/bin:/root/.nix-profile/bin
 PID=\$( (pgrep -x Cemu; pgrep -x cemu) 2>/dev/null | head -1 || true)
@@ -289,38 +310,121 @@ SOCK=\$(ls /run/user/0/sway-ipc.0.*.sock 2>/dev/null | head -1 || true)
   fi
 }
 
+case_process_alive() {
+  kind="$1"
+  case "$kind" in
+    host) (pgrep -x Cemu || pgrep -x cemu) >/dev/null 2>&1 ;;
+    *) run_guest 5 "(pgrep -x Cemu || pgrep -x cemu) >/dev/null 2>&1" >/dev/null 2>&1 ;;
+  esac
+}
+
+parse_case_spec() {
+  spec="$1"
+  CASE_KIND=guest
+  CASE_LABEL=
+  CASE_TARGET=
+  CASE_PROFILE="$PROFILE"
+
+  case "$spec" in
+    guest:*)
+      rest="${spec#guest:}"
+      CASE_LABEL="${rest%%:*}"
+      CASE_TARGET="${rest#*:}"
+      CASE_KIND=guest
+      ;;
+    host:*)
+      rest="${spec#host:}"
+      CASE_LABEL="${rest%%:*}"
+      rest="${rest#*:}"
+      CASE_TARGET="${rest%%:*}"
+      if [ "$rest" != "$CASE_TARGET" ]; then
+        CASE_PROFILE="${rest#*:}"
+      fi
+      CASE_KIND=host
+      ;;
+    *=*)
+      CASE_LABEL="${spec%%=*}"
+      CASE_TARGET="${spec#*=}"
+      CASE_KIND=guest
+      ;;
+    *)
+      CASE_LABEL=candidate
+      CASE_TARGET="$spec"
+      CASE_KIND=guest
+      ;;
+  esac
+
+  [ -n "$CASE_LABEL" ] || CASE_LABEL=candidate
+  [ -n "$CASE_TARGET" ] || return 1
+  return 0
+}
+
 run_case() {
-  label="$1"
-  bin="$2"
+  case_index="$1"
+  kind="$2"
+  label="$3"
+  target="$4"
+  case_profile="${5:-$PROFILE}"
   safe="$(sanitize_label "$label")"
-  run_dir="$PARENT/${safe}-${VARIANT}-${PROFILE}"
+  run_dir="$PARENT/$(printf '%03d' "$case_index")-${safe}-${kind}-${VARIANT}-${case_profile}"
   mkdir -p "$run_dir"
   rm -f "$SIGNAL_FILE"
 
-  if ! run_guest 6 "test -x '$bin'" >/dev/null 2>&1; then
-    log "skip $label: binary missing in guest: $bin"
-    printf '%s\tSKIP\t%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$bin" "$run_dir" 0 0 0 0 >> "$SUMMARY"
+  runner_variant="$VARIANT"
+  wrapper=""
+  if [ "$kind" = "guest" ]; then
+    if ! run_guest 6 "test -x '$target'" >/dev/null 2>&1; then
+      log "skip $label: binary missing in guest: $target"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$case_index" "$kind" "$label" "SKIP" "$target" "$run_dir" 0 0 0 0 >> "$SUMMARY"
+      return 0
+    fi
+    wrapper="$(make_candidate_launcher "$label" "$target")"
+  elif [ "$kind" = "host" ]; then
+    runner_variant=host-control
+    if [ ! -x "$target" ]; then
+      log "skip $label: host launcher missing: $target"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$case_index" "$kind" "$label" "SKIP" "$target" "$run_dir" 0 0 0 0 >> "$SUMMARY"
+      return 0
+    fi
+  else
+    log "skip $label: unknown case kind: $kind"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$case_index" "$kind" "$label" "SKIP" "$target" "$run_dir" 0 0 0 0 >> "$SUMMARY"
     return 0
   fi
 
-  wrapper="$(make_candidate_launcher "$label" "$bin")"
-  log "case start label=$label bin=$bin run=$run_dir"
+  log "case start index=$case_index kind=$kind label=$label target=$target run=$run_dir"
   apply_case_tune
-  RUNNER_POWER=none \
-  RUNNER_SKIP_GPU_SYSFS=1 \
-  RUNNER_LAUNCH_ONLY=1 \
-  RUNNER_SAMPLE_TITLES=0 \
-  RUNNER_FINAL_CLEANUP=0 \
-  RUNNER_RUN_DIR="$run_dir" \
-  RUNNER_CEMU_START="$wrapper" \
-  /storage/.guest/remote-cemu-runner.sh "$VARIANT" "$PROFILE" "$CASE_TIMEOUT" > "$run_dir/runner-launch.log" 2>&1 || {
-    log "case launch failed label=$label"
-    printf '%s\tLAUNCH_FAIL\t%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$bin" "$run_dir" 0 0 0 0 >> "$SUMMARY"
-    /storage/.guest/remote-cemu-cleanup.sh >> "$run_dir/cleanup.log" 2>&1 || true
-    return 0
-  }
+  if [ "$kind" = "host" ]; then
+    RUNNER_POWER=none \
+    RUNNER_SKIP_GPU_SYSFS=1 \
+    RUNNER_LAUNCH_ONLY=1 \
+    RUNNER_SAMPLE_TITLES=0 \
+    RUNNER_FINAL_CLEANUP=0 \
+    RUNNER_RUN_DIR="$run_dir" \
+    RUNNER_HOST_LAUNCHER="$target" \
+    /storage/.guest/remote-cemu-runner.sh "$runner_variant" "$case_profile" "$CASE_TIMEOUT" > "$run_dir/runner-launch.log" 2>&1 || {
+      log "case launch failed index=$case_index kind=$kind label=$label"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$case_index" "$kind" "$label" "LAUNCH_FAIL" "$target" "$run_dir" 0 0 0 0 >> "$SUMMARY"
+      /storage/.guest/remote-cemu-cleanup.sh >> "$run_dir/cleanup.log" 2>&1 || true
+      return 0
+    }
+  else
+    RUNNER_POWER=none \
+    RUNNER_SKIP_GPU_SYSFS=1 \
+    RUNNER_LAUNCH_ONLY=1 \
+    RUNNER_SAMPLE_TITLES=0 \
+    RUNNER_FINAL_CLEANUP=0 \
+    RUNNER_RUN_DIR="$run_dir" \
+    RUNNER_CEMU_START="$wrapper" \
+    /storage/.guest/remote-cemu-runner.sh "$runner_variant" "$case_profile" "$CASE_TIMEOUT" > "$run_dir/runner-launch.log" 2>&1 || {
+      log "case launch failed index=$case_index kind=$kind label=$label"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$case_index" "$kind" "$label" "LAUNCH_FAIL" "$target" "$run_dir" 0 0 0 0 >> "$SUMMARY"
+      /storage/.guest/remote-cemu-cleanup.sh >> "$run_dir/cleanup.log" 2>&1 || true
+      return 0
+    }
+  fi
 
-  log "case $label launched. Get BOTW in-game, then run: echo '<visible FPS / notes>' > $SIGNAL_FILE"
+  log "case $case_index/$label launched. Get BOTW in-game, then run: echo '<visible FPS / notes>' > $SIGNAL_FILE"
   timeout_at=$(( $(date +%s) + CASE_TIMEOUT ))
   status="NO_CHECKPOINT"
   while [ "$(date +%s)" -lt "$timeout_at" ]; do
@@ -328,7 +432,7 @@ run_case() {
       status="CHECKPOINT"
       break
     fi
-    if ! run_guest 5 "(pgrep -x Cemu || pgrep -x cemu) >/dev/null 2>&1" >/dev/null 2>&1; then
+    if ! case_process_alive "$kind"; then
       status="CEMU_EXITED"
       break
     fi
@@ -336,12 +440,15 @@ run_case() {
   done
 
   if [ "$status" = "CHECKPOINT" ]; then
-    collect_snapshot "$label" "$bin" "$run_dir"
+    collect_snapshot "$label" "$kind" "$target" "$run_dir"
   else
-    log "case $label ended without checkpoint: $status"
+    log "case $case_index/$label ended without checkpoint: $status"
   fi
 
-  /storage/.guest/remote-cemu-cleanup.sh >> "$run_dir/cleanup.log" 2>&1 || true
+  if ! /storage/.guest/remote-cemu-cleanup.sh >> "$run_dir/cleanup.log" 2>&1; then
+    status="${status}_CLEANUP_INCOMPLETE"
+    log "case $case_index/$label cleanup incomplete"
+  fi
   sleep 3
 
   stats="$run_dir/live-checkpoint/recent-fps.tsv"
@@ -350,10 +457,9 @@ run_case() {
   avg="$(field_from_stats avg "$stats")"
   p10="$(field_from_stats p10 "$stats")"
   median="$(field_from_stats median "$stats")"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$status" "$bin" "$run_dir" "${n:-0}" "${avg:-0}" "${p10:-0}" "${median:-0}" >> "$SUMMARY"
-  log "case done label=$label status=$status recent_avg=${avg:-0} recent_median=${median:-0}"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$case_index" "$kind" "$label" "$status" "$target" "$run_dir" "${n:-0}" "${avg:-0}" "${p10:-0}" "${median:-0}" >> "$SUMMARY"
+  log "case done index=$case_index kind=$kind label=$label status=$status recent_avg=${avg:-0} recent_median=${median:-0}"
 }
-
 write_report() {
   {
     echo "# Cemu live campaign"
@@ -375,22 +481,23 @@ write_report() {
     echo
     echo "## Summary"
     echo
-    echo "| Label | Status | Recent n | Recent avg | Recent p10 | Recent median | Run directory |"
-    echo "|---|---|---:|---:|---:|---:|---|"
-    awk -F '\t' 'NR > 1 { printf "| `%s` | `%s` | %s | %s | %s | %s | `%s` |\n", $1,$2,$5,$6,$7,$8,$4 }' "$SUMMARY"
+    echo "| # | Kind | Label | Status | Recent n | Recent avg | Recent p10 | Recent median | Run directory |"
+    echo "|---:|---|---|---|---:|---:|---:|---:|---|"
+    awk -F '\t' 'NR > 1 { printf "| %s | `%s` | `%s` | `%s` | %s | %s | %s | %s | `%s` |\n", $1,$2,$3,$4,$7,$8,$9,$10,$6 }' "$SUMMARY"
     echo
     echo "## Interpretation"
     echo
     echo "- Trust live in-game MangoHud/user-visible FPS over title/loading samples."
-    echo "- If the faithful Cemu candidate materially beats current Nix Cemu, promote it only after one more same-scene confirmation run."
-    echo "- If classic SDL2 materially beats current Nix Cemu but faithful does not, inspect the Cubeb/non-PIE deltas before promotion."
-    echo "- If all guest-native candidates are poor, continue with remaining dependency-stack, cache, and CPU/nspawn scheduler diagnostics using the captured process maps and pressure data."
+    echo "- Use typed cases for parity gates: guest:<label>:/nix/store/.../bin/Cemu and host:<label>:/path/to/host-launcher:<profile>."
+    echo "- A native Nix candidate can be promoted only when it is within the same-session host-control thresholds."
+    echo "- ROCKNIX Mesa passthrough remains diagnostic-only; if it closes a gap that native Nix Mesa does not, redirect to a graphics-stack plan instead of productizing the shim."
+    echo "- Cleanup-incomplete statuses are not pass/fail data; rerun after stale exact-name emulator processes are cleared."
   } > "$REPORT"
 }
 
 trap 'log "campaign interrupted"; /storage/.guest/remote-cemu-cleanup.sh >> "$PARENT/final-cleanup.log" 2>&1 || true; restore_power_state || true; write_report || true; release_lock || true' INT TERM EXIT
 
-printf 'label\tstatus\tbin\trun_dir\tn_recent\tavg_recent\tp10_recent\tmedian_recent\n' > "$SUMMARY"
+printf 'index\tkind\tlabel\tstatus\ttarget\trun_dir\tn_recent\tavg_recent\tp10_recent\tmedian_recent\n' > "$SUMMARY"
 cat > "$REPORT" <<EOF
 # Cemu live campaign
 
@@ -401,12 +508,15 @@ acquire_lock || exit 3
 log "campaign start parent=$PARENT"
 preflight || exit 1
 
+case_index=1
 case_specs | while IFS= read -r spec; do
   [ -n "$spec" ] || continue
-  label="${spec%%=*}"
-  bin="${spec#*=}"
-  [ "$label" != "$bin" ] || label="candidate"
-  run_case "$label" "$bin"
+  if ! parse_case_spec "$spec"; then
+    log "skip invalid case spec: $spec"
+    continue
+  fi
+  run_case "$case_index" "$CASE_KIND" "$CASE_LABEL" "$CASE_TARGET" "$CASE_PROFILE"
+  case_index=$((case_index + 1))
 done
 
 restore_power_state
