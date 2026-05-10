@@ -570,6 +570,7 @@ for launcher in \
   remote-cemu-runtime-ab.sh \
   remote-cemu-live-campaign.sh \
   remote-cemu-promote.sh \
+  launch-host-cemu-through-guest-display.sh \
   start_cemu_guest.sh \
   start_cemu_guest_candidate.sh \
   start_cemu_guest_gamescope.sh \
@@ -601,14 +602,18 @@ grep -q 'CLEANUP_KILL_UI' "${PKG_DIR}/guest/launchers/remote-cemu-cleanup.sh" \
   || fail "remote-cemu-cleanup.sh must gate non-emulator UI process cleanup"
 grep -q 'report_remaining_processes' "${PKG_DIR}/guest/launchers/remote-cemu-cleanup.sh" \
   || fail "remote-cemu-cleanup.sh must fail when exact-name emulator processes survive cleanup"
+grep -q 'pids_by_exact_comm' "${PKG_DIR}/guest/launchers/remote-cemu-cleanup.sh" \
+  || fail "remote-cemu-cleanup.sh must fall back to ps comm matching for lowercase host cemu"
+grep -q 'STALE guest window' "${PKG_DIR}/guest/launchers/remote-cemu-cleanup.sh" \
+  || fail "remote-cemu-cleanup.sh must report stale Cemu compositor windows"
 grep -q 'CLEANUP_ALLOW_STALE' "${PKG_DIR}/guest/launchers/remote-cemu-cleanup.sh" \
   || fail "remote-cemu-cleanup.sh must require an explicit override for stale-process diagnostics"
 grep -q 'CANDIDATE_LABEL=' "${PKG_DIR}/guest/launchers/remote-cemu-runtime-ab.sh" \
-  || fail "remote-cemu-runtime-ab.sh must allow candidate labels beyond rocknix-style"
-grep -q 'classic-sdl-cemu' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
-  || fail "remote-cemu-live-campaign.sh missing classic SDL case"
-grep -q 'faithful-cemu' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
-  || fail "remote-cemu-live-campaign.sh missing faithful Cemu case hook"
+  || fail "remote-cemu-runtime-ab.sh must allow candidate labels"
+grep -q 'promoted-nix-cemu' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
+  || fail "remote-cemu-live-campaign.sh must default to promoted Nix Cemu"
+grep -q 'EXTRA_GUEST_CASES' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
+  || fail "remote-cemu-live-campaign.sh must keep an explicit hook for extra guest candidates"
 grep -q 'rocknix-package-cemu' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
   || fail "remote-cemu-live-campaign.sh missing direct package Cemu case hook"
 grep -q 'CAMPAIGN_LOCK_DIR=' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
@@ -629,29 +634,17 @@ grep -q 'dynamic NEEDED' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerpri
   || fail "remote-cemu-build-fingerprint.sh missing Cubeb/NEEDED linkage fingerprint"
 grep -q 'runtime data' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
   || fail "remote-cemu-build-fingerprint.sh missing Cemu runtime-data fingerprint"
-grep -q 'cemu-rocknix-style' "${PKG_DIR}/guest/flakes/cemu/flake.nix" \
-  || fail "cemu flake missing ROCKNIX-style candidate output"
-grep -q 'cemu-rocknix-style-classic-sdl' "${PKG_DIR}/guest/flakes/cemu/flake.nix" \
-  || fail "cemu flake missing classic SDL candidate output"
-grep -q 'cemu-rocknix-faithful' "${PKG_DIR}/guest/flakes/cemu/flake.nix" \
-  || fail "cemu flake missing faithful ROCKNIX candidate output"
-[ -f "${PKG_DIR}/guest/flakes/cemu/rocknix-style.nix" ] \
-  || fail "missing ROCKNIX-style Cemu candidate derivation"
-[ -f "${PKG_DIR}/guest/flakes/cemu/rocknix-style-classic-sdl.nix" ] \
-  || fail "missing classic SDL Cemu candidate derivation"
-[ -f "${PKG_DIR}/guest/flakes/cemu/rocknix-faithful.nix" ] \
-  || fail "missing faithful ROCKNIX Cemu candidate derivation"
-grep -q 'noDynamicCubeb = true' "${PKG_DIR}/guest/flakes/cemu/rocknix-faithful.nix" \
-  || fail "faithful Cemu candidate must declare dynamic Cubeb parity gate"
-grep -q 'CMAKE_EXE_LINKER_FLAGS=-no-pie' "${PKG_DIR}/guest/flakes/cemu/rocknix-faithful.nix" \
-  || fail "faithful Cemu candidate must test non-PIE executable posture"
+! grep -q 'cemu-rocknix-style\|cemu-rocknix-faithful\|baseCemu\|pkgs[.]cemu\|overrideAttrs' "${PKG_DIR}/guest/flakes/cemu/flake.nix" \
+  || fail "cemu flake must expose only the promoted direct package path"
 
 HOST_CEMU_SA_DIR="${REPO_ROOT}/projects/ROCKNIX/packages/emulators/standalone/cemu-sa"
 CEMU_FLAKE_DIR="${PKG_DIR}/guest/flakes/cemu"
 host_cemu_rev=$(sed -n 's/^PKG_VERSION="\([^"]*\)"/\1/p' "${HOST_CEMU_SA_DIR}/package.mk")
 [ -n "${host_cemu_rev}" ] || fail "could not read ROCKNIX cemu-sa PKG_VERSION"
 grep -q 'cemu-rocknix-package' "${CEMU_FLAKE_DIR}/flake.nix" \
-  || fail "cemu flake missing direct ROCKNIX package candidate output"
+  || fail "cemu flake missing direct ROCKNIX package output"
+grep -q 'default = cemuRocknixPackage' "${CEMU_FLAKE_DIR}/flake.nix" \
+  || fail "cemu flake default must be the promoted direct ROCKNIX package"
 [ -f "${CEMU_FLAKE_DIR}/rocknix-package-manifest.nix" ] \
   || fail "missing direct ROCKNIX Cemu package manifest"
 [ -f "${CEMU_FLAKE_DIR}/rocknix-package.nix" ] \

@@ -168,7 +168,8 @@ fi
 # behavior without rewriting this launcher.
 CEMU_AFFINITY_MASK="${CEMU_AFFINITY_MASK:-0xF8}"
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
-  CEMU_PID="$( (pgrep -x Cemu; pgrep -x cemu) 2>/dev/null | head -1 || true)"
+  CEMU_PID="$(pgrep -x Cemu 2>/dev/null | head -1 || true)"
+  [ -n "$CEMU_PID" ] || CEMU_PID="$(pgrep -x cemu 2>/dev/null | head -1 || true)"
   [ -n "$CEMU_PID" ] && break
   sleep 1
 done

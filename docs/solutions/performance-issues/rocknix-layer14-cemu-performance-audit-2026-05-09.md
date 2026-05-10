@@ -266,4 +266,40 @@ The follow-up plan is `docs/plans/2026-05-10-003-fix-cemu-host-parity-simplifica
 - `start_cemu_guest.sh` now defaults to the dedicated promoted profile `/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/Cemu`, preserves `CEMU_BIN` for rollback/diagnostics, and resolves profile symlinks with `readlink -f` before reading direct-package metadata.
 - `remote-cemu-promote.sh` promotes an already-imported direct package output into the dedicated profile only after verifying its direct-package Vulkan loader evidence.
 
-Thor is currently offline, so the new same-session host-control gate and promoted-default validation remain pending.
+### 2026-05-10 same-session parity result and simplification decision
+
+Thor came back online and the fixed direct package was promoted into:
+
+```text
+/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/Cemu
+```
+
+The promoted profile resolved to:
+
+```text
+/nix/store/2vahrn6mc766rk5zchxk4a9601c0h648-cemu-rocknix-package-2.999.0-rocknix-package/bin/Cemu
+```
+
+Clean promoted Nix run:
+
+- Run: `/storage/.guest/runs/20260510-191237-redo-clean-promoted-540p45`
+- Runtime: Nix Cemu + Nix Vulkan loader + Nix Mesa/Freedreno (`Driver version: Mesa 25.2.6`).
+- BOTW profile: `960x540`, FPS++ `45FPS Limit`, `gameProfiles/default/00050000101c9400.ini` present.
+- Live operator result: fast loading, visible `40-45 FPS`.
+- MangoHud after warmup: median about `40 FPS`, p10 about `36 FPS`.
+- Cleanup verified: no exact-name emulator processes and no stale guest Sway Cemu windows.
+
+Same-session host control:
+
+- Run: `/storage/.guest/runs/20260510-192613-host-observe-540p45`
+- Runtime: host `/usr/bin/cemu` + ROCKNIX Mesa/Freedreno (`Driver version: Mesa 26.0.6`) through the guest-visible display path.
+- Initial live result was only about `25 FPS` because host-control failed to detect/pin lowercase `cemu` and Cemu threads landed across all cores.
+- After pinning host Cemu to `0xF8`, a 30s capture (`post-pin-30s-*`) showed MangoHud avg `40.58`, median `40.74`, p10 `36.54`; title samples averaged `40.25`.
+
+Conclusion: the remaining Cemu gap was launcher affinity/control hygiene, not ROCKNIX Mesa passthrough. Native Nix Mesa/Freedreno is product-eligible for Cemu. ROCKNIX Mesa wrappers remain diagnostic-only for future graphics-stack investigations.
+
+Simplification decision:
+
+- Keep `cemu-rocknix-package`, promoted profile launch, `CEMU_BIN` rollback, exact cleanup, stale-window cleanup, fingerprinting, and typed host-control support.
+- Retire the override-based flake outputs and files (`cemu-rocknix-style`, `cemu-rocknix-style-classic-sdl`, `cemu-rocknix-faithful`).
+- Remove ROCKNIX-Mesa variants from default validation matrices; require an explicit diagnostic opt-in.

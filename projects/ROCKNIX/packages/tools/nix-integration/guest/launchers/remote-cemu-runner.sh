@@ -290,7 +290,7 @@ collect_host_control_state() {
     printf 'RUN_DIR=%s\n' "$RUN_DIR"
     printf '=== process list ===\n'
     ps | grep -E 'Cemu|cemu|gamescope|mangohud' | grep -v grep || true
-    PID=$( (pgrep -x Cemu; pgrep -x cemu) 2>/dev/null | head -1 || true)
+    PID=$(ps -eo pid=,comm=,args= | awk '$2 == "cemu" && $0 ~ /\/usr\/bin\/cemu/ { print $1; found=1; exit } $2 == "Cemu" && found != 1 { candidate=$1 } END { if (!found && candidate != "") print candidate }' || true)
     printf 'CEMU_PID=%s\n' "${PID:-NONE}"
     if [ -n "${PID:-}" ]; then
       printf '=== cemu ps ===\n'
@@ -318,7 +318,8 @@ collect_guest_state() {
 PATH=/run/current-system/sw/bin:/bin:/usr/bin:/nix/var/nix/profiles/per-user/root/profile/bin:/root/.nix-profile/bin
 printf '=== process list ===\n'
 ps aux | grep -E 'Cemu|cemu|gamescope|mangohud' | grep -v grep || true
-PID=\$( (pgrep -x Cemu; pgrep -x cemu) 2>/dev/null | head -1 || true)
+PID=\$(pgrep -x Cemu 2>/dev/null | head -1 || true)
+[ -n "\$PID" ] || PID=\$(pgrep -x cemu 2>/dev/null | head -1 || true)
 printf 'CEMU_PID=%s\n' "\${PID:-NONE}"
 if [ -n "\${PID:-}" ]; then
   printf '=== cemu ps ===\n'

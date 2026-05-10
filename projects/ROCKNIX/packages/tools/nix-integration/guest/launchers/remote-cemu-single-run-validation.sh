@@ -291,11 +291,12 @@ log "single-run validation start profile=$PROFILE duration=$DURATION parent=$PAR
 [ -x "$RUNNER" ] || { log "missing runner: $RUNNER"; exit 2; }
 [ -x "$CLEANUP" ] || { log "missing cleanup: $CLEANUP"; exit 2; }
 
-# power variant diagnostic? Four runs by default; set VALIDATION_SKIP_ROCKNIXMESA=1 to skip the diagnostic shim.
+# Product validation defaults to the promoted Nix Cemu + Nix Mesa path. Include
+# the diagnostic ROCKNIX Mesa shim only when explicitly requested.
 MATRIX="profile guest-gamescope-mangohud
 profile guest-direct-mangohud
 max guest-gamescope-mangohud"
-if [ "${VALIDATION_SKIP_ROCKNIXMESA:-0}" != "1" ] && [ -x /storage/.guest/start_cemu_guest_rocknixmesa.sh ]; then
+if [ "${VALIDATION_INCLUDE_ROCKNIXMESA:-0}" = "1" ] && [ -x /storage/.guest/start_cemu_guest_rocknixmesa.sh ]; then
   MATRIX="$MATRIX
 profile guest-gamescope-rocknixmesa-mangohud"
 fi

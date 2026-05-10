@@ -20,7 +20,7 @@ PROFILE="${1:-potato-30}"
 DURATION="${2:-120}"
 VARIANT="${RUNTIME_AB_VARIANT:-guest-direct-mangohud}"
 POWER="${RUNNER_POWER:-max}"
-CURRENT_CEMU="${CURRENT_CEMU:-/nix/store/wl4g8jjlw6pck4sh4ayah9pdl03z8brp-cemu-2.999.0/bin/Cemu}"
+CURRENT_CEMU="${CURRENT_CEMU:-/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/Cemu}"
 CANDIDATE_CEMU="${CANDIDATE_CEMU:-}"
 CANDIDATE_LABEL="${CANDIDATE_LABEL:-candidate-cemu}"
 CANDIDATE_CEMUS="${CANDIDATE_CEMUS:-}"
@@ -115,7 +115,7 @@ EOF
 
 matrix_mode() {
   write_header
-  run_case "current-nix-cemu" "$CURRENT_CEMU" "$DURATION"
+  run_case "promoted-nix-cemu" "$CURRENT_CEMU" "$DURATION"
 
   if [ -n "$CANDIDATE_CEMUS" ]; then
     printf '%s\n' "$CANDIDATE_CEMUS" | while IFS= read -r spec; do
