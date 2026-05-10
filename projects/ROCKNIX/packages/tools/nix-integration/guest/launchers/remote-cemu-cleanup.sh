@@ -11,15 +11,26 @@ export PATH
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 
+pids_by_exact_comm() {
+  name="$1"
+  # Prefer pgrep -x, but also fall back to ps' comm field. Busybox/procps
+  # behavior has differed on Thor for host /usr/bin/cemu, and missing that
+  # lowercase process contaminated host-control benchmarks.
+  {
+    pgrep -x "$name" 2>/dev/null || true
+    ps -eo pid=,comm= 2>/dev/null | awk -v n="$name" '$2 == n { print $1 }'
+  } | sort -n -u
+}
+
 kill_exact_name() {
   name="$1"
-  pids="$(pgrep -x "$name" 2>/dev/null || true)"
+  pids="$(pids_by_exact_comm "$name")"
   [ -n "$pids" ] || return 0
   log "killing pids named '$name': $pids"
   # shellcheck disable=SC2086
   kill -TERM $pids 2>/dev/null || true
   sleep 1
-  pids="$(pgrep -x "$name" 2>/dev/null || true)"
+  pids="$(pids_by_exact_comm "$name")"
   [ -n "$pids" ] || return 0
   # shellcheck disable=SC2086
   kill -KILL $pids 2>/dev/null || true
@@ -42,7 +53,7 @@ EMULATOR_NAMES="Cemu cemu gamescope gamescope-wl gamescopereaper mangohud"
 report_remaining_processes() {
   rc=0
   for name in $EMULATOR_NAMES; do
-    pids="$(pgrep -x "$name" 2>/dev/null || true)"
+    pids="$(pids_by_exact_comm "$name")"
     if [ -n "$pids" ]; then
       log "STALE host pids named '$name': $pids"
       rc=1
@@ -57,10 +68,27 @@ report_remaining_processes() {
     rc=1
   fi
 
+  guest_windows="$(run_guest "PATH=/run/current-system/sw/bin:/bin:/usr/bin:/nix/var/nix/profiles/per-user/root/profile/bin; sock=\$(ls /run/user/0/sway-ipc.0.*.sock 2>/dev/null | head -1 || true); [ -n \"\$sock\" ] || exit 0; SWAYSOCK=\$sock swaymsg -t get_tree 2>/dev/null | grep -i 'info.cemu.Cemu\|Cemu .*Breath of the Wild' | head -20" || true)"
+  if [ -n "$guest_windows" ]; then
+    printf '%s\n' "$guest_windows" | while IFS= read -r line; do
+      log "STALE guest window: $line"
+    done
+    rc=1
+  fi
+
   return "$rc"
 }
 
+close_guest_cemu_windows() {
+  run_guest "PATH=/run/current-system/sw/bin:/bin:/usr/bin:/nix/var/nix/profiles/per-user/root/profile/bin; sock=\$(ls /run/user/0/sway-ipc.0.*.sock 2>/dev/null | head -1 || true); [ -n \"\$sock\" ] || exit 0; export SWAYSOCK=\$sock; swaymsg '[app_id=\"info.cemu.Cemu\"] kill' >/dev/null 2>&1 || true; swaymsg '[title=\".*Cemu.*\"] kill' >/dev/null 2>&1 || true; swaymsg '[title=\".*Breath of the Wild.*\"] kill' >/dev/null 2>&1 || true"
+}
+
 log "cleanup start"
+
+# First close stale Cemu compositor windows. Some host-control failures leave
+# pidless Wayland windows in guest sway even after the emulator process exits,
+# and those invalidate live FPS observations.
+close_guest_cemu_windows
 
 # Guest processes. Use exact process names only. Do not use broad
 # command-line patterns: the host nspawn process contains

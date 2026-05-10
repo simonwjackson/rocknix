@@ -19,11 +19,9 @@ RECENT_SAMPLES="${CAMPAIGN_RECENT_SAMPLES:-180}"
 APPLY_HOST_TUNE="${CAMPAIGN_APPLY_HOST_TUNE:-1}"
 RESTORE_POWER="${CAMPAIGN_RESTORE_POWER:-1}"
 SIGNAL_FILE="${CAMPAIGN_SIGNAL_FILE:-/storage/.guest/live-checkpoint}"
-CURRENT_CEMU="${CURRENT_CEMU:-/nix/store/wl4g8jjlw6pck4sh4ayah9pdl03z8brp-cemu-2.999.0/bin/Cemu}"
-CLASSIC_SDL_CEMU="${CLASSIC_SDL_CEMU:-/nix/store/6sqr7421dzg904dxh9apypmp5z773kzv-cemu-rocknix-style-classic-sdl-2.999.0-rocknix-style-classic-sdl/bin/Cemu}"
-ROCKNIX_STYLE_CEMU="${ROCKNIX_STYLE_CEMU:-/nix/store/6r380a086xl04am5kiq0p9bk91wrk0ji-cemu-rocknix-style-2.999.0-rocknix-style/bin/Cemu}"
-FAITHFUL_CEMU="${FAITHFUL_CEMU:-}"
+CURRENT_CEMU="${CURRENT_CEMU:-/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/Cemu}"
 ROCKNIX_PACKAGE_CEMU="${ROCKNIX_PACKAGE_CEMU:-}"
+EXTRA_GUEST_CASES="${EXTRA_GUEST_CASES:-}"
 TS="$(date '+%Y%m%d-%H%M%S')"
 PARENT="${CAMPAIGN_RUN_DIR:-/storage/.guest/runs/${TS}-cemu-live-campaign}"
 REPORT="$PARENT/report.md"
@@ -71,15 +69,12 @@ sanitize_label() {
 }
 
 default_cases() {
-  printf '%s=%s\n' current-nix-cemu "$CURRENT_CEMU"
-  if [ -n "$CLASSIC_SDL_CEMU" ]; then
-    printf '%s=%s\n' classic-sdl-cemu "$CLASSIC_SDL_CEMU"
-  fi
-  if [ -n "$FAITHFUL_CEMU" ]; then
-    printf '%s=%s\n' faithful-cemu "$FAITHFUL_CEMU"
-  fi
+  printf '%s=%s\n' promoted-nix-cemu "$CURRENT_CEMU"
   if [ -n "$ROCKNIX_PACKAGE_CEMU" ]; then
     printf '%s=%s\n' rocknix-package-cemu "$ROCKNIX_PACKAGE_CEMU"
+  fi
+  if [ -n "$EXTRA_GUEST_CASES" ]; then
+    printf '%s\n' "$EXTRA_GUEST_CASES"
   fi
 }
 

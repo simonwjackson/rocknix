@@ -17,13 +17,14 @@ or host Cemu binaries.
 | `botw-guest.sh <profile>` | Parametric BOTW launcher. One profile per resolution / FPS combo. Mutates `settings.xml` via sed, tunes CPU/GPU sysfs, calls `start_cemu_guest.sh`, then blocks until cemu exits. Replaces all 11 host `/storage/bin/botw-*.sh` scripts. |
 | `games-launcher.sh` | Touch-friendly fuzzel menu pinned to DSI-1 (Thor's bottom panel). Kept available, but not autostarted while touch/menu behavior is under validation. |
 | `host-tune.sh` | Host-side sysfs tuning helper. Runs on ROCKNIX host, not inside the guest. |
-| `remote-cemu-cleanup.sh` | Host-side cleanup script for unattended Cemu/gamescope experiments. |
+| `remote-cemu-cleanup.sh` | Host-side cleanup script for unattended Cemu/gamescope experiments. Kills exact process names and closes stale guest Sway Cemu windows. |
 | `remote-cemu-runner.sh` | Host-side benchmark harness. Creates `/storage/.guest/runs/<timestamp>-<variant>-<profile>/` with logs, title samples, screenshot, governor/thermal/process state. Supports `RUNNER_CEMU_START` for guest candidates and `RUNNER_HOST_LAUNCHER` for typed host-control cases. |
 | `remote-cemu-single-run-validation.sh` | Host-side one-command orchestrator. Runs a compact headless benchmark matrix, analyzes MangoHud CSVs, writes a parent `report.md`, and restores safe state. |
 | `remote-cemu-build-fingerprint.sh` | Host-side build/runtime fingerprint report for ROCKNIX host Cemu, current guest Nix Cemu, and an optional candidate Cemu. |
 | `remote-cemu-runtime-ab.sh` | Host-side current-vs-candidate Cemu A/B harness, including a live checkpoint mode for in-game sampling. |
 | `remote-cemu-live-campaign.sh` | Host-side one-session live campaign. Runs typed guest and host-control cases sequentially, waits for in-game checkpoint notes, captures maps/thread/cache/CSV evidence, then cleans up and restores power state. Child run directories are indexed so A/B/A repeats do not overwrite evidence. |
 | `remote-cemu-promote.sh` | Host-side promotion helper. Installs an already-imported direct `cemu-rocknix-package` output into `/nix/var/nix/profiles/per-user/root/cemu-promoted` inside the guest so the product launcher has a stable GC-rooted Cemu path. |
+| `launch-host-cemu-through-guest-display.sh` | Diagnostic host-control launcher. Runs host `/usr/bin/cemu` through the guest-visible display path for same-session parity checks. |
 
 ## BOTW profiles
 
@@ -89,12 +90,11 @@ The direct ROCKNIX package replica is built as `cemu-rocknix-package` from `gues
 --bind=/sys/class/devfreq
 ```
 
-## Validation status (2026-05-09)
+## Validation status (2026-05-10)
 
-- `botw-guest.sh 540p-30` end-to-end: BOTW window title progressed to
-  "FPS: 28.00 [Vulkan] [Generic] [TitleId: 00050000-101c9400]
-  Breath of the Wild [US v208]". 290% CPU under PPC recompiler.
-  No host-binary fallback at any point.
+- Promoted Nix Cemu (`/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/Cemu`) runs BOTW 540p-45 through native Nix Mesa/Freedreno at host-like performance: live ~40-45 FPS, MangoHud median ~40 FPS after warmup.
+- Same-session host control (`/usr/bin/cemu`, ROCKNIX Mesa 26.0.6) matches once it is pinned to the same big-core affinity. A false ~25 FPS host result was traced to unpinned lowercase `cemu`, not to graphics-driver passthrough.
+- Product path remains Nix Cemu + Nix Vulkan loader + Nix Mesa/Freedreno. ROCKNIX Mesa passthrough is diagnostic-only.
 - `games-launcher.sh` renders all 7 BOTW profile entries on DSI-1,
   full labels (FAST / NATIVE / POTATO suffixes), tap or `Mod+G`.
 
@@ -106,7 +106,7 @@ Run from the ROCKNIX host over SSH when no one can visually inspect the device:
 /storage/.guest/remote-cemu-single-run-validation.sh potato-30
 ```
 
-The command creates `/storage/.guest/runs/<timestamp>-single-run-validation/` and writes `report.md` plus `summary.tsv`. By default it runs profile-power gamescope, profile-power direct, max-power gamescope, and a diagnostic ROCKNIX-Mesa gamescope variant when that diagnostic wrapper exists. Use `VALIDATION_DURATION=120` for a shorter smoke or `VALIDATION_SKIP_ROCKNIXMESA=1` to skip the diagnostic shim.
+The command creates `/storage/.guest/runs/<timestamp>-single-run-validation/` and writes `report.md` plus `summary.tsv`. By default it runs the promoted Nix Cemu path with profile-power gamescope, profile-power direct, and max-power gamescope. Use `VALIDATION_DURATION=120` for a shorter smoke. Set `VALIDATION_INCLUDE_ROCKNIXMESA=1` only when explicitly diagnosing the host-Mesa shim.
 
 ## Build fingerprint and runtime A/B
 
@@ -140,11 +140,7 @@ When Thor is available and you can spend one uninterrupted in-game session, run:
 /storage/.guest/remote-cemu-live-campaign.sh
 ```
 
-The campaign defaults to `720p-45` through `guest-gamescope-mangohud` and runs:
-
-1. current Nix Cemu,
-2. `cemu-rocknix-style-classic-sdl`, and
-3. any optional `FAITHFUL_CEMU` or `ROCKNIX_PACKAGE_CEMU` path you provide.
+The campaign defaults to `720p-45` through `guest-gamescope-mangohud` and runs the promoted Nix Cemu profile. Add `ROCKNIX_PACKAGE_CEMU` or newline-separated `EXTRA_GUEST_CASES` only when testing an explicit new guest candidate.
 
 For the final parity gate, use typed cases so host controls and guest candidates are explicit. Recommended shape is A/B/A or B/A/B, for example:
 
@@ -165,12 +161,11 @@ echo 'visible FPS: <value>; notes: <loading/stutter>' > /storage/.guest/live-che
 
 The script samples for 45 seconds after each checkpoint, records process maps, hot threads, pressure, shader-cache shape, screenshot, and recent MangoHud FPS stats, then advances to the next case. The final report lands in `/storage/.guest/runs/<timestamp>-cemu-live-campaign/report.md`.
 
-Legacy guest-only overrides still work with newline-separated `label=/nix/store/.../bin/Cemu` entries:
+Guest-only overrides still work with newline-separated `label=/nix/store/.../bin/Cemu` entries:
 
 ```sh
-CAMPAIGN_CASES="current=$CURRENT_CEMU
-classic=$CLASSIC_SDL_CEMU
-rocknix-package=/nix/store/...-cemu-rocknix-package-2.999.0-rocknix-package/bin/Cemu" /storage/.guest/remote-cemu-live-campaign.sh
+EXTRA_GUEST_CASES="next-candidate=/nix/store/.../bin/Cemu" \
+  /storage/.guest/remote-cemu-live-campaign.sh
 ```
 
 ## Remote benchmark harness
@@ -200,7 +195,7 @@ Each run creates a directory under `/storage/.guest/runs/` containing:
 
 Safety notes:
 
-- `remote-cemu-cleanup.sh` exits non-zero if exact-name Cemu/gamescope/MangoHud processes survive cleanup. Use `CLEANUP_ALLOW_STALE=1` only for manual diagnostics, never for parity promotion.
+- `remote-cemu-cleanup.sh` exits non-zero if exact-name Cemu/gamescope/MangoHud processes or stale guest Sway Cemu windows survive cleanup. Use `CLEANUP_ALLOW_STALE=1` only for manual diagnostics, never for parity promotion.
 - Do not bind all of `/storage/.cache` into the guest. Host and guest Mesa shader caches may belong to different Mesa versions.
 - Do not mix host and Nix Vulkan loaders in the Cemu process. The host-Mesa hot-swap experiment reached Mesa 26 in `vulkaninfo` but crashed Cemu due to an incoherent two-loader process.
 - Nix Mesa 26.0.2 can be made visible to the guest with `VK_ICD_FILENAMES`, but it failed Cemu with `failed to submit command buffer. Error -4`; keep that as negative evidence.
