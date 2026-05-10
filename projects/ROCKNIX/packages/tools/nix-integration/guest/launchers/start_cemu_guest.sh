@@ -10,11 +10,15 @@
 # /usr/bin/start_cemu.sh inside the guest.
 set -eu
 
-# Use latest nix-built cemu (with screensaver-noop-linux patch).
-CEMU=/nix/store/wl4g8jjlw6pck4sh4ayah9pdl03z8brp-cemu-2.999.0/bin/Cemu
+# Use latest nix-built cemu (with screensaver-noop-linux patch) by
+# default. Build-parity A/B harnesses may override this with CEMU_BIN
+# to test another guest-native Cemu derivation without rewriting this
+# stable launcher.
+CEMU=${CEMU_BIN:-/nix/store/wl4g8jjlw6pck4sh4ayah9pdl03z8brp-cemu-2.999.0/bin/Cemu}
 
 ROM="${1:-}"
 [ -z "$ROM" ] && { echo "usage: start_cemu_guest.sh <rom> [system]"; exit 2; }
+[ -x "$CEMU" ] || { echo "Cemu binary is not executable: $CEMU" >&2; exit 127; }
 
 CEMU_CONFIG_ROOT=/storage/.config/Cemu
 CEMU_HOME_CONFIG="${CEMU_CONFIG_ROOT}/share"
@@ -25,6 +29,19 @@ CEMU_HOME_KEYS="${CEMU_HOME_CONFIG}/keys"
 CEMU_BIOS=/storage/roms/bios/cemu
 
 mkdir -p "$CEMU_HOME_CONFIG"
+
+# A direct ROCKNIX-package Cemu output carries the same SM8550 default
+# settings.xml that cemu-sa installs to /usr/config/Cemu. Seed only clean
+# guests; never overwrite user/device-mutated settings.
+CEMU_OUT="$(dirname "$(dirname "$CEMU")")"
+CEMU_DEFAULT_SETTINGS="${CEMU_OUT}/share/Cemu/config/SM8550/settings.xml"
+CEMU_VULKAN_LOADER_LIB_PATH="${CEMU_OUT}/nix-support/rocknix-cemu-build/vulkan-loader-lib-path"
+if [ ! -f "${CEMU_CONFIG_ROOT}/settings.xml" ] && [ -f "$CEMU_DEFAULT_SETTINGS" ]; then
+  cp "$CEMU_DEFAULT_SETTINGS" "${CEMU_CONFIG_ROOT}/settings.xml"
+fi
+if [ -f "$CEMU_VULKAN_LOADER_LIB_PATH" ]; then
+  export LD_LIBRARY_PATH="$(cat "$CEMU_VULKAN_LOADER_LIB_PATH")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 
 # Cemu in nix doesn't follow XDG conventions; it expects either
 # ~/.local/share/Cemu (writable settings + saves) or it'll create
@@ -76,6 +93,6 @@ export XDG_DATA_HOME=/storage/.local/share
 # overwrite, so multi-launch sessions still leave a trail.
 LOG_OUT=/storage/.guest/runs/cemu-stdout.log
 mkdir -p "$(dirname "$LOG_OUT")"
-echo "[$(date)] launching cemu (nix) with ROM: $ROM" | tee -a "$LOG_OUT" >&2
+echo "[$(date)] launching cemu (guest) binary=$CEMU ROM: $ROM" | tee -a "$LOG_OUT" >&2
 exec >>"$LOG_OUT" 2>&1
 exec "$CEMU" --verbose -f -g "$ROM"
