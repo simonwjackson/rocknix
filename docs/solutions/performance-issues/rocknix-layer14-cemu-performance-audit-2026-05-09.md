@@ -220,7 +220,7 @@ A real `rocknix-cemu` Nix derivation should not be a generic nixpkgs Cemu overri
    - `bin/resources` -> `$out/share/Cemu/resources`
 5. Ensure the compiled/installed data path resolves to `$out/share/Cemu` in the Nix store.
 6. Provide a Nix-native launcher equivalent to `start_cemu.sh` that initializes `/storage/.config/Cemu`, links `/storage/.local/share/Cemu`, redirects `online/mlc01/keys` into `/storage/roms/bios/cemu`, mutates settings via XML, and launches with the coherent graphics runtime.
-7. Run with a coherent Vulkan/Mesa stack. Short term this means ROCKNIX Mesa 26.0.6 passthrough; long term it means a Nix Mesa matching ROCKNIX's Turnip behavior.
+7. Run with a coherent Vulkan/Mesa stack. The direct package's successful path uses native Nix Mesa/Freedreno plus the package-recorded Nix Vulkan loader path; ROCKNIX Mesa passthrough remains diagnostic only for isolating graphics-stack deltas.
 
 ## Decision
 
@@ -233,7 +233,8 @@ A direct package-replica output now exists alongside the nixpkgs-derived control
 - Output: `.#cemu-rocknix-package`
 - Manifest: `projects/ROCKNIX/packages/tools/nix-integration/guest/flakes/cemu/rocknix-package-manifest.nix`
 - Derivation: `projects/ROCKNIX/packages/tools/nix-integration/guest/flakes/cemu/rocknix-package.nix`
-- Fuji build result: `/nix/store/841c43k9pw1awij24lp140hwg4yapwxk-cemu-rocknix-package-2.999.0-rocknix-package/bin/Cemu`
+- Initial Fuji build result: `/nix/store/841c43k9pw1awij24lp140hwg4yapwxk-cemu-rocknix-package-2.999.0-rocknix-package/bin/Cemu`
+- Vulkan-loader-fixed Thor candidate: `/nix/store/2vahrn6mc766rk5zchxk4a9601c0h648-cemu-rocknix-package-2.999.0-rocknix-package/bin/Cemu`
 - Build posture: direct `stdenv.mkDerivation`, no `pkgs.cemu`/`baseCemu`/`overrideAttrs`, no `wrapGAppsHook3`, no nixpkgs imgui replacement.
 - Runtime data assertions passed:
   - `$out/share/Cemu/gameProfiles/default/00050000101c9400.ini`
@@ -242,4 +243,27 @@ A direct package-replica output now exists alongside the nixpkgs-derived control
 - Fuji fingerprint: ELF `EXEC`, no dynamic `libcubeb.so.0` in `NEEDED`, bundled Cubeb build path, classic SDL2 (`libSDL2-2.0.so.0`), SM8550 default settings, and build evidence under `$out/nix-support/rocknix-cemu-build/`.
 - Version evidence: the binary contains `Cemu 6f6c129`; `Cemu --version` still prints `0.0`, matching the upstream numeric-version fallback when `EMULATOR_VERSION_MAJOR/MINOR/PATCH` remain zero.
 
-Thor is offline, so this closure has **not** yet been imported or live-tested on-device. Next validation step is to import this Fuji-built closure into the Thor guest store, run `remote-cemu-build-fingerprint.sh` against the candidate, then run same-session host-control vs candidate live BOTW A/B before interpreting FPS.
+The first imported direct candidate was invalid for performance because Cemu fell back to OpenGL (`Vulkan loader not available`). The package now records `nix-support/rocknix-cemu-build/vulkan-loader-lib-path`, and `start_cemu_guest.sh` adds that path to `LD_LIBRARY_PATH` only for the Cemu process.
+
+Validated Vulkan-fixed run:
+
+- Run: `/storage/.guest/runs/20260510-094138-cemu-live-package-vulkanfix/report.md`
+- Candidate: `/nix/store/2vahrn6mc766rk5zchxk4a9601c0h648-cemu-rocknix-package-2.999.0-rocknix-package/bin/Cemu`
+- Runtime stack: native Nix Mesa/Freedreno, `Driver version: Mesa 25.2.6`, with Cemu using the package-recorded Nix Vulkan loader path.
+- Cemu evidence: `Init Vulkan graphics backend`, BOTW profile `gameProfiles/default/00050000101c9400.ini`, RPL link time about `153ms`, HLE scan time about `145ms`.
+- Live result: user-corrected visible FPS about `40 FPS`; MangoHud CSV avg `38.11`, median `38.34`, p10 `35.77`.
+- Operator correction artifact: `/storage/.guest/runs/20260510-094138-cemu-live-package-vulkanfix/rocknix-package-vulkanfix-guest-gamescope-mangohud-720p-45/operator-correction.txt`.
+
+Remaining gap: historical host-control evidence was about `45 FPS`, but it was not captured in the same session as the fixed direct candidate. The next validation must be same-session host-control vs direct Nix Cemu using the typed live-campaign harness. Native Nix Mesa is product-eligible if it passes that gate; ROCKNIX Mesa passthrough is diagnostic-only and should redirect to a graphics-stack plan if it alone closes the gap.
+
+### 2026-05-10 parity/simplification harness update
+
+The follow-up plan is `docs/plans/2026-05-10-003-fix-cemu-host-parity-simplification-plan.md`. Supporting harness changes:
+
+- `remote-cemu-live-campaign.sh` accepts typed `guest:<label>:<cemu-bin>` and `host:<label>:<host-launcher>:<profile>` cases, indexes child run directories (`001-...`, `002-...`) so A/B/A repeats do not overwrite evidence, and marks cleanup-incomplete cases explicitly.
+- `remote-cemu-runner.sh` exposes `RUNNER_HOST_LAUNCHER` for host-control cases and captures host-side process/env/maps/log evidence under the same run directory schema.
+- `remote-cemu-cleanup.sh` now fails if exact-name emulator processes survive cleanup unless `CLEANUP_ALLOW_STALE=1` is set for manual diagnostics.
+- `start_cemu_guest.sh` now defaults to the dedicated promoted profile `/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/Cemu`, preserves `CEMU_BIN` for rollback/diagnostics, and resolves profile symlinks with `readlink -f` before reading direct-package metadata.
+- `remote-cemu-promote.sh` promotes an already-imported direct package output into the dedicated profile only after verifying its direct-package Vulkan loader evidence.
+
+Thor is currently offline, so the new same-session host-control gate and promoted-default validation remain pending.
