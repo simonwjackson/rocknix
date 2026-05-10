@@ -2,16 +2,16 @@
   description = "cemu (Wii U emulator) with aarch64 dynarec backend, pinned to ROCKNIX commit";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  # nixos-unstable aliases SDL2 to sdl2-compat (SDL3 shim). Keep an
+  # older nixpkgs input solely for a diagnostic classic-SDL2 Cemu build.
+  inputs.nixpkgs-sdl2-classic.url = "github:NixOS/nixpkgs/nixos-24.11";
 
-  outputs = { self, nixpkgs }: let
+  outputs = { self, nixpkgs, nixpkgs-sdl2-classic }: let
     forAllSystems = f: nixpkgs.lib.genAttrs [ "x86_64-linux" "aarch64-linux" ] (system: f system);
   in {
     packages = forAllSystems (system: let
       pkgs = nixpkgs.legacyPackages.${system};
-    in {
-      default = self.packages.${system}.cemu;
-      # Newer cemu requires wxWidgets >= 3.3; nixpkgs cemu uses 3_2.
-      # Override wxwidgets first so we can swap in 3_3 below.
+      pkgsSdl2Classic = nixpkgs-sdl2-classic.legacyPackages.${system};
       cemu = (pkgs.cemu.override {
         wxwidgets_3_2 = pkgs.wxwidgets_3_3;
         # Newer cemu uses fmt::format_string::get() (fmt >= 10).
@@ -35,9 +35,11 @@
         #   - explicit OpenSSL link for CemuBin
         #   - sharpyuv link in wxgui
         #   - -mcmodel=large for imgui on aarch64
-        # Plus disabling LTO/IPO (cemu's IPO doesn't work cleanly with our toolchain).
+        # Plus ROCKNIX's Cemu user-data layout patch and disabling LTO/IPO
+        # (cemu's IPO doesn't work cleanly with our toolchain).
         patches = [
           ./000-build-fixes.patch
+          ./002-opt-seeprom-mlc01-keys-dir.patch
           ./003-disable-cmake-interprocedural-optimization.patch
           # nixpkgs SDL2 is sdl2-compat (SDL3 shim); SDL3's video-init
           # path crashes on aarch64 inside cemu's ScreenSaver::SetInhibit
@@ -71,6 +73,42 @@
             --replace-fail "target_compile_options(imguiImpl PRIVATE -mcmodel=large)" \
               "# -mcmodel=large incompatible with -fPIC; dropped" || true
         '';
+        # Install the same runtime data directories that ROCKNIX cemu-sa
+        # copies from the build tree to /usr/share/Cemu. Without these, BOTW
+        # logs `gameprofile path: (not present)` and the shared Cafe fonts are
+        # missing, which is not a faithful ROCKNIX Cemu runtime.
+        postInstall = (old.postInstall or "") + ''
+          cemuDataDir="$out/share/Cemu"
+          mkdir -p "$cemuDataDir"
+
+          for dataDirName in gameProfiles resources; do
+            dataDir=""
+            for candidate in \
+              "$PWD/bin/$dataDirName" \
+              "$PWD/../bin/$dataDirName" \
+              "$PWD/../../source/bin/$dataDirName" \
+              "$NIX_BUILD_TOP/$sourceRoot/bin/$dataDirName"
+            do
+              if [ -d "$candidate" ]; then
+                dataDir="$candidate"
+                break
+              fi
+            done
+
+            if [ -z "$dataDir" ]; then
+              dataDir=$(find "$PWD" -path "*/bin/$dataDirName" -type d -print -quit 2>/dev/null || true)
+            fi
+
+            if [ -z "$dataDir" ]; then
+              echo "error: Cemu runtime data directory not found: $dataDirName" >&2
+              exit 1
+            fi
+
+            rm -rf "$cemuDataDir/$dataDirName"
+            cp -r "$dataDir" "$cemuDataDir/"
+          done
+        '';
+
         # NixOS' default 'pic' hardening flag enforces -fPIC; keep it but
         # disable 'fortify' which sometimes interacts badly with PCH builds.
         hardeningDisable = (old.hardeningDisable or [ ]) ++ [ "fortify" ];
@@ -79,6 +117,26 @@
           platforms = [ "x86_64-linux" "aarch64-linux" ];
         };
       });
+      cemuRocknixStyle = pkgs.callPackage ./rocknix-style.nix {
+        baseCemu = cemu;
+      };
+      cemuRocknixStyleClassicSdl = pkgs.callPackage ./rocknix-style-classic-sdl.nix {
+        baseCemu = cemuRocknixStyle;
+        SDL2_classic = pkgsSdl2Classic.SDL2;
+      };
+      cemuRocknixFaithful = pkgs.callPackage ./rocknix-faithful.nix {
+        baseCemu = cemuRocknixStyleClassicSdl;
+      };
+      cemuRocknixPackage = pkgs.callPackage ./rocknix-package.nix {
+        SDL2_classic = pkgsSdl2Classic.SDL2;
+      };
+    in {
+      default = self.packages.${system}.cemu;
+      inherit cemu;
+      "cemu-rocknix-style" = cemuRocknixStyle;
+      "cemu-rocknix-style-classic-sdl" = cemuRocknixStyleClassicSdl;
+      "cemu-rocknix-faithful" = cemuRocknixFaithful;
+      "cemu-rocknix-package" = cemuRocknixPackage;
     });
   };
 }

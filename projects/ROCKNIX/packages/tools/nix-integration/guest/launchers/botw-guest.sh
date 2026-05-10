@@ -28,7 +28,7 @@ PATH=/run/current-system/sw/bin:/usr/bin:/bin
 export PATH
 
 PROFILE="${1:-540p-30}"
-ROM="/storage/roms/wiiu/The Legend of Zelda - Breath of the Wild (USA) (DLC) (v208).wua"
+ROM="${CEMU_ROM:-/storage/roms/wiiu/The Legend of Zelda - Breath of the Wild (USA) (DLC) (v208).wua}"
 SETTINGS="/storage/.config/Cemu/settings.xml"
 P3="/sys/devices/system/cpu/cpufreq/policy3"
 P7="/sys/devices/system/cpu/cpufreq/policy7"
@@ -162,17 +162,23 @@ if [ -n "$SOCK" ]; then
   SWAYSOCK="$SOCK" swaymsg "exec /storage/.guest/start_cemu_guest.sh '$ROM'" >/dev/null
 fi
 
-# Wait until cemu has spawned, then pin its threads to big cores.
+# Wait until cemu has spawned, then optionally pin its threads. Default
+# matches the historically tested big-core mask. Runtime A/B harnesses may
+# set CEMU_AFFINITY_MASK=none or another taskset mask to test scheduler
+# behavior without rewriting this launcher.
+CEMU_AFFINITY_MASK="${CEMU_AFFINITY_MASK:-0xF8}"
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
-  CEMU_PID="$(pgrep -f '/bin/Cemu' | head -1 || true)"
+  CEMU_PID="$( (pgrep -x Cemu; pgrep -x cemu) 2>/dev/null | head -1 || true)"
   [ -n "$CEMU_PID" ] && break
   sleep 1
 done
 
 if [ -n "${CEMU_PID:-}" ] && [ -d "/proc/$CEMU_PID/task" ]; then
-  for tid in /proc/"$CEMU_PID"/task/*; do
-    taskset -p 0xF8 "$(basename "$tid")" >/dev/null 2>&1 || true
-  done
+  if [ "$CEMU_AFFINITY_MASK" != "none" ]; then
+    for tid in /proc/"$CEMU_PID"/task/*; do
+      taskset -p "$CEMU_AFFINITY_MASK" "$(basename "$tid")" >/dev/null 2>&1 || true
+    done
+  fi
   # Reassert max freqs in case kernel scaled them back during launch.
   [ -d "$P3" ] && echo "$P3_MAX" > "$P3/scaling_max_freq" 2>/dev/null || true
   [ -d "$P7" ] && echo "$P7_MAX" > "$P7/scaling_max_freq" 2>/dev/null || true

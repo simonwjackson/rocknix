@@ -559,6 +559,128 @@ grep -q 'imports' "${PKG_DIR}/guest/profiles/main-space.nix" \
 grep -q 'nixosConfigurations.rocknix-guest-main-space' "${PKG_DIR}/guest/flake.nix" \
   || fail "guest flake must expose rocknix-guest-main-space (U3)"
 
+# Layer 14 Cemu build-parity diagnostics: host-side scripts must be
+# syntax-checkable and the stable guest launcher must allow an explicit
+# guest-native Cemu binary override without changing the default path.
+for launcher in \
+  remote-cemu-cleanup.sh \
+  remote-cemu-runner.sh \
+  remote-cemu-single-run-validation.sh \
+  remote-cemu-build-fingerprint.sh \
+  remote-cemu-runtime-ab.sh \
+  remote-cemu-live-campaign.sh \
+  start_cemu_guest.sh \
+  start_cemu_guest_candidate.sh \
+  start_cemu_guest_gamescope.sh \
+  start_cemu_guest_mangohud.sh \
+  start_cemu_guest_rocknixmesa.sh; do
+  check_script "${PKG_DIR}/guest/launchers/${launcher}"
+done
+grep -q 'CEMU_BIN:-/nix/store/' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
+  || fail "start_cemu_guest.sh must default CEMU through CEMU_BIN override"
+grep -q 'RUNNER_CEMU_START=' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
+  || fail "remote-cemu-runner.sh missing candidate launcher override"
+grep -q 'RUNNER_LAUNCH_ONLY=' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
+  || fail "remote-cemu-runner.sh missing launch-only mode for live campaign"
+grep -q 'RUNNER_LOCK_DIR=' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
+  || fail "remote-cemu-runner.sh missing run lock for Cemu A/B safety"
+grep -q 'snapshot_settings' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
+  || fail "remote-cemu-runner.sh missing Cemu settings snapshot/restore"
+grep -q 'restore_power_state' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
+  || fail "remote-cemu-runner.sh missing power-state restore trap"
+grep -q 'CLEANUP_KILL_UI' "${PKG_DIR}/guest/launchers/remote-cemu-cleanup.sh" \
+  || fail "remote-cemu-cleanup.sh must gate non-emulator UI process cleanup"
+grep -q 'CANDIDATE_LABEL=' "${PKG_DIR}/guest/launchers/remote-cemu-runtime-ab.sh" \
+  || fail "remote-cemu-runtime-ab.sh must allow candidate labels beyond rocknix-style"
+grep -q 'classic-sdl-cemu' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
+  || fail "remote-cemu-live-campaign.sh missing classic SDL case"
+grep -q 'faithful-cemu' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
+  || fail "remote-cemu-live-campaign.sh missing faithful Cemu case hook"
+grep -q 'rocknix-package-cemu' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
+  || fail "remote-cemu-live-campaign.sh missing direct package Cemu case hook"
+grep -q 'CAMPAIGN_LOCK_DIR=' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
+  || fail "remote-cemu-live-campaign.sh missing live-campaign run lock"
+grep -q -- "-name '\*.csv'" "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
+  || fail "remote-cemu-live-campaign.sh must detect MangoHud CSV independent of binary name"
+grep -q 'start_cemu_guest_rocknixmesa.sh' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
+  || fail "remote-cemu-live-campaign.sh must preserve ROCKNIX Mesa wrapper for candidate runs"
+grep -q 'start_cemu_guest_rocknixmesa.sh' "${PKG_DIR}/guest/launchers/remote-cemu-runtime-ab.sh" \
+  || fail "remote-cemu-runtime-ab.sh must preserve ROCKNIX Mesa wrapper for candidate runs"
+grep -q 'dynamic NEEDED' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
+  || fail "remote-cemu-build-fingerprint.sh missing Cubeb/NEEDED linkage fingerprint"
+grep -q 'runtime data' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
+  || fail "remote-cemu-build-fingerprint.sh missing Cemu runtime-data fingerprint"
+grep -q 'cemu-rocknix-style' "${PKG_DIR}/guest/flakes/cemu/flake.nix" \
+  || fail "cemu flake missing ROCKNIX-style candidate output"
+grep -q 'cemu-rocknix-style-classic-sdl' "${PKG_DIR}/guest/flakes/cemu/flake.nix" \
+  || fail "cemu flake missing classic SDL candidate output"
+grep -q 'cemu-rocknix-faithful' "${PKG_DIR}/guest/flakes/cemu/flake.nix" \
+  || fail "cemu flake missing faithful ROCKNIX candidate output"
+[ -f "${PKG_DIR}/guest/flakes/cemu/rocknix-style.nix" ] \
+  || fail "missing ROCKNIX-style Cemu candidate derivation"
+[ -f "${PKG_DIR}/guest/flakes/cemu/rocknix-style-classic-sdl.nix" ] \
+  || fail "missing classic SDL Cemu candidate derivation"
+[ -f "${PKG_DIR}/guest/flakes/cemu/rocknix-faithful.nix" ] \
+  || fail "missing faithful ROCKNIX Cemu candidate derivation"
+grep -q 'noDynamicCubeb = true' "${PKG_DIR}/guest/flakes/cemu/rocknix-faithful.nix" \
+  || fail "faithful Cemu candidate must declare dynamic Cubeb parity gate"
+grep -q 'CMAKE_EXE_LINKER_FLAGS=-no-pie' "${PKG_DIR}/guest/flakes/cemu/rocknix-faithful.nix" \
+  || fail "faithful Cemu candidate must test non-PIE executable posture"
+
+HOST_CEMU_SA_DIR="${REPO_ROOT}/projects/ROCKNIX/packages/emulators/standalone/cemu-sa"
+CEMU_FLAKE_DIR="${PKG_DIR}/guest/flakes/cemu"
+host_cemu_rev=$(sed -n 's/^PKG_VERSION="\([^"]*\)"/\1/p' "${HOST_CEMU_SA_DIR}/package.mk")
+[ -n "${host_cemu_rev}" ] || fail "could not read ROCKNIX cemu-sa PKG_VERSION"
+grep -q 'cemu-rocknix-package' "${CEMU_FLAKE_DIR}/flake.nix" \
+  || fail "cemu flake missing direct ROCKNIX package candidate output"
+[ -f "${CEMU_FLAKE_DIR}/rocknix-package-manifest.nix" ] \
+  || fail "missing direct ROCKNIX Cemu package manifest"
+[ -f "${CEMU_FLAKE_DIR}/rocknix-package.nix" ] \
+  || fail "missing direct ROCKNIX Cemu package derivation"
+grep -q "rev = \"${host_cemu_rev}\"" "${CEMU_FLAKE_DIR}/rocknix-package-manifest.nix" \
+  || fail "direct Cemu manifest source rev must match ROCKNIX cemu-sa package.mk"
+grep -q 'fetchSubmodules = true' "${CEMU_FLAKE_DIR}/rocknix-package-manifest.nix" \
+  || fail "direct Cemu manifest must require submodule fetches"
+for patch in \
+  000-build-fixes.patch \
+  002-opt-seeprom-mlc01-keys-dir.patch \
+  003-disable-cmake-interprocedural-optimization.patch; do
+  grep -q "${patch}" "${CEMU_FLAKE_DIR}/rocknix-package-manifest.nix" \
+    || fail "direct Cemu manifest missing patch: ${patch}"
+  cmp -s "${HOST_CEMU_SA_DIR}/patches/${patch}" "${CEMU_FLAKE_DIR}/${patch}" \
+    || fail "direct Cemu patch copy drifted from cemu-sa package: ${patch}"
+done
+! grep -Eq 'pkgs[.]cemu|baseCemu|overrideAttrs|wrapGAppsHook3' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "direct Cemu package must not inherit nixpkgs Cemu or wrapper/fixup machinery"
+grep -q 'stdenv.mkDerivation' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "direct Cemu package must use an explicit stdenv derivation"
+grep -q 'rocknix-cemu-build' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "direct Cemu package must export build evidence"
+grep -q 'gameProfiles/default/00050000101c9400.ini' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "direct Cemu package must assert BOTW game profile runtime data"
+grep -q 'resources/sharedFonts/CafeCn.ttf' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "direct Cemu package must assert Cafe shared font runtime data"
+cmp -s "${HOST_CEMU_SA_DIR}/config/SM8550/settings.xml" "${CEMU_FLAKE_DIR}/settings.SM8550.xml" \
+  || fail "direct Cemu SM8550 default settings must stay synced with cemu-sa package"
+grep -q 'config/SM8550/settings.xml' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "direct Cemu package must install SM8550 default settings"
+grep -q 'CEMU_DEFAULT_SETTINGS' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
+  || fail "start_cemu_guest.sh must seed clean guests from packaged default settings"
+grep -q 'readelf-header.txt' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "direct Cemu package must capture ELF header evidence"
+grep -q 'readelf-dynamic.txt' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "direct Cemu package must capture dynamic linkage evidence"
+grep -q 'cubeb-evidence.txt' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "direct Cemu package must capture bundled Cubeb evidence"
+grep -q 'libcubeb' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "direct Cemu package must reject dynamic Cubeb linkage"
+grep -q 'vulkan-loader-lib-path' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "direct Cemu package must record its Vulkan loader path"
+grep -q 'CEMU_VULKAN_LOADER_LIB_PATH' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
+  || fail "start_cemu_guest.sh must expose the packaged Vulkan loader to dlopen-based Cemu"
+grep -q 'build evidence' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
+  || fail "remote-cemu-build-fingerprint.sh must report direct package build evidence"
+
 # U6: THIN_HOST build flag, gated SM8550-only, wired into the package install.
 grep -q 'THIN_HOST=' "${REPO_ROOT}/projects/ROCKNIX/options" \
   || fail "missing THIN_HOST build option (U6)"
