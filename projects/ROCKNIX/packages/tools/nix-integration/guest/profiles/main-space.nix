@@ -110,6 +110,9 @@
       # state. cemu-storage-adapter.sh consumes this; the package wrapper does
       # not know about ROCKNIX /storage paths.
       CEMU_BIOS_ROOT = "/storage/roms/bios/cemu";
+      # Measured SM8550 Cemu affinity policy. Runtime A/B harnesses can set
+      # CEMU_AFFINITY_MASK=none to test scheduler behavior explicitly.
+      CEMU_AFFINITY_MASK = "0xF8";
 
       WLR_NO_HARDWARE_CURSORS = "1";
       WLR_LIBINPUT_NO_DEVICES = "1";
