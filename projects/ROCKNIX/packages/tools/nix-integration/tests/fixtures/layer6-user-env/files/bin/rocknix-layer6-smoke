@@ -1,2 +1,0 @@
-#!/bin/sh
-echo "rocknix-layer6-smoke:${ROCKNIX_LAYER6_SMOKE:-unset}"
