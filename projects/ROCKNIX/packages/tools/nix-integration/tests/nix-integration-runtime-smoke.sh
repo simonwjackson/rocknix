@@ -157,10 +157,6 @@ grep -q 'Layer 8 daemon eligibility:' /tmp/nix-doctor-smoke.log
 "${PKG_DIR}/scripts/nixctl" status >/tmp/nix-layer8-nixctl-status.log
 grep -q 'Layer 8 (experimental daemon) status' /tmp/nix-layer8-nixctl-status.log
 grep -q 'fallback:   Layer 4 single-user/root Nix remains primary' /tmp/nix-layer8-nixctl-status.log
-NIX_LAYER8_SYSTEMD_DIR="${PKG_DIR}/system.d" \
-  "${PKG_DIR}/scripts/nixctl" status >/tmp/nix-layer8-unit-status.log
-grep -q 'socket:     .*nix-daemon.socket' /tmp/nix-layer8-unit-status.log
-grep -q 'service:    .*nix-daemon.service' /tmp/nix-layer8-unit-status.log
 FAKE_NSPAWN="${TMP_DIR}/systemd-nspawn"
 cat >"${FAKE_NSPAWN}" <<'EOF'
 #!/bin/sh

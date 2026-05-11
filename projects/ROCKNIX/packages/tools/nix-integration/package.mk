@@ -10,12 +10,6 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="nix-integration: custom-image Nix tooling for ROCKNIX"
 PKG_TOOLCHAIN="manual"
 
-NIX_DAEMON_SUPPORT="${NIX_DAEMON_SUPPORT:-no}"
-NIX_DAEMON_BUILD_GROUP="${NIX_DAEMON_BUILD_GROUP:-nixbld}"
-NIX_DAEMON_BUILD_GROUP_ID="${NIX_DAEMON_BUILD_GROUP_ID:-30000}"
-NIX_DAEMON_BUILD_USER_ID_FIRST="${NIX_DAEMON_BUILD_USER_ID_FIRST:-30001}"
-NIX_DAEMON_BUILD_USER_COUNT="${NIX_DAEMON_BUILD_USER_COUNT:-10}"
-
 # Layer 14 thin-host main-space build flag. SM8550-only.
 THIN_HOST="${THIN_HOST:-no}"
 
@@ -143,13 +137,4 @@ post_install() {
     safe_remove ${INSTALL}/usr/lib/systemd/system/rocknix-graphical.target
   fi
 
-  if [ "${NIX_DAEMON_SUPPORT}" = "yes" ]; then
-    add_group "${NIX_DAEMON_BUILD_GROUP}" "${NIX_DAEMON_BUILD_GROUP_ID}"
-    i=1
-    while [ "${i}" -le "${NIX_DAEMON_BUILD_USER_COUNT}" ]; do
-      uid=$((NIX_DAEMON_BUILD_USER_ID_FIRST + i - 1))
-      add_user "nixbld${i}" x "${uid}" "${NIX_DAEMON_BUILD_GROUP_ID}" "Nix build user ${i}" "/var/empty" "/bin/false"
-      i=$((i + 1))
-    done
-  fi
 }
