@@ -172,6 +172,20 @@ The package-owned `bin/cemu` entry point owns package-relative runtime
 setup such as Vulkan loader visibility and remains free of `/storage`,
 BOTW, and SM8550 policy.
 
+## Cemu SM8550 performance policy
+
+Cemu performance controls live in the guest/session layer, not in the
+generic package wrapper. `cemu-sm8550-performance.sh` owns the measured
+SM8550 profile table for CPU caps, best-effort GPU devfreq, and thread
+affinity. The guest Sway session exports `CEMU_AFFINITY_MASK=0xF8` as
+the default big-core mask; validation harnesses may set
+`CEMU_AFFINITY_MASK=none` for paired scheduler tests.
+
+`host-tune.sh` remains a temporary host adapter for privileged sysfs
+controls the guest cannot safely own yet, especially GPU devfreq writes.
+It must stay explicit and validation-scoped; the Cemu package entry point
+must never learn about SM8550 sysfs paths.
+
 ## Sibling profiles
 
 - `dev-env` — interactive sway session for on-device development

@@ -1,9 +1,9 @@
 #!/bin/sh
 # host-tune.sh -- runs on the ROCKNIX HOST, not inside the nspawn guest.
-# Applies CPU + GPU sysfs tuning that the guest cannot do because nspawn
-# mounts /sys read-only. botw-guest.sh inside the guest covers /sys/.../cpufreq
-# (somehow writable for us) but /sys/class/devfreq is RO -- this script
-# patches that gap by running on the host.
+# temporary host adapter for privileged sysfs tuning. The guest-side
+# cemu-sm8550-performance.sh owns the measured SM8550 policy and attempts the
+# same writes from inside nspawn; this host helper patches the remaining gap for
+# controls (especially GPU devfreq) that the guest cannot safely own yet.
 #
 # Usage (from any shell on Thor):
 #   /storage/.guest/host-tune.sh <profile>

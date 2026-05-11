@@ -11,13 +11,14 @@ or host Cemu binaries.
 |---|---|
 | `start_cemu_guest.sh` | Compatibility launcher. Selects promoted/override Cemu, verifies package metadata, requires guest-session env, delegates user-data layout to `cemu-storage-adapter.sh`, then execs Cemu fullscreen with the requested ROM. |
 | `cemu-storage-adapter.sh` | Guest-owned `/storage` compatibility adapter. Idempotently preserves existing Cemu settings/saves/keys/MLC layout under XDG paths and `/storage/roms/bios/cemu`; never part of the generic package wrapper. |
+| `cemu-sm8550-performance.sh` | Guest/session-owned SM8550 Cemu performance profile. Applies measured CPU caps, best-effort GPU devfreq policy, and Cemu thread affinity; generic package wrapper never owns this device policy. |
 | `start_cemu_guest_mangohud.sh` | Nix MangoHud wrapper around `start_cemu_guest.sh`. Diagnostic/profile mode only. |
 | `start_cemu_guest_gamescope.sh` | Nix gamescope wrapper matching the host 360p/540p -> 1080p FSR pipeline shape. Diagnostic/profile mode until validated. |
 | `start_cemu_guest_rocknixmesa.sh` | Diagnostic-only launcher using the ROCKNIX Mesa ICD with a narrow dependency shim while keeping Cemu's Nix Vulkan loader. Do not productize as the final Nix runtime. |
 | `start_cemu_guest_candidate.sh` | Diagnostic wrapper that runs a caller-selected guest-native Cemu binary via `CEMU_BIN` while preserving the normal guest config/cache setup. |
 | `botw-guest.sh <profile>` | Parametric BOTW launcher. One profile per resolution / FPS combo. Mutates `settings.xml` via guest-available Perl, tunes CPU/GPU sysfs, calls `start_cemu_guest.sh`, then blocks until cemu exits. Replaces all 11 host `/storage/bin/botw-*.sh` scripts. |
 | `games-launcher.sh` | Touch-friendly fuzzel menu pinned to DSI-1 (Thor's bottom panel). Kept available, but not autostarted while touch/menu behavior is under validation. |
-| `host-tune.sh` | Host-side sysfs tuning helper. Runs on ROCKNIX host, not inside the guest. |
+| `host-tune.sh` | Temporary host-side sysfs tuning helper. Runs on ROCKNIX host only for privileged controls the guest cannot safely own yet, especially GPU devfreq. |
 | `remote-cemu-cleanup.sh` | Host-side cleanup script for unattended Cemu/gamescope experiments. Kills exact process names and closes stale guest Sway Cemu windows. |
 | `remote-cemu-runner.sh` | Host-side benchmark harness. Creates `/storage/.guest/runs/<timestamp>-<variant>-<profile>/` with logs, title samples, screenshot, governor/thermal/process state. Supports `RUNNER_CEMU_START` for guest candidates and `RUNNER_HOST_LAUNCHER` for typed host-control cases. |
 | `remote-cemu-single-run-validation.sh` | Host-side one-command orchestrator. Runs a compact headless benchmark matrix, analyzes MangoHud CSVs, writes a parent `report.md`, and restores safe state. |
@@ -54,10 +55,11 @@ The host scripts rely on:
 - **python3** for `settings.xml` mutation.
   Replaced by guest-available Perl because the live guest's `/usr/bin/sed` is BusyBox and lacks GNU `sed -z`.
 
-CPU/GPU sysfs writes still target `/sys/devices/system/cpu/cpufreq/`
-and `/sys/class/devfreq/`, both bind-mounted into the guest by the
-nspawn drop-in. Failures on read-only sysfs paths are non-fatal -- the
-host's defaults remain in effect.
+CPU/GPU/affinity policy is centralized in `cemu-sm8550-performance.sh`.
+Guest sysfs writes target `/sys/devices/system/cpu/cpufreq/` and
+`/sys/class/devfreq/`, both bind-mounted into the guest by the nspawn unit.
+Failures on read-only sysfs paths are non-fatal; `host-tune.sh` remains the
+explicit temporary host adapter for privileged GPU devfreq writes.
 
 ## Cemu promotion and override contract
 
@@ -93,8 +95,8 @@ This is the Layer 14 Cemu peelback baseline. Do not delete launcher behavior unt
 | `/storage` config/save/BIOS layout | `cemu-storage-adapter.sh` | Guest compatibility adapter or migration | Temporary ROCKNIX adapter | Existing settings/saves/keys survive; fresh state seeds once; no broad bind added. |
 | SM8550 default settings | Cemu package + launcher seed | Guest/device profile | Device policy | Package-owned launch works after settings move; generic package has no SM8550 runtime default. |
 | SDL screensaver workaround | `start_cemu_guest.sh` | Package wrapper or guest session | Required if crash still reproduces | Run without/with hint and keep only if it prevents a real crash. |
-| CPU affinity | `botw-guest.sh` | SM8550 guest/device profile | Measured optimization | Paired in-game run proves pinned guest Cemu improves FPS/frame pacing. |
-| CPU/GPU governors/clocks | `botw-guest.sh` / `host-tune.sh` | SM8550 guest/device profile, host helper only if privileged | Measured optimization | Paired in-game run proves benefit and restore path. |
+| CPU affinity | `cemu-sm8550-performance.sh` via guest session `CEMU_AFFINITY_MASK` | SM8550 guest/device profile | Measured optimization | Paired in-game run proves pinned guest Cemu improves FPS/frame pacing. |
+| CPU/GPU governors/clocks | `cemu-sm8550-performance.sh` / temporary `host-tune.sh` | SM8550 guest/device profile, host helper only if privileged | Measured optimization | Paired in-game run proves benefit and restore path. |
 | BOTW profile/settings mutation | `botw-guest.sh` | Game-specific validation/helper | Validation workload only | Never enters generic Cemu package or package wrapper. |
 | Host Cemu parity control | `launch-host-cemu-through-guest-display.sh` | Diagnostic harness | Temporary diagnostic | Used only for future parity comparisons; not product path. |
 
@@ -112,6 +114,7 @@ This is the Layer 14 Cemu peelback baseline. Do not delete launcher behavior unt
 
 ## Validation status (2026-05-10)
 
+- U6 performance-policy relocation passed a live MangoHud run: `/storage/.guest/runs/20260510-230455-u6-sm8550-performance-helper-mangohud`. The run uses `cemu-sm8550-performance.sh` for CPU/GPU/affinity policy while keeping the package entry generic; post-pin CSV stats were avg 43.92 / median 44.96 / p10 34.67 FPS with CPU/GPU unrestricted and affinity `0xF8`.
 - U5 storage-adapter peelback passed a live MangoHud run: `/storage/.guest/runs/20260510-225813-u5-storage-adapter-mangohud-unrestricted`. The run used the package-owned entry point through `start_cemu_guest.sh`, logged `cemu_storage_adapter=ok`, preserved existing settings/saves/keys paths before/after, and recorded MangoHud CSV stats around avg 48.50 / median 45.01 / p10 44.55 FPS early in-game with CPU/GPU unrestricted.
 - Promoted Nix Cemu (`/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/Cemu`) runs BOTW 540p-45 through native Nix Mesa/Freedreno at host-like performance: live ~40-45 FPS, MangoHud median ~40 FPS after warmup.
 - Same-session host control (`/usr/bin/cemu`, ROCKNIX Mesa 26.0.6) matches once it is pinned to the same big-core affinity. A false ~25 FPS host result was traced to unpinned lowercase `cemu`, not to graphics-driver passthrough.

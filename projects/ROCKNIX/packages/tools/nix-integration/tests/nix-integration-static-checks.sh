@@ -573,6 +573,7 @@ for launcher in \
   host-tune.sh \
   launch-host-cemu-through-guest-display.sh \
   cemu-storage-adapter.sh \
+  cemu-sm8550-performance.sh \
   start_cemu_guest.sh \
   start_cemu_guest_candidate.sh \
   start_cemu_guest_gamescope.sh \
@@ -598,6 +599,18 @@ grep -q 'XDG_DATA_HOME' "${PKG_DIR}/guest/launchers/cemu-storage-adapter.sh" \
   || fail "cemu-storage-adapter.sh must derive Cemu data paths from guest XDG_DATA_HOME"
 grep -q 'CEMU_BIOS_ROOT = "/storage/roms/bios/cemu"' "${PKG_DIR}/guest/profiles/main-space.nix" \
   || fail "main-space session must own the temporary Cemu BIOS compatibility root"
+grep -q 'CEMU_AFFINITY_MASK = "0xF8"' "${PKG_DIR}/guest/profiles/main-space.nix" \
+  || fail "main-space session must own the measured SM8550 Cemu affinity default"
+grep -q 'cemu-sm8550-performance.sh' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
+  || fail "botw-guest.sh must delegate SM8550 performance policy to cemu-sm8550-performance.sh"
+! grep -q 'P3_MAX=\|GPU_MIN=\|taskset -p' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
+  || fail "botw-guest.sh must not own CPU/GPU/affinity policy directly"
+grep -q '540p-45).*P3_MAX=2803200; P7_MAX=2956800; GPU_MIN=680000000; GPU_MAX=680000000' "${PKG_DIR}/guest/launchers/cemu-sm8550-performance.sh" \
+  || fail "cemu-sm8550-performance.sh must own unrestricted high-FPS SM8550 policy"
+grep -q 'AFFINITY_MASK="${CEMU_AFFINITY_MASK:-0xF8}"' "${PKG_DIR}/guest/launchers/cemu-sm8550-performance.sh" \
+  || fail "cemu-sm8550-performance.sh must own default Cemu big-core affinity policy"
+grep -q 'temporary host adapter' "${PKG_DIR}/guest/launchers/host-tune.sh" \
+  || fail "host-tune.sh must document its temporary host-adapter status"
 for env_name in XDG_RUNTIME_DIR WAYLAND_DISPLAY SDL_AUDIODRIVER HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME; do
   grep -q "${env_name} =" "${PKG_DIR}/guest/profiles/main-space.nix" \
     || fail "main-space sway session must own ${env_name} for guest-launched apps"
@@ -608,10 +621,6 @@ done
   || fail "botw-guest.sh must not require GNU sed -z or Python; guest launch profile carries Perl"
 grep -q 'perl -0pi' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
   || fail "botw-guest.sh must use a guest-available whole-file mutator for settings.xml"
-grep -q 'P3_MAX=2803200; *P7_MAX=2956800' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
-  || fail "high-FPS BOTW validation profile must keep CPU unrestricted"
-grep -q 'GPU_MIN=680000000; *GPU_MAX=680000000' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
-  || fail "high-FPS BOTW validation profile must keep GPU pinned to max"
 for bind_path in \
   '--bind=/storage/.config/Cemu:/storage/.config/Cemu' \
   '--bind=/storage/.config/MangoHud:/storage/.config/MangoHud' \
