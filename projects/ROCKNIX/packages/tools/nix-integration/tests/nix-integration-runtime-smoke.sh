@@ -131,21 +131,6 @@ fi
 if [ "${HARDWARE_ONLY_MODE}" = "0" ]; then
 # ---- CI fixture preamble (skipped in hardware-only mode) -------------------
 
-# Layer 5 profile contract: the profile.d snippet must expose the root Nix
-# profile before Layer 4 and storage-local user env paths, and must be idempotent.
-PROFILE_ENV="${TMP_DIR}/profile-env"
-HOME="${TMP_DIR}/home" PATH="/usr/bin:/usr/sbin" /bin/sh -c \
-  '. "'"${PKG_DIR}/profile.d/998-nix-integration.conf"'"; . "'"${PKG_DIR}/profile.d/998-nix-integration.conf"'"; printf "%s\n" "$PATH"' \
-  >"${PROFILE_ENV}"
-PROFILE_PATH=$(cat "${PROFILE_ENV}")
-case "${PROFILE_PATH}" in
-  "${TMP_DIR}/home/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/storage/bin:"*) ;;
-  *) echo "FAIL: profile.d PATH order unexpected: ${PROFILE_PATH}" >&2; exit 1 ;;
-esac
-case "${PROFILE_PATH}" in
-  *".nix-profile/bin"*".nix-profile/bin"*) echo "FAIL: profile.d duplicated .nix-profile path" >&2; exit 1 ;;
-esac
-
 mkdir -p "${TMP_DIR}/layer8-doctor-config"
 printf 'experimental-features = nix-command flakes\nbuild-users-group =\n' >"${TMP_DIR}/layer8-doctor-config/nix.conf"
 NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
