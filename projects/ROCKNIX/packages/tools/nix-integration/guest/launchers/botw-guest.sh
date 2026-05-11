@@ -45,6 +45,14 @@ mkdir -p "$LOG_DIR"
 # GPU_MIN/MAX (kHz, blank = leave alone)
 # GPU_GOV    = simple_ondemand or performance
 
+write_sysfs() {
+  path="$1"
+  value="$2"
+  [ -e "$path" ] || return 0
+  [ -w "$path" ] || return 0
+  printf '%s\n' "$value" > "$path" 2>/dev/null || true
+}
+
 case "$PROFILE" in
   potato-30)
     RES="640x360";        FPS_LIMIT="30FPS Limit"; FRAMERATE="30FPS (ideal for 240/120/60Hz displays)"
@@ -130,12 +138,12 @@ fi
 
 # ---- CPU / GPU governors ----
 if [ -d "$P3" ]; then
-  echo schedutil > "$P3/scaling_governor" 2>/dev/null || echo ondemand > "$P3/scaling_governor" 2>/dev/null || true
-  echo "$P3_MAX" > "$P3/scaling_max_freq" 2>/dev/null || true
+  write_sysfs "$P3/scaling_governor" schedutil
+  write_sysfs "$P3/scaling_max_freq" "$P3_MAX"
 fi
 if [ -d "$P7" ]; then
-  echo schedutil > "$P7/scaling_governor" 2>/dev/null || echo ondemand > "$P7/scaling_governor" 2>/dev/null || true
-  echo "$P7_MAX" > "$P7/scaling_max_freq" 2>/dev/null || true
+  write_sysfs "$P7/scaling_governor" schedutil
+  write_sysfs "$P7/scaling_max_freq" "$P7_MAX"
 fi
 # GPU sysfs is bind-mounted but read-only inside nspawn (sysfs RO by
 # default). Writes here always fail. The companion script
@@ -145,9 +153,9 @@ fi
 # We still attempt the writes here so the values land if anything
 # changes the bind in the future -- but failures are silent.
 if [ -d "$GPU" ]; then
-  echo "$GPU_GOV" > "$GPU/governor" 2>/dev/null || true
-  [ -n "$GPU_MIN" ] && echo "$GPU_MIN" > "$GPU/min_freq" 2>/dev/null || true
-  [ -n "$GPU_MAX" ] && echo "$GPU_MAX" > "$GPU/max_freq" 2>/dev/null || true
+  write_sysfs "$GPU/governor" "$GPU_GOV"
+  [ -n "$GPU_MIN" ] && write_sysfs "$GPU/min_freq" "$GPU_MIN"
+  [ -n "$GPU_MAX" ] && write_sysfs "$GPU/max_freq" "$GPU_MAX"
 fi
 
 # ---- launch via swaymsg so cemu inherits sway's wayland env ----
@@ -181,8 +189,8 @@ if [ -n "${CEMU_PID:-}" ] && [ -d "/proc/$CEMU_PID/task" ]; then
     done
   fi
   # Reassert max freqs in case kernel scaled them back during launch.
-  [ -d "$P3" ] && echo "$P3_MAX" > "$P3/scaling_max_freq" 2>/dev/null || true
-  [ -d "$P7" ] && echo "$P7_MAX" > "$P7/scaling_max_freq" 2>/dev/null || true
+  [ -d "$P3" ] && write_sysfs "$P3/scaling_max_freq" "$P3_MAX"
+  [ -d "$P7" ] && write_sysfs "$P7/scaling_max_freq" "$P7_MAX"
 fi
 
 echo "[$(date)] BOTW $PROFILE launched. Cemu PID: ${CEMU_PID:-none}. Log: $LOG" | tee -a "$LOG"
