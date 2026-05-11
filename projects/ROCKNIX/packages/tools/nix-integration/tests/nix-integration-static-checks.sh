@@ -581,8 +581,8 @@ for launcher in \
   start_cemu_guest_rocknixmesa.sh; do
   check_script "${PKG_DIR}/guest/launchers/${launcher}"
 done
-grep -q 'nix-sm8550.url = "git+ssh://git@github.com/simonwjackson/nix-sm8550.git?ref=feat/rocknix-cemu-monorepo"' "${PKG_DIR}/guest/flake.nix" \
-  || fail "guest flake must consume the external private nix-sm8550 package repo over SSH while PR #1 is under review"
+grep -q 'nix-sm8550.url = "github:simonwjackson/nix-sm8550/feat/rocknix-cemu-monorepo"' "${PKG_DIR}/guest/flake.nix" \
+  || fail "guest flake must consume the external public nix-sm8550 package repo while PR #1 is under review"
 grep -q 'nix.registry.nix-sm8550.flake = nix-sm8550' "${PKG_DIR}/guest/flake.nix" \
   || fail "main-space guest must expose nix-sm8550 in the Nix registry"
 grep -q 'nix-sm8550.packages.${targetSystem}.cemu' "${PKG_DIR}/guest/flake.nix" \

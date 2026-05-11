@@ -6,7 +6,7 @@
     # External package-only monorepo for SM8550 emulator packages. Keep the
     # branch pin until https://github.com/simonwjackson/nix-sm8550/pull/1 is
     # reviewed/merged, then collapse this to github:simonwjackson/nix-sm8550.
-    nix-sm8550.url = "git+ssh://git@github.com/simonwjackson/nix-sm8550.git?ref=feat/rocknix-cemu-monorepo";
+    nix-sm8550.url = "github:simonwjackson/nix-sm8550/feat/rocknix-cemu-monorepo";
   };
 
   outputs = { self, nixpkgs, nix-sm8550 }:

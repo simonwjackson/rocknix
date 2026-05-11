@@ -8,16 +8,16 @@
       "locked": {
         "lastModified": 1778470822,
         "narHash": "sha256-jytCr6hAHduGLXf2LRFLPBMUKdoOGEcEkyVZ4Ndw6dg=",
-        "ref": "feat/rocknix-cemu-monorepo",
+        "owner": "simonwjackson",
+        "repo": "nix-sm8550",
         "rev": "3d6ec95a183680e96c992f6de0ec2c9673178181",
-        "revCount": 5,
-        "type": "git",
-        "url": "ssh://git@github.com/simonwjackson/nix-sm8550.git"
+        "type": "github"
       },
       "original": {
+        "owner": "simonwjackson",
         "ref": "feat/rocknix-cemu-monorepo",
-        "type": "git",
-        "url": "ssh://git@github.com/simonwjackson/nix-sm8550.git"
+        "repo": "nix-sm8550",
+        "type": "github"
       }
     },
     "nixpkgs": {
