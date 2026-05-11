@@ -166,8 +166,13 @@ export WAYLAND_DISPLAY=wayland-1
 # DSI-2 by sway's default placement; focus it before exec.
 SOCK=$(ls "$XDG_RUNTIME_DIR"/sway-ipc.0.*.sock 2>/dev/null | head -1 || true)
 if [ -n "$SOCK" ]; then
-  SWAYSOCK="$SOCK" swaymsg "focus output DSI-2" >/dev/null 2>&1 || true
-  SWAYSOCK="$SOCK" swaymsg "exec /storage/.guest/start_cemu_guest.sh '$ROM'" >/dev/null
+  if command -v timeout >/dev/null 2>&1; then
+    SWAYSOCK="$SOCK" timeout 5s swaymsg "focus output DSI-2" >/dev/null 2>&1 || true
+    SWAYSOCK="$SOCK" timeout 5s swaymsg "exec /storage/.guest/start_cemu_guest.sh '$ROM'" >/dev/null 2>&1 || true
+  else
+    SWAYSOCK="$SOCK" swaymsg "focus output DSI-2" >/dev/null 2>&1 || true
+    SWAYSOCK="$SOCK" swaymsg "exec /storage/.guest/start_cemu_guest.sh '$ROM'" >/dev/null 2>&1 || true
+  fi
 fi
 
 # Wait until cemu has spawned, then optionally pin its threads. Default
