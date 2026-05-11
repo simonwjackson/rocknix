@@ -19,6 +19,18 @@ NIX_DAEMON_BUILD_USER_COUNT="${NIX_DAEMON_BUILD_USER_COUNT:-10}"
 # Layer 14 thin-host main-space build flag. SM8550-only.
 THIN_HOST="${THIN_HOST:-no}"
 
+# Pinned source of the Nix main-space guest. The host repo carries
+# only the bootstrap plumbing for the guest; the guest itself lives in
+# https://github.com/simonwjackson/rocknix-nix-guest and is fetched
+# from a pinned commit at build time. Bump PKG_NIX_GUEST_REV (and the
+# accompanying SHA256 of the GitHub-rendered tarball) to roll the host
+# to a newer guest release. The closure layout dropped into
+# /usr/lib/nix-integration/guest/ remains byte-identical to the old
+# in-tree guest/ subtree -- only the source of truth moved.
+PKG_NIX_GUEST_REV="513cd87bbe52c26eba53417c6555105ea8531c00"
+PKG_NIX_GUEST_SHA256="346db935d22bd27f065e7885df0cd198c2d0aac3441fc19c5ee1ccf9c67d298d"
+PKG_NIX_GUEST_URL="https://github.com/simonwjackson/rocknix-nix-guest/archive/${PKG_NIX_GUEST_REV}.tar.gz"
+
 post_install() {
   # Layer 14 hard guard: THIN_HOST=yes is SM8550-only. Other devices
   # do not have the validated guest closure (Tier A-E spike series
@@ -57,8 +69,34 @@ post_install() {
   mkdir -p ${INSTALL}/usr/lib/nix-integration/modules
   cp -PR ${PKG_DIR}/modules/. ${INSTALL}/usr/lib/nix-integration/modules/
 
+  # Fetch the pinned rocknix-nix-guest source and stage it under
+  # /usr/lib/nix-integration/guest/. Cached under ${SOURCES}/ so
+  # repeat builds (and the fast-iter image-only workflow) hit the
+  # cache instead of GitHub. SHA256 verification is mandatory.
+  guest_tarball="${SOURCES}/rocknix-nix-guest/rocknix-nix-guest-${PKG_NIX_GUEST_REV}.tar.gz"
+  if [ ! -f "${guest_tarball}" ]; then
+    mkdir -p "$(dirname "${guest_tarball}")"
+    echo "nix-integration: fetching rocknix-nix-guest ${PKG_NIX_GUEST_REV}"
+    curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
+         --output "${guest_tarball}.tmp" "${PKG_NIX_GUEST_URL}"
+    actual_sha="$(sha256sum "${guest_tarball}.tmp" | awk '{print $1}')"
+    if [ "${actual_sha}" != "${PKG_NIX_GUEST_SHA256}" ]; then
+      echo "nix-integration: rocknix-nix-guest tarball SHA256 mismatch" >&2
+      echo "  expected: ${PKG_NIX_GUEST_SHA256}" >&2
+      echo "  actual:   ${actual_sha}" >&2
+      rm -f "${guest_tarball}.tmp"
+      exit 1
+    fi
+    mv "${guest_tarball}.tmp" "${guest_tarball}"
+  fi
+
+  guest_extract="${PKG_BUILD}/.rocknix-nix-guest"
+  rm -rf "${guest_extract}"
+  mkdir -p "${guest_extract}"
+  tar -xzf "${guest_tarball}" -C "${guest_extract}" --strip-components=1
+
   mkdir -p ${INSTALL}/usr/lib/nix-integration/guest
-  cp -PR ${PKG_DIR}/guest/. ${INSTALL}/usr/lib/nix-integration/guest/
+  cp -PR "${guest_extract}/." ${INSTALL}/usr/lib/nix-integration/guest/
 
   mkdir -p ${INSTALL}/usr/lib/nix-integration/docs
   cp ${PKG_DIR}/docs/layer14-main-space-contract.md ${INSTALL}/usr/lib/nix-integration/docs/
