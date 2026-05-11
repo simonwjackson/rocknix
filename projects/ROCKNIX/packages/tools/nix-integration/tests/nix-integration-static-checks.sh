@@ -591,6 +591,10 @@ for env_name in XDG_RUNTIME_DIR WAYLAND_DISPLAY SDL_AUDIODRIVER HOME XDG_CONFIG_
 done
 ! grep -q '^export \(SDL_AUDIODRIVER\|WAYLAND_DISPLAY\|XDG_RUNTIME_DIR\|HOME\|XDG_CONFIG_HOME\|XDG_DATA_HOME\|XDG_CACHE_HOME\)=' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
   || fail "start_cemu_guest.sh must not manufacture generic session display/audio/XDG defaults"
+! grep -q 'sed -z\|python3' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
+  || fail "botw-guest.sh must not require GNU sed -z or Python; guest launch profile carries Perl"
+grep -q 'perl -0pi' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
+  || fail "botw-guest.sh must use a guest-available whole-file mutator for settings.xml"
 grep -q 'P3_MAX=2803200; *P7_MAX=2956800' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
   || fail "high-FPS BOTW validation profile must keep CPU unrestricted"
 grep -q 'GPU_MIN=680000000; *GPU_MAX=680000000' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
