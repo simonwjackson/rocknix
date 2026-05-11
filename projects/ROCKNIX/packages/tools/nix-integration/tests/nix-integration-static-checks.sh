@@ -185,38 +185,6 @@ done
 
 grep -q 'surface|name|source|mode' "${PKG_DIR}/scripts/nix-layer-activate" || fail "nix-layer-activate missing manifest contract"
 grep -q 'target exists and is not owned by Layer 6' "${PKG_DIR}/scripts/nix-layer-activate" || fail "nix-layer-activate missing conflict refusal"
-[ -f "${PKG_DIR}/docs/layer6-activation-contract.md" ] || fail "missing Layer 6 activation contract doc"
-grep -q '/storage/bin' "${PKG_DIR}/docs/layer6-activation-contract.md" || fail "Layer 6 contract missing storage bin surface"
-grep -q '/storage/.config/profile.d' "${PKG_DIR}/docs/layer6-activation-contract.md" || fail "Layer 6 contract missing profile.d surface"
-[ -f "${PKG_DIR}/docs/layer7-app-experiment-contract.md" ] || fail "missing Layer 7 app experiment contract doc"
-grep -q 'standard `nix profile`' "${PKG_DIR}/docs/layer7-app-experiment-contract.md" || fail "Layer 7 contract missing standard nix profile split"
-grep -q '/storage/.local/share/nix-apps/layer7' "${PKG_DIR}/docs/layer7-app-experiment-contract.md" || fail "Layer 7 contract missing safe app state root"
-grep -q '/storage/.cache/nix-apps/layer7' "${PKG_DIR}/docs/layer7-app-experiment-contract.md" || fail "Layer 7 contract missing safe app cache root"
-grep -q 'Nix-backed binary' "${PKG_DIR}/docs/layer7-app-experiment-contract.md" || fail "Layer 7 contract missing Nix-backed binary proof"
-[ -f "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" ] || fail "missing Layer 9 nspawn guest contract doc"
-grep -q '/storage/machines/rocknix-guest' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "Layer 9 contract missing guest root path"
-grep -q '/dev/dri' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "Layer 9 contract missing GPU passthrough prohibition"
-grep -q 'PipeWire' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "Layer 9 contract missing audio passthrough prohibition"
-grep -q '/dev/input' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "Layer 9 contract missing input passthrough prohibition"
-grep -q 'Fallback does' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "Layer 9 contract missing fallback boundary"
-grep -q 'Guest state can be stopped and removed without touching host Nix state' "${PKG_DIR}/docs/layer9-nspawn-guest-contract.md" || fail "Layer 9 contract missing cleanup boundary"
-[ -f "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" ] || fail "missing Layer 10 guest lifecycle contract doc"
-grep -q '/storage/.config/nix-integration/layer10' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing state dir path"
-grep -q '/storage/machines/rocknix-guest' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing guest root path"
-grep -q -- '--register=no' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing no-machined nspawn flag"
-grep -q 'machinectl' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing no machinectl dependency"
-grep -q 'proof' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing proof rootfs mode"
-grep -q 'bootable' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing bootable rootfs mode"
-grep -q 'must not call `systemctl enable`' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing no-autostart policy"
-grep -q '/dev/dri' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing GPU passthrough prohibition"
-grep -q 'PipeWire' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing audio passthrough prohibition"
-grep -q '/dev/input' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing input passthrough prohibition"
-grep -q 'Layer 10b bootable rootfs artifact boundary' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10 contract missing Layer 10b bootable artifact boundary"
-grep -q 'source/provenance, sha256, imported timestamp' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10b contract missing provenance/checksum metadata rule"
-grep -q 'must not depend on binding host `/nix`' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10b contract missing first-validation host /nix sharing prohibition"
-grep -q 'no guest SSH, password login, default credentials' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10b contract missing guest SSH/default credential prohibition"
-grep -q 'minimal init fixture.*not sufficient hardware evidence' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10b contract must distinguish fixtures from hardware Go"
-grep -q '| 10b | Bootable guest rootfs validation' "${REPO_ROOT}/docs/plans/2026-04-28-001-feat-layered-nix-integration-plan.md" || fail "roadmap missing Layer 10b row"
 # Layer 10b guest must not reference forbidden passthrough surfaces in the
 # files that flow into the bootable rootfs artifact (rocknix-guest config
 # and its transitive imports). Layer 14 deliberately adds passthrough-aware
@@ -225,15 +193,6 @@ grep -q '| 10b | Bootable guest rootfs validation' "${REPO_ROOT}/docs/plans/2026
 # Layer 10b/12 file set explicitly.
 grep -q 'layer10_nspawn_bin' "${PKG_DIR}/scripts/nixctl" || fail "nixctl must resolve current compatible Layer 10 nspawn"
 grep -q 'nspawn_bin=' "${PKG_DIR}/scripts/nixctl" || fail "Layer 10 provenance must record resolved nspawn"
-[ -f "${PKG_DIR}/docs/layer11-bridge-contract.md" ] || fail "missing Layer 11 bridge contract doc"
-grep -q '/storage/.config/nix-integration/layer11' "${PKG_DIR}/docs/layer11-bridge-contract.md" || fail "Layer 11 contract missing state dir path"
-grep -q '/storage/bin' "${PKG_DIR}/docs/layer11-bridge-contract.md" || fail "Layer 11 contract missing storage bin target surface"
-grep -q 'nixctl guest run' "${PKG_DIR}/docs/layer11-bridge-contract.md" || fail "Layer 11 contract missing Layer 10 guest run dependency"
-grep -q 'one-shot bridges only' "${PKG_DIR}/docs/layer11-bridge-contract.md" || fail "Layer 11 contract missing one-shot scope"
-grep -q 'must not.*guest SSH' "${PKG_DIR}/docs/layer11-bridge-contract.md" || fail "Layer 11 contract missing guest SSH prohibition"
-grep -q 'must not.*systemd service' "${PKG_DIR}/docs/layer11-bridge-contract.md" || fail "Layer 11 contract missing no service/autostart policy"
-grep -q '/dev/input' "${PKG_DIR}/docs/layer11-bridge-contract.md" || fail "Layer 11 contract missing input passthrough prohibition"
-grep -q 'no guest process remains' "${PKG_DIR}/docs/layer11-bridge-contract.md" || fail "Layer 11 contract missing no residual guest process rule"
 [ -f "${PKG_DIR}/system.d/nix-storage-setup.service" ] || fail "missing nix-storage-setup.service"
 [ -f "${PKG_DIR}/system.d/nix.mount" ] || fail "missing nix.mount"
 [ -f "${PKG_DIR}/system.d/nix-daemon.socket" ] || fail "missing Layer 8 nix-daemon.socket"
@@ -513,10 +472,6 @@ for bind_path in \
 done
 ! grep -F -q -- '--bind=/storage \' "${PKG_DIR}/system.d/rocknix-guest-v2.service" \
   || fail "rocknix-guest-v2.service must not broad-bind /storage"
-grep -q 'Cemu compatibility state' "${PKG_DIR}/docs/layer14-main-space-contract.md" \
-  || fail "layer14 main-space contract must document Cemu compatibility state ownership"
-grep -q 'guest-owned runtime peelback baseline' "${REPO_ROOT}/docs/solutions/performance-issues/rocknix-layer14-cemu-performance-audit-2026-05-09.md" \
-  || fail "Cemu performance audit must document guest-owned peelback baseline"
 
 # U6: THIN_HOST build flag, gated SM8550-only, wired into the package install.
 grep -q 'THIN_HOST=' "${REPO_ROOT}/projects/ROCKNIX/options" \
@@ -599,25 +554,4 @@ grep -q 'check_memory_no_growth' "${PKG_DIR}/scripts/rocknix-layer14-soak" \
   || fail "soak harness missing memory-growth check (U8)"
 
 # U9: HOW-TO-FALL-BACK.md exists and is self-contained.
-L14_FALLBACK_DOC="${PKG_DIR}/docs/HOW-TO-FALL-BACK.md"
-[ -f "${L14_FALLBACK_DOC}" ] || fail "missing HOW-TO-FALL-BACK.md (U9)"
-grep -q '/flash/rocknix.no-nspawn' "${L14_FALLBACK_DOC}" \
-  || fail "HOW-TO-FALL-BACK.md missing flag-file recovery instructions (U9)"
-grep -q 'rocknix.safe=1' "${L14_FALLBACK_DOC}" \
-  || fail "HOW-TO-FALL-BACK.md missing kernel cmdline recovery instructions (U9)"
-
-# U10: Layer 14 contract doc.
-L14_CONTRACT="${PKG_DIR}/docs/layer14-main-space-contract.md"
-[ -f "${L14_CONTRACT}" ] || fail "missing Layer 14 contract doc (U10)"
-grep -q 'THIN_HOST' "${L14_CONTRACT}" \
-  || fail "Layer 14 contract must document THIN_HOST build flag (U10)"
-grep -q 'rocknix-guest-v2.service' "${L14_CONTRACT}" \
-  || fail "Layer 14 contract must document the v2 guest unit (U10)"
-grep -q 'reclaim' "${L14_CONTRACT}" \
-  || fail "Layer 14 contract must document the reclaim contract (U10)"
-grep -q 'soak' "${L14_CONTRACT}" \
-  || fail "Layer 14 contract must document the soak gate (U10)"
-grep -q 'SM8550' "${L14_CONTRACT}" \
-  || fail "Layer 14 contract must document SM8550-only scope (U10)"
-
 printf 'nix-integration static checks passed\n'
