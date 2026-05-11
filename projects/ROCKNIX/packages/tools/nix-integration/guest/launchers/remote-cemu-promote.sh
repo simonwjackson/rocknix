@@ -18,10 +18,11 @@ log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 
 usage() {
   cat >&2 <<EOF
-usage: remote-cemu-promote.sh /nix/store/...-cemu-rocknix-package-.../bin/Cemu
+usage: remote-cemu-promote.sh /nix/store/...-cemu-rocknix-package-.../bin/cemu
+       remote-cemu-promote.sh /nix/store/...-cemu-rocknix-package-.../bin/Cemu
 
-The closure must already be imported into the guest store. The promoted path is:
-  ${PROMOTED_PROFILE}/bin/Cemu
+The closure must already be imported into the guest store. The promoted package-owned entry point is:
+  ${PROMOTED_PROFILE}/bin/cemu
 EOF
 }
 
@@ -59,13 +60,15 @@ out=\$(dirname \"\$(dirname \"\$real\")\")
 [ -f \"\$out/nix-support/rocknix-cemu-build/vulkan-loader-lib-path\" ] || { echo \"direct Cemu output lacks vulkan-loader-lib-path evidence: \$out\" >&2; exit 3; }
 mkdir -p \"\$(dirname \"\$profile\")\"
 nix profile install --profile \"\$profile\" \"\$out\"
-[ -x \"\$profile/bin/Cemu\" ] || { echo \"promotion did not produce \$profile/bin/Cemu\" >&2; exit 4; }
-promoted_real=\$(readlink -f \"\$profile/bin/Cemu\" 2>/dev/null || true)
+[ -x \"\$profile/bin/cemu\" ] || { echo \"promotion did not produce package entry point \$profile/bin/cemu\" >&2; exit 4; }
+[ -x \"\$profile/bin/Cemu\" ] || { echo \"promotion did not produce compatibility binary \$profile/bin/Cemu\" >&2; exit 4; }
+promoted_real=\$(readlink -f \"\$profile/bin/cemu\" 2>/dev/null || true)
 printf '%s\n' \
   \"profile=\$profile\" \
-  \"cemu=\$profile/bin/Cemu\" \
+  \"cemu=\$profile/bin/cemu\" \
+  \"compat_cemu=\$profile/bin/Cemu\" \
   \"source=\$out\" \
   \"real=\$promoted_real\" \
   \"vulkan_loader_lib_path=\$(cat \"\$out/nix-support/rocknix-cemu-build/vulkan-loader-lib-path\")\"
 "
-log "promotion complete: ${PROMOTED_PROFILE}/bin/Cemu"
+log "promotion complete: ${PROMOTED_PROFILE}/bin/cemu"

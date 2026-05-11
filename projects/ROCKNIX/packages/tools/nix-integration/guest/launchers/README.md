@@ -9,7 +9,7 @@ or host Cemu binaries.
 
 | Script | Role |
 |---|---|
-| `start_cemu_guest.sh` | Compatibility launcher. Selects promoted/override Cemu, verifies package metadata, requires guest-session env, delegates user-data layout to `cemu-storage-adapter.sh`, then execs Cemu fullscreen with the requested ROM. |
+| `start_cemu_guest.sh` | Thin compatibility launcher. Selects promoted/override Cemu, normalizes real-binary overrides back to package-owned `bin/cemu` when available, requires guest-session env, delegates user-data layout to `cemu-storage-adapter.sh`, then execs Cemu fullscreen with the requested ROM. |
 | `cemu-storage-adapter.sh` | Guest-owned `/storage` compatibility adapter. Idempotently preserves existing Cemu settings/saves/keys/MLC layout under XDG paths and `/storage/roms/bios/cemu`; never part of the generic package wrapper. |
 | `cemu-sm8550-performance.sh` | Guest/session-owned SM8550 Cemu performance profile. Applies measured CPU caps, best-effort GPU devfreq policy, and Cemu thread affinity; generic package wrapper never owns this device policy. |
 | `start_cemu_guest_mangohud.sh` | Nix MangoHud wrapper around `start_cemu_guest.sh`. Diagnostic/profile mode only. |
@@ -80,7 +80,7 @@ The helper installs the package output into a dedicated Nix profile/GC root and 
 
 Build-parity diagnostics may override the binary with `CEMU_BIN` via `start_cemu_guest_candidate.sh`; this keeps settings, saves, XDG paths, and logging identical while changing only the Cemu binary under test. Do not use `CEMU_BIN` to point at host `/usr/bin/cemu` as a product path; host binaries are diagnostic controls only and must not become the Layer 14 runtime contract.
 
-The direct ROCKNIX package replica is built as `cemu-rocknix-package` from `guest/flakes/cemu/rocknix-package.nix`. Build it on Fuji or another aarch64 builder, import its closure into the Thor guest store when Thor is back online, fingerprint it, live-test it against same-session host control, then promote it with `remote-cemu-promote.sh` if it passes the parity gate.
+The Cemu package is built as `cemu` from `guest/flakes/cemu/rocknix-package.nix`; `cemu-rocknix-package` is a transitional compatibility alias. Build it on Fuji or another aarch64 builder, import its closure into the Thor guest store when Thor is back online, fingerprint it, live-test it against same-session host control, then promote it with `remote-cemu-promote.sh` if it passes the parity gate.
 
 ## Cemu runtime responsibility map
 
@@ -114,6 +114,7 @@ This is the Layer 14 Cemu peelback baseline. Do not delete launcher behavior unt
 
 ## Validation status (2026-05-10)
 
+- U8 adapter thinning follows once package-owned launch is proven and passed a live MangoHud run: `/storage/.guest/runs/20260510-231352-u8-thin-adapter-mangohud`. `start_cemu_guest.sh` no longer owns Vulkan loader setup, launched requested/binary path `/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/cemu`, and recorded avg 47.26 / median 45.00 / p10 44.47 FPS early in-game.
 - U6 performance-policy relocation passed a live MangoHud run: `/storage/.guest/runs/20260510-230455-u6-sm8550-performance-helper-mangohud`. The run uses `cemu-sm8550-performance.sh` for CPU/GPU/affinity policy while keeping the package entry generic; post-pin CSV stats were avg 43.92 / median 44.96 / p10 34.67 FPS with CPU/GPU unrestricted and affinity `0xF8`.
 - U5 storage-adapter peelback passed a live MangoHud run: `/storage/.guest/runs/20260510-225813-u5-storage-adapter-mangohud-unrestricted`. The run used the package-owned entry point through `start_cemu_guest.sh`, logged `cemu_storage_adapter=ok`, preserved existing settings/saves/keys paths before/after, and recorded MangoHud CSV stats around avg 48.50 / median 45.01 / p10 44.55 FPS early in-game with CPU/GPU unrestricted.
 - Promoted Nix Cemu (`/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/Cemu`) runs BOTW 540p-45 through native Nix Mesa/Freedreno at host-like performance: live ~40-45 FPS, MangoHud median ~40 FPS after warmup.

@@ -12,12 +12,15 @@
     packages = forAllSystems (system: let
       pkgs = nixpkgs.legacyPackages.${system};
       pkgsSdl2Classic = nixpkgs-sdl2-classic.legacyPackages.${system};
-      cemuRocknixPackage = pkgs.callPackage ./rocknix-package.nix {
+      cemu = pkgs.callPackage ./rocknix-package.nix {
         SDL2_classic = pkgsSdl2Classic.SDL2;
       };
     in {
-      default = cemuRocknixPackage;
-      "cemu-rocknix-package" = cemuRocknixPackage;
+      default = cemu;
+      cemu = cemu;
+      # Transitional compatibility alias while launcher docs and existing
+      # promotion scripts finish moving away from the experiment-era name.
+      "cemu-rocknix-package" = cemu;
     });
   };
 }
