@@ -27,8 +27,8 @@ THIN_HOST="${THIN_HOST:-no}"
 # to a newer guest release. The closure layout dropped into
 # /usr/lib/nix-integration/guest/ remains byte-identical to the old
 # in-tree guest/ subtree -- only the source of truth moved.
-PKG_NIX_GUEST_REV="513cd87bbe52c26eba53417c6555105ea8531c00"
-PKG_NIX_GUEST_SHA256="346db935d22bd27f065e7885df0cd198c2d0aac3441fc19c5ee1ccf9c67d298d"
+PKG_NIX_GUEST_REV="9c8b65354bb9558c8a891163f4ddf182642b0367"
+PKG_NIX_GUEST_SHA256="0b5be6020609e31a63bed073a87b7b14cc7e66f7456e7a9002becee5a5f38bb2"
 PKG_NIX_GUEST_URL="https://github.com/simonwjackson/rocknix-nix-guest/archive/${PKG_NIX_GUEST_REV}.tar.gz"
 
 post_install() {
@@ -98,9 +98,11 @@ post_install() {
   mkdir -p ${INSTALL}/usr/lib/nix-integration/guest
   cp -PR "${guest_extract}/." ${INSTALL}/usr/lib/nix-integration/guest/
 
+  # Contract docs are owned by rocknix-nix-guest under docs/contracts/.
+  # Copy the two that the host ships on-image from the fetched tarball.
   mkdir -p ${INSTALL}/usr/lib/nix-integration/docs
-  cp ${PKG_DIR}/docs/layer14-main-space-contract.md ${INSTALL}/usr/lib/nix-integration/docs/
-  cp ${PKG_DIR}/docs/layer14-soak-checklist.md ${INSTALL}/usr/lib/nix-integration/docs/
+  cp "${guest_extract}/docs/contracts/layer14-main-space-contract.md" ${INSTALL}/usr/lib/nix-integration/docs/
+  cp "${guest_extract}/docs/contracts/layer14-soak-checklist.md" ${INSTALL}/usr/lib/nix-integration/docs/
 
   enable_service nix-storage-setup.service
   enable_service nix.mount
@@ -130,11 +132,12 @@ post_install() {
     # default.target would violate the legacy-equivalent contract.
     enable_service rocknix-recovery-toggle.service
 
-    # Ship the recovery readme to /flash/. Built from the in-package
-    # docs/HOW-TO-FALL-BACK.md so a teardown / SD-card reader on
-    # another machine can read it without booting Thor.
+    # Ship the recovery readme to /flash/. Pulled from the fetched
+    # rocknix-nix-guest tarball (docs/contracts/HOW-TO-FALL-BACK.md) so
+    # a teardown / SD-card reader on another machine can read it without
+    # booting Thor.
     mkdir -p ${INSTALL}/flash
-    cp ${PKG_DIR}/docs/HOW-TO-FALL-BACK.md ${INSTALL}/flash/HOW-TO-FALL-BACK.md
+    cp "${guest_extract}/docs/contracts/HOW-TO-FALL-BACK.md" ${INSTALL}/flash/HOW-TO-FALL-BACK.md
   else
     # THIN_HOST=no: scrub the target file that scripts/install's glob
     # copied. The file's mere presence on disk would let any future
