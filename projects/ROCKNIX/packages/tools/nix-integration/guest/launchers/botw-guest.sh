@@ -106,20 +106,21 @@ echo "[$(date)] BOTW profile=$PROFILE res=$RES fps=$FPS_LIMIT framerate=$FRAMERA
 #
 # The XML stores `<category>...</category>` and the matching
 # `<preset>...</preset>` on adjacent lines with indentation between
-# them. Standard sed is line-buffered so `[[:space:]]*` cannot cross
-# the newline. We use `sed -z` (GNU extension) which slurps the
-# whole file as one record so the pattern matches across lines.
+# them. BusyBox sed cannot match across newlines, so use Perl's regex
+# engine to update the whole file as one string.
 if [ -f "$SETTINGS" ]; then
   cp -f "$SETTINGS" "$SETTINGS.bak.$$"
-  sed -zi \
-    -e "s|\(<category>Resolution</category>[[:space:]]*<preset>\)[^<]*\(</preset>\)|\1${RES}\2|" \
-    -e "s|\(<category>FPS Limit</category>[[:space:]]*<preset>\)[^<]*\(</preset>\)|\1${FPS_LIMIT}\2|" \
-    -e "s|\(<category>Framerate Limit</category>[[:space:]]*<preset>\)[^<]*\(</preset>\)|\1${FRAMERATE}\2|" \
-    -e 's|<open_pad>true</open_pad>|<open_pad>false</open_pad>|' \
-    -e 's|<GX2DrawdoneSync>true</GX2DrawdoneSync>|<GX2DrawdoneSync>false</GX2DrawdoneSync>|' \
-    -e 's|<vkAccurateBarriers>true</vkAccurateBarriers>|<vkAccurateBarriers>false</vkAccurateBarriers>|' \
-    -e 's|<VSync>1</VSync>|<VSync>0</VSync>|' \
-    "$SETTINGS"
+  perl -0pi -e '
+    BEGIN { our ($res, $fps_limit, $framerate) = splice @ARGV, 0, 3; }
+    our ($res, $fps_limit, $framerate);
+    s{(<category>Resolution</category>\s*<preset>)[^<]*(</preset>)}{$1$res$2}s;
+    s{(<category>FPS Limit</category>\s*<preset>)[^<]*(</preset>)}{$1$fps_limit$2}s;
+    s{(<category>Framerate Limit</category>\s*<preset>)[^<]*(</preset>)}{$1$framerate$2}s;
+    s{<open_pad>true</open_pad>}{<open_pad>false</open_pad>}g;
+    s{<GX2DrawdoneSync>true</GX2DrawdoneSync>}{<GX2DrawdoneSync>false</GX2DrawdoneSync>}g;
+    s{<vkAccurateBarriers>true</vkAccurateBarriers>}{<vkAccurateBarriers>false</vkAccurateBarriers>}g;
+    s{<VSync>1</VSync>}{<VSync>0</VSync>}g;
+  ' "$RES" "$FPS_LIMIT" "$FRAMERATE" "$SETTINGS"
 
   # Verify the mutation actually took -- if it didn't, abort the
   # launch instead of running cemu with the wrong preset and giving
