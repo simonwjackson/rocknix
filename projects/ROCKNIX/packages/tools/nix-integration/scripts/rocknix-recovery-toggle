@@ -1,0 +1,88 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# Layer 14 recovery toggle script. Invoked by
+# rocknix-recovery-toggle.service before sysinit.target.
+#
+# Decision (OR semantics):
+#   /flash/rocknix.no-nspawn exists      -> recovery (legacy ROCKNIX UI)
+#   rocknix.safe=1 in /proc/cmdline      -> recovery (legacy ROCKNIX UI)
+#   neither                              -> Layer 14 main-space
+#
+# Safety:
+#   - Setting default.target when rocknix-graphical.target doesn't
+#     exist (THIN_HOST=no build) is allowed; systemctl set-default
+#     accepts the symlink swap and the next normal boot will use
+#     graphical.target via the existing chain since there's no
+#     rocknix-graphical.target unit to actually start.
+#   - Setting default.target to graphical.target is always safe.
+#   - This script never reboots; the user (or recovery flow) controls
+#     reboots.
+
+set -u
+
+FLAG_FILE="/flash/rocknix.no-nspawn"
+CMDLINE_FILE="/proc/cmdline"
+NORMAL_TARGET="rocknix-graphical.target"
+# RECOVERY_TARGET must be the legacy entry point that ROCKNIX userland
+# is wired to. essway/sway/rocknix-autostart/etc are WantedBy=rocknix.target,
+# NOT WantedBy=graphical.target. Setting default to graphical.target leaves
+# the device on a blank/login-only screen with no ROCKNIX UI.
+#
+# Validated on Thor 2026-05-08: with default=graphical.target, neither
+# essway nor sway came up; with default=rocknix.target, both became active
+# and the device reached the legacy UI normally.
+RECOVERY_TARGET="rocknix.target"
+LOG_TAG="rocknix-recovery-toggle"
+
+ts() {
+  date -u +%FT%TZ
+}
+
+log() {
+  printf '%s %s: %s\n' "$(ts)" "${LOG_TAG}" "$*"
+}
+
+mode="normal"
+reasons=""
+
+if [ -f "${FLAG_FILE}" ]; then
+  mode="recovery"
+  reasons="${reasons} flag-file"
+fi
+
+if [ -r "${CMDLINE_FILE}" ] && grep -qE '(^| )rocknix\.safe=1( |$)' "${CMDLINE_FILE}"; then
+  mode="recovery"
+  reasons="${reasons} kernel-cmdline"
+fi
+
+if [ "${mode}" = "recovery" ]; then
+  target="${RECOVERY_TARGET}"
+  log "recovery mode (reasons:${reasons}); setting default.target=${target}"
+else
+  target="${NORMAL_TARGET}"
+  log "normal mode; setting default.target=${target}"
+fi
+
+# Refuse to set a non-existent target (catch typos in this script
+# during dev). systemctl will fail-fast on a missing unit file.
+if ! systemctl list-unit-files "${target}" >/dev/null 2>&1; then
+  if [ "${target}" = "${NORMAL_TARGET}" ]; then
+    # THIN_HOST=no build path: rocknix-graphical.target is not shipped.
+    # Fall through to graphical.target which is always present.
+    log "${target} not installed (THIN_HOST=no?); falling back to ${RECOVERY_TARGET}"
+    target="${RECOVERY_TARGET}"
+  else
+    log "FATAL: ${target} not installed; refusing to set default.target"
+    exit 1
+  fi
+fi
+
+if systemctl set-default "${target}" >/dev/null 2>&1; then
+  log "default.target now points to ${target}"
+else
+  log "WARNING: systemctl set-default ${target} failed; boot will use existing default"
+fi
+
+exit 0

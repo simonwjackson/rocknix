@@ -11,12 +11,13 @@ PKG_DEPENDS_TARGET="toolchain libcap kmod util-linux libidn2 Python3:host Jinja2
 PKG_LONGDESC="A system and session manager for Linux, compatible with SysV and LSB init scripts."
 
 NIX_NSPAWN_SUPPORT="${NIX_NSPAWN_SUPPORT:-no}"
+SYSTEMD_DEFAULT_HIERARCHY="${SYSTEMD_DEFAULT_HIERARCHY:-hybrid}"
 
 PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
                        -Drootprefix=/usr \
                        -Dsplit-usr=false \
                        -Dsplit-bin=true \
-                       -Ddefault-hierarchy=hybrid \
+                       -Ddefault-hierarchy=${SYSTEMD_DEFAULT_HIERARCHY} \
                        -Dtty-gid=5 \
                        -Dtests=false \
                        -Dseccomp=false \

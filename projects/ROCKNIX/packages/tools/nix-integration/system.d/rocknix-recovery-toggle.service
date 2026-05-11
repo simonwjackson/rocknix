@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# Layer 14: per-boot recovery override.
+#
+# This oneshot runs before sysinit.target and selects the boot's
+# default.target based on two toggles (OR semantics):
+#   1) /flash/rocknix.no-nspawn flag file (sticky -- survives reboots
+#      until manually rm'd; clearable from a card reader on another
+#      machine without booting Thor)
+#   2) rocknix.safe=1 on the kernel cmdline (per-boot only; clearable
+#      by a normal reboot without touching /flash)
+#
+# Either toggle present -> boot to legacy graphical.target (host sway
+# + essway). Both absent -> boot to rocknix-graphical.target (Layer 14
+# guest).
+#
+# Under THIN_HOST=no this unit is harmless: rocknix-graphical.target
+# does not exist, the "normal" branch's set-default would fail
+# silently, and the device boots to its existing default
+# (graphical.target). That makes this service safe to ship on every
+# build without gating.
+
+[Unit]
+Description=ROCKNIX Layer 14 recovery override (selects default.target per boot)
+Documentation=file:///flash/HOW-TO-FALL-BACK.md
+DefaultDependencies=no
+Before=sysinit.target shutdown.target
+Conflicts=shutdown.target
+
+# Run on every boot. The conditions inside the script decide the action;
+# we cannot use ConditionPathExists here because we want to run when the
+# flag is ABSENT too (to flip back to rocknix-graphical.target after a
+# user rm'd the flag).
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/rocknix-recovery-toggle
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=sysinit.target

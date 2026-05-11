@@ -42,7 +42,7 @@ NIX_LAYER9_GUEST_ROOT="${NIX_LAYER9_GUEST_ROOT:-/storage/machines/rocknix-guest}
 NIX_LAYER9_SKIP_KERNEL_CHECK="${NIX_LAYER9_SKIP_KERNEL_CHECK:-0}"
 NIX_LAYER10_STATE_DIR="${NIX_LAYER10_STATE_DIR:-/storage/.config/nix-integration/layer10}"
 NIX_LAYER10_GUEST_ROOT="${NIX_LAYER10_GUEST_ROOT:-/storage/machines/rocknix-guest}"
-NIX_LAYER10_NSPAWN_BIN="${NIX_LAYER10_NSPAWN_BIN:-${NIX_LAYER9_NSPAWN_BIN}}"
+NIX_LAYER10_NSPAWN_BIN="${NIX_LAYER10_NSPAWN_BIN:-auto}"
 NIX_LAYER10_UNIT_NAME="${NIX_LAYER10_UNIT_NAME:-rocknix-guest.service}"
 NIX_LAYER10_SYSTEMD_DIR="${NIX_LAYER10_SYSTEMD_DIR:-}"
 NIX_LAYER10_SKIP_KERNEL_CHECK="${NIX_LAYER10_SKIP_KERNEL_CHECK:-${NIX_LAYER9_SKIP_KERNEL_CHECK}}"
@@ -52,6 +52,11 @@ NIX_LAYER10_MEMORY_MAX="${NIX_LAYER10_MEMORY_MAX:-1G}"
 NIX_LAYER10_TASKS_MAX="${NIX_LAYER10_TASKS_MAX:-512}"
 NIX_LAYER11_STATE_DIR="${NIX_LAYER11_STATE_DIR:-/storage/.config/nix-integration/layer11}"
 NIX_LAYER11_BIN_DIR="${NIX_LAYER11_BIN_DIR:-/storage/bin}"
+NIX_LAYER12_STATE_DIR="${NIX_LAYER12_STATE_DIR:-/storage/.config/nix-integration/layer12}"
+NIX_LAYER12_DEFAULT_SSH_PORT="${NIX_LAYER12_DEFAULT_SSH_PORT:-2222}"
+NIX_LAYER13_STATE_DIR="${NIX_LAYER13_STATE_DIR:-/storage/.config/nix-integration/layer13}"
+NIX_LAYER13_MODULE_KIT_DIR="${NIX_LAYER13_MODULE_KIT_DIR:-/usr/lib/nix-integration/modules}"
+NIX_LAYER13_HOST_WORKSPACE="${NIX_LAYER13_HOST_WORKSPACE:-/storage/.config/nix-integration/modules/host}"
 CHECK_NETWORK=1
 FAILURES=0
 WARNINGS=0
@@ -346,6 +351,20 @@ layer10_kernel_ready() {
   layer9_kernel_ready
 }
 
+layer10_root_executable() {
+  rel=$1
+  path="${NIX_LAYER10_GUEST_ROOT}/${rel}"
+  [ -x "${path}" ] && return 0
+  if [ -L "${path}" ]; then
+    target=$(readlink "${path}" 2>/dev/null || true)
+    case "${target}" in
+      /nix/store/*) [ -x "${NIX_LAYER10_GUEST_ROOT}${target}" ] && return 0 ;;
+      *) ;;
+    esac
+  fi
+  return 1
+}
+
 layer10_rootfs_mode() {
   if [ ! -e "${NIX_LAYER10_GUEST_ROOT}" ]; then
     echo absent
@@ -355,10 +374,10 @@ layer10_rootfs_mode() {
     echo invalid
     return
   fi
-  if [ -x "${NIX_LAYER10_GUEST_ROOT}/sbin/init" ] || \
-     [ -x "${NIX_LAYER10_GUEST_ROOT}/init" ] || \
-     [ -x "${NIX_LAYER10_GUEST_ROOT}/usr/lib/systemd/systemd" ] || \
-     [ -x "${NIX_LAYER10_GUEST_ROOT}/lib/systemd/systemd" ]; then
+  if layer10_root_executable sbin/init || \
+     layer10_root_executable init || \
+     layer10_root_executable usr/lib/systemd/systemd || \
+     layer10_root_executable lib/systemd/systemd; then
     echo bootable
     return
   fi
@@ -371,6 +390,30 @@ layer10_rootfs_mode() {
   echo invalid
 }
 
+layer10_guest_nspawn_bin() {
+  root=${1:-${NIX_LAYER10_GUEST_ROOT}}
+  for candidate in \
+    "${root}"/run/current-system/sw/bin/systemd-nspawn \
+    "${root}"/nix/store/*systemd*/bin/systemd-nspawn; do
+    [ -x "${candidate}" ] || continue
+    printf '%s\n' "${candidate}"
+    return 0
+  done
+  return 1
+}
+
+layer10_nspawn_bin() {
+  case "${NIX_LAYER10_NSPAWN_BIN}" in
+    auto|'')
+      layer10_guest_nspawn_bin "${NIX_LAYER10_GUEST_ROOT}" && return 0
+      printf '%s\n' "${NIX_LAYER9_NSPAWN_BIN}"
+      ;;
+    *)
+      printf '%s\n' "${NIX_LAYER10_NSPAWN_BIN}"
+      ;;
+  esac
+}
+
 layer10_state_value() {
   if [ -f "${NIX_LAYER10_STATE_DIR}/state" ]; then
     awk 'NR==1 {print; exit}' "${NIX_LAYER10_STATE_DIR}/state"
@@ -379,20 +422,33 @@ layer10_state_value() {
   fi
 }
 
+layer10_unit_active() {
+  systemctl_available || return 1
+  [ "$(systemctl_state "${NIX_LAYER10_UNIT_NAME}")" = "active" ]
+}
+
+layer10_process_running() {
+  have ps || return 1
+  ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${NIX_LAYER10_GUEST_ROOT}" >/dev/null 2>&1
+}
+
 layer10_running() {
-  if systemctl_available; then
-    [ "$(systemctl_state "${NIX_LAYER10_UNIT_NAME}")" = "active" ] && return 0
-  fi
-  if have ps; then
-    ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${NIX_LAYER10_GUEST_ROOT}" >/dev/null 2>&1 && return 0
+  layer10_process_running && return 0
+  if ! have ps; then
+    layer10_unit_active && return 0
   fi
   return 1
 }
 
 layer10_state() {
-  [ -x "${NIX_LAYER10_NSPAWN_BIN}" ] || { echo unsupported; return; }
+  nspawn_bin=$(layer10_nspawn_bin)
+  [ -x "${nspawn_bin}" ] || { echo unsupported; return; }
   layer10_kernel_ready || { echo unsupported; return; }
   layer10_running && { echo running; return; }
+  if have ps && layer10_unit_active; then
+    echo failed
+    return
+  fi
   case "$(layer10_state_value)" in
     running) echo failed; return ;;
     failed|partial) echo failed; return ;;
@@ -407,7 +463,8 @@ layer10_state() {
 }
 
 layer10_eligibility() {
-  [ -x "${NIX_LAYER10_NSPAWN_BIN}" ] || { echo "unsupported: systemd-nspawn missing: ${NIX_LAYER10_NSPAWN_BIN}"; return; }
+  nspawn_bin=$(layer10_nspawn_bin)
+  [ -x "${nspawn_bin}" ] || { echo "unsupported: systemd-nspawn missing: ${nspawn_bin}"; return; }
   layer10_kernel_ready || { echo "unsupported: namespace/cgroup prerequisites missing"; return; }
   case "$(layer10_rootfs_mode)" in
     absent) echo "available: guest root missing: ${NIX_LAYER10_GUEST_ROOT}" ;;
@@ -441,6 +498,81 @@ layer11_eligibility() {
     invalid) echo "unsupported: Layer 10 guest root invalid" ;;
     failed|partial) echo "unsupported: Layer 10 guest state requires cleanup or repair" ;;
     *) echo "unsupported: Layer 10 guest state unknown" ;;
+  esac
+}
+
+
+layer12_service_dir() {
+  echo "${NIX_LAYER12_STATE_DIR}/ssh"
+}
+
+layer12_metadata_file() {
+  echo "$(layer12_service_dir)/metadata"
+}
+
+layer12_metadata_value() {
+  key=$1
+  layer11_metadata_value "${key}" "$(layer12_metadata_file)"
+}
+
+layer12_port_valid() {
+  port=$1
+  case "${port}" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "${port}" -ge 1024 ] 2>/dev/null || return 1
+  [ "${port}" -le 65535 ] 2>/dev/null || return 1
+  [ "${port}" -ne 22 ] 2>/dev/null || return 1
+  return 0
+}
+
+layer12_config_state() {
+  layer12_metadata_value state 2>/dev/null || echo unconfigured
+}
+
+layer12_ssh_port() {
+  layer12_metadata_value port 2>/dev/null || echo "${NIX_LAYER12_DEFAULT_SSH_PORT}"
+}
+
+layer12_authorized_keys() {
+  layer12_metadata_value authorized_keys 2>/dev/null || true
+}
+
+layer12_state() {
+  metadata=$(layer12_metadata_file)
+  [ -f "${metadata}" ] || { echo unconfigured; return; }
+  service=$(layer12_metadata_value service 2>/dev/null || true)
+  [ "${service}" = "ssh" ] || { echo failed; return; }
+  config_state=$(layer12_config_state)
+  case "${config_state}" in
+    disabled) echo disabled; return ;;
+    configured) ;;
+    *) echo failed; return ;;
+  esac
+  port=$(layer12_ssh_port)
+  layer12_port_valid "${port}" || { echo failed; return; }
+  keys=$(layer12_authorized_keys)
+  [ -n "${keys}" ] && [ -s "${keys}" ] || { echo failed; return; }
+  if layer10_running; then
+    echo running
+  elif [ "$(layer10_rootfs_mode)" = "bootable" ] && [ -f "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" ]; then
+    echo ready
+  else
+    echo configured
+  fi
+}
+
+layer12_eligibility() {
+  [ "$(layer10_rootfs_mode)" = "bootable" ] || { echo "unsupported: Layer 12 SSH requires Layer 10b bootable rootfs"; return; }
+  [ -f "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" ] || { echo "unsupported: Layer 12 SSH requires Layer 10b provenance"; return; }
+  grep -q '^sha256=' "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" 2>/dev/null || { echo "unsupported: Layer 10b provenance missing sha256"; return; }
+  state=$(layer12_state)
+  case "${state}" in
+    unconfigured) echo "available: Layer 12 guest SSH can be configured" ;;
+    disabled) echo "available: Layer 12 guest SSH metadata disabled" ;;
+    configured|ready|running) echo "available: Layer 12 guest SSH configured on port $(layer12_ssh_port)" ;;
+    failed) echo "unsupported: Layer 12 guest SSH metadata failed guardrails" ;;
+    *) echo "unsupported: Layer 12 guest SSH state unknown" ;;
   esac
 }
 
@@ -1010,10 +1142,11 @@ check_layer10() {
 
   ok "Layer 10 guest root mode: ${mode}"
 
-  if [ -x "${NIX_LAYER10_NSPAWN_BIN}" ]; then
-    ok "Layer 10 systemd-nspawn binary present: ${NIX_LAYER10_NSPAWN_BIN}"
+  nspawn_bin=$(layer10_nspawn_bin)
+  if [ -x "${nspawn_bin}" ]; then
+    ok "Layer 10 systemd-nspawn binary present: ${nspawn_bin}"
   else
-    warn "Layer 10 systemd-nspawn binary missing: ${NIX_LAYER10_NSPAWN_BIN}"
+    warn "Layer 10 systemd-nspawn binary missing: ${nspawn_bin}"
   fi
 
   if [ -d "${NIX_LAYER10_GUEST_ROOT}" ]; then
@@ -1022,14 +1155,96 @@ check_layer10() {
     ok "Layer 10 guest root absent: ${NIX_LAYER10_GUEST_ROOT}"
   fi
 
+  if [ "${mode}" = "bootable" ]; then
+    provenance="${NIX_LAYER10_STATE_DIR}/rootfs-provenance"
+    if [ -f "${provenance}" ] && grep -q '^sha256=' "${provenance}" 2>/dev/null; then
+      ok "Layer 10 bootable provenance recorded: ${provenance}"
+    else
+      warn "Layer 10 bootable provenance missing: ${provenance}"
+    fi
+  fi
+
   if layer10_running; then
     warn "Layer 10 guest appears to be running"
   else
     ok "Layer 10 guest not running"
+    if have ps && layer10_unit_active; then
+      fail_check "Layer 10 unit is active but no nspawn process references ${NIX_LAYER10_GUEST_ROOT}"
+    fi
   fi
 
   ok "Layer 10 resource policy: CPUWeight=${NIX_LAYER10_CPU_WEIGHT} IOWeight=${NIX_LAYER10_IO_WEIGHT} MemoryMax=${NIX_LAYER10_MEMORY_MAX} TasksMax=${NIX_LAYER10_TASKS_MAX}"
   ok "Layer 10 fallback: host SSH and Layers 4/8 remain the recovery path"
+}
+
+
+check_layer12() {
+  state=$(layer12_state)
+  eligibility=$(layer12_eligibility)
+  metadata=$(layer12_metadata_file)
+
+  ok "Layer 12 guest SSH state: ${state}"
+  ok "Layer 12 guest SSH state dir: ${NIX_LAYER12_STATE_DIR}"
+
+  case "${state}" in
+    unconfigured|disabled|configured|ready)
+      ;;
+    running)
+      warn "Layer 12 guest SSH appears to be running; stop the guest when finished"
+      ;;
+    failed)
+      fail_check "Layer 12 guest SSH metadata failed guardrails: ${metadata}"
+      ;;
+    *)
+      warn "Layer 12 guest SSH state has unexpected value: ${state}"
+      ;;
+  esac
+
+  case "${eligibility}" in
+    available:*) ok "Layer 12 guest SSH eligibility: ${eligibility}" ;;
+    unsupported:*) warn "Layer 12 guest SSH eligibility: ${eligibility}" ;;
+    *) warn "Layer 12 guest SSH eligibility: ${eligibility}" ;;
+  esac
+
+  if [ -f "${metadata}" ]; then
+    service=$(layer12_metadata_value service 2>/dev/null || true)
+    if [ "${service}" = "ssh" ]; then
+      ok "Layer 12 service metadata: ssh"
+    else
+      fail_check "Layer 12 service metadata has unexpected service: ${service:-missing}"
+    fi
+
+    port=$(layer12_ssh_port)
+    if [ "${port}" = "22" ]; then
+      fail_check "Layer 12 guest SSH must not bind host port 22"
+    elif layer12_port_valid "${port}"; then
+      ok "Layer 12 guest SSH port: ${port}"
+    else
+      fail_check "Layer 12 guest SSH port invalid: ${port}"
+    fi
+
+    keys=$(layer12_authorized_keys)
+    if [ -n "${keys}" ] && [ -s "${keys}" ]; then
+      ok "Layer 12 authorized keys present: ${keys}"
+    else
+      fail_check "Layer 12 authorized keys missing or empty: ${keys:-missing}"
+    fi
+
+    if layer12_metadata_value authorized_keys_sha256 >/dev/null 2>&1; then
+      ok "Layer 12 authorized keys checksum recorded"
+    else
+      fail_check "Layer 12 authorized keys checksum missing"
+    fi
+
+    if [ -f "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" ] && grep -q '^sha256=' "${NIX_LAYER10_STATE_DIR}/rootfs-provenance" 2>/dev/null; then
+      ok "Layer 12 Layer 10b provenance dependency recorded"
+    else
+      fail_check "Layer 12 configured without Layer 10b provenance"
+    fi
+  fi
+
+  ok "Layer 12 auth policy: key-only guest SSH; password auth disabled in guest config"
+  ok "Layer 12 fallback: host SSH on port 22 remains the recovery path"
 }
 
 check_layer11() {
@@ -1081,6 +1296,44 @@ check_layer11() {
   ok "Layer 11 fallback: host SSH remains the recovery path; bridges must leave Layer 10 stopped"
 }
 
+check_layer13() {
+  state=inactive
+  [ -f "${NIX_LAYER13_STATE_DIR}/state" ] && state=$(awk 'NR==1 {print; exit}' "${NIX_LAYER13_STATE_DIR}/state")
+  ok "Layer 13 module state: ${state}"
+  ok "Layer 13 module state dir: ${NIX_LAYER13_STATE_DIR}"
+  if [ -d "${NIX_LAYER13_MODULE_KIT_DIR}" ]; then
+    ok "Layer 13 module kit present: ${NIX_LAYER13_MODULE_KIT_DIR}"
+  else
+    warn "Layer 13 module kit missing: ${NIX_LAYER13_MODULE_KIT_DIR}"
+  fi
+  if [ -d "${NIX_LAYER13_HOST_WORKSPACE}" ]; then
+    ok "Layer 13 host module workspace present: ${NIX_LAYER13_HOST_WORKSPACE}"
+  else
+    warn "Layer 13 host module workspace not initialized: ${NIX_LAYER13_HOST_WORKSPACE}"
+  fi
+  if [ "${state}" = "active" ]; then
+    [ -f "${NIX_LAYER13_STATE_DIR}/active-manifest" ] || fail_check "Layer 13 active state missing active manifest"
+    if [ -f "${NIX_LAYER13_STATE_DIR}/active-manifest" ]; then
+      while IFS='|' read -r kind a b c d rest; do
+        [ -n "${kind}" ] || continue
+        case "${kind}" in
+          file)
+            case "${a}" in
+              bin) target="/storage/bin/${b}" ;;
+              profile.d) target="/storage/.config/profile.d/${b}" ;;
+              *) target="" ;;
+            esac
+            [ -n "${target}" ] && [ -e "${target}" ] && ok "Layer 13 module file present: ${target}" || warn "Layer 13 module file missing: ${target:-${a}/${b}}"
+            ;;
+          bridge) [ -x "${NIX_LAYER11_BIN_DIR}/${a}" ] && ok "Layer 13 module bridge present: ${a}" || warn "Layer 13 module bridge missing: ${a}" ;;
+          guest-ssh) ok "Layer 13 module declares guest SSH on port ${a}" ;;
+        esac
+      done <"${NIX_LAYER13_STATE_DIR}/active-manifest"
+    fi
+  fi
+  ok "Layer 13 fallback: modules are storage-scoped and do not replace host SSH"
+}
+
 check_network() {
   if [ "${CHECK_NETWORK}" -eq 0 ]; then
     warn "network checks skipped"
@@ -1117,6 +1370,8 @@ check_layer8
 check_layer9
 check_layer10
 check_layer11
+check_layer12
+check_layer13
 
 if [ "${FAILURES}" -eq 0 ]; then
   echo "nix-doctor: passed with ${WARNINGS} warning(s)"

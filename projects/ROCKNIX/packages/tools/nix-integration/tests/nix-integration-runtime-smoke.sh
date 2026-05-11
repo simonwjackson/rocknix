@@ -9,6 +9,128 @@ PKG_DIR=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "${TMP_DIR}"' EXIT INT TERM
 
+# Shared running-detector for systemd-nspawn guests, used by all layer smokes.
+# Mirrors nixctl's nspawn_pid_for_root: identifies nspawn candidates by exec
+# name (/proc/<pid>/comm) or by argv[0] basename (so wrapper scripts named
+# 'systemd-nspawn' still match), then checks for the guest root in argv. This
+# replaces the ps|grep '[s]ystemd-nspawn' idiom that self-matched any caller
+# whose argv contained the literal substring.
+smoke_nspawn_running() {
+  root=$1
+  [ -n "${root}" ] || return 1
+  [ -d /proc ] || return 1
+  norm=${root%/}
+  for proc in /proc/[0-9]*; do
+    [ -r "${proc}/cmdline" ] || continue
+    args=$(tr '\0' '\n' <"${proc}/cmdline" 2>/dev/null) || continue
+    [ -n "${args}" ] || continue
+    argv0=$(printf '%s\n' "${args}" | head -n 1)
+    base=${argv0##*/}
+    comm=$(cat "${proc}/comm" 2>/dev/null) || comm=
+    if [ "${comm}" != "systemd-nspawn" ] && [ "${base}" != "systemd-nspawn" ]; then
+      continue
+    fi
+    if printf '%s\n' "${args}" | awk -v want="${norm}" '
+      {
+        a = $0
+        sub(/\/+$/, "", a)
+        if (a == want) { found = 1; exit }
+        if (prev == "--directory" && a == want) { found = 1; exit }
+        if (substr(a, 1, 12) == "--directory=") {
+          v = substr(a, 13)
+          sub(/\/+$/, "", v)
+          if (v == want) { found = 1; exit }
+        }
+        prev = a
+      }
+      END { exit (found ? 0 : 1) }
+    ' 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Autostart-eligibility check for a systemd unit. Returns 0 only when the
+# unit is enabled, enabled-runtime, or alias -- the three states that mean
+# "systemd will start this on boot." Static units (no [Install] section,
+# like the generated Layer 10 rocknix-guest.service) report 'static' from
+# 'systemctl is-enabled', which exits 0 even though the unit is NOT auto-
+# started. The legacy 'is-enabled --quiet' exit-code-only check therefore
+# misclassified static units as autostart-eligible. This helper inspects
+# stdout instead and only honours the documented autostart states.
+unit_autostarts() {
+  unit=$1
+  [ -n "${unit}" ] || return 1
+  command -v systemctl >/dev/null 2>&1 || return 1
+  state=$(systemctl is-enabled "${unit}" 2>/dev/null) || state=
+  case "${state}" in
+    enabled|enabled-runtime|alias) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Locate a smoke-relevant binary by name. Used by hardware-mode device-side
+# sections so the packaged smoke at /usr/lib/nix-integration/tests/ can find
+# /usr/bin/nixctl and /usr/bin/nix-doctor without depending on sibling
+# directories that aren't installed there. Repo invocations fall through to
+# ${PKG_DIR}/scripts/<name> as before.
+resolve_smoke_bin() {
+  name=$1
+  [ -n "${name}" ] || return 1
+  hit=$(command -v "${name}" 2>/dev/null || true)
+  if [ -n "${hit}" ] && [ -x "${hit}" ]; then
+    printf '%s\n' "${hit}"
+    return 0
+  fi
+  if [ -x "${PKG_DIR}/scripts/${name}" ]; then
+    printf '%s\n' "${PKG_DIR}/scripts/${name}"
+    return 0
+  fi
+  echo "FAIL: smoke cannot resolve ${name}: not on PATH and not at ${PKG_DIR}/scripts/${name}" >&2
+  return 1
+}
+
+# Map the user's LAYER*_SMOKE inputs to per-layer 'requested' booleans.
+# Done early so the U4 hardware-only gate below can read them.
+if [ "${LAYER10_SMOKE:-0}" = "1" ] || [ "${LAYER10_SMOKE:-0}" = "proof" ] || [ "${LAYER10_SMOKE:-0}" = "bootable" ]; then
+  LAYER10_REQUESTED=1
+else
+  LAYER10_REQUESTED=0
+fi
+if [ "${LAYER11_SMOKE:-0}" = "1" ]; then
+  LAYER11_REQUESTED=1
+else
+  LAYER11_REQUESTED=0
+fi
+if [ "${LAYER12_SMOKE:-0}" = "ssh" ]; then
+  LAYER12_REQUESTED=1
+else
+  LAYER12_REQUESTED=0
+fi
+
+# Hardware-only mode: at least one hardware-mode flag is set
+# (LAYER10_SMOKE=bootable, LAYER11_SMOKE=1, LAYER12_SMOKE=ssh) AND no
+# CI-mode flag is set (LAYER4..LAYER9, LAYER10_SMOKE=proof|1). When this is
+# true, skip the CI fixture preamble: those fixtures assume a clean
+# unconfigured device and pin error strings (e.g. 'refusing unsafe guest
+# root') that don't match real failure paths on a configured device.
+HARDWARE_ONLY_MODE=0
+if { [ "${LAYER10_SMOKE:-0}" = "bootable" ] || [ "${LAYER11_REQUESTED}" = "1" ] || [ "${LAYER12_REQUESTED}" = "1" ]; } \
+   && [ "${LAYER4_SMOKE:-0}" != "1" ] \
+   && [ "${LAYER5_SMOKE:-0}" != "1" ] \
+   && [ "${LAYER6_SMOKE:-0}" != "1" ] \
+   && [ "${LAYER7_SMOKE:-0}" != "1" ] \
+   && [ "${LAYER8_SMOKE:-0}" != "1" ] \
+   && [ "${LAYER9_SMOKE:-0}" != "1" ] \
+   && [ "${LAYER10_SMOKE:-0}" != "proof" ] \
+   && [ "${LAYER10_SMOKE:-0}" != "1" ]; then
+  HARDWARE_ONLY_MODE=1
+fi
+
+if [ "${HARDWARE_ONLY_MODE}" = "0" ]; then
+# ---- CI fixture preamble (skipped in hardware-only mode) -------------------
+
 # Layer 5 profile contract: the profile.d snippet must expose the root Nix
 # profile before Layer 4 and storage-local user env paths, and must be idempotent.
 PROFILE_ENV="${TMP_DIR}/profile-env"
@@ -42,7 +164,10 @@ grep -q 'service:    .*nix-daemon.service' /tmp/nix-layer8-unit-status.log
 FAKE_NSPAWN="${TMP_DIR}/systemd-nspawn"
 cat >"${FAKE_NSPAWN}" <<'EOF'
 #!/bin/sh
-echo 'systemd-nspawn smoke-test'
+case " $* " in
+  *' --boot '*) sleep 300 ;;
+  *) echo 'systemd-nspawn smoke-test' ;;
+esac
 EOF
 chmod 0755 "${FAKE_NSPAWN}"
 mkdir -p "${TMP_DIR}/layer9-root/etc" "${TMP_DIR}/layer9-state"
@@ -205,6 +330,156 @@ NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
   "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer10-doctor-bootable.log || true
 grep -q 'Layer 10 guest lifecycle state: bootable-ready' /tmp/nix-layer10-doctor-bootable.log
 grep -q 'Layer 10 guest eligibility: available: bootable guest root ready for manual start' /tmp/nix-layer10-doctor-bootable.log
+mkdir -p "${TMP_DIR}/layer10-import-src/sbin" "${TMP_DIR}/layer10-import-src/nix/store/fake-systemd/bin"
+printf '#!/bin/sh\n' >"${TMP_DIR}/layer10-import-src/sbin/init"
+printf '#!/bin/sh\nexit 0\n' >"${TMP_DIR}/layer10-import-src/nix/store/fake-systemd/bin/systemd-nspawn"
+chmod 0755 "${TMP_DIR}/layer10-import-src/sbin/init" "${TMP_DIR}/layer10-import-src/nix/store/fake-systemd/bin/systemd-nspawn"
+tar -cf "${TMP_DIR}/layer10-bootable.tar" -C "${TMP_DIR}/layer10-import-src" .
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+  "${PKG_DIR}/scripts/nixctl" guest import --bootable "${TMP_DIR}/layer10-bootable.tar" >/tmp/nix-layer10-import.log
+[ -x "${TMP_DIR}/layer10-import-root/sbin/init" ]
+grep -q 'bootable-ready' "${TMP_DIR}/layer10-import-state/state"
+grep -q '^sha256=' "${TMP_DIR}/layer10-import-state/rootfs-provenance"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-doctor-state" \
+NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
+  "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer10-import-doctor.log || true
+grep -q 'Layer 10 bootable provenance recorded' /tmp/nix-layer10-import-doctor.log
+mkdir -p "${TMP_DIR}/storage-keys"
+printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILayer12RuntimeSmokeKey layer12-smoke\n' >"${TMP_DIR}/storage-keys/authorized_keys"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service status >/tmp/nix-layer12-status-unconfigured.log
+grep -q 'Layer 12 (opt-in guest SSH) status' /tmp/nix-layer12-status-unconfigured.log
+grep -q 'state:      unconfigured' /tmp/nix-layer12-status-unconfigured.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service preflight ssh >/tmp/nix-layer12-preflight.log
+grep -q 'Layer 12 guest SSH preflight passed' /tmp/nix-layer12-preflight.log
+if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+  NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+  NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service enable ssh --port 2222 >/tmp/nix-layer12-enable-missing-keys.log 2>&1; then
+  echo 'expected Layer 12 SSH enable to require authorized keys' >&2
+  exit 1
+fi
+grep -q -- '--authorized-keys is required' /tmp/nix-layer12-enable-missing-keys.log
+if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+  NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+  NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service enable ssh --port 22 --authorized-keys "${TMP_DIR}/storage-keys/authorized_keys" >/tmp/nix-layer12-enable-port22.log 2>&1; then
+  echo 'expected Layer 12 SSH enable to refuse port 22' >&2
+  exit 1
+fi
+grep -q 'refusing unsafe port: 22' /tmp/nix-layer12-enable-port22.log
+if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+  NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+  NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service enable ssh --port 2223 --authorized-keys "${TMP_DIR}/storage-keys/authorized_keys" >/tmp/nix-layer12-enable-port2223.log 2>&1; then
+  echo 'expected Layer 12 SSH enable to reject non-default port until guest config is dynamic' >&2
+  exit 1
+fi
+grep -q 'currently supports only port 2222' /tmp/nix-layer12-enable-port2223.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service enable ssh --port 2222 --authorized-keys "${TMP_DIR}/storage-keys/authorized_keys" >/tmp/nix-layer12-enable.log
+grep -q 'Layer 12 guest SSH configured on host port 2222' /tmp/nix-layer12-enable.log
+grep -q '^service=ssh' "${TMP_DIR}/layer12-state/ssh/metadata"
+grep -q '^state=configured' "${TMP_DIR}/layer12-state/ssh/metadata"
+grep -q '^port=2222' "${TMP_DIR}/layer12-state/ssh/metadata"
+grep -q '^authorized_keys_sha256=' "${TMP_DIR}/layer12-state/ssh/metadata"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service status >/tmp/nix-layer12-status-ready.log
+grep -q 'state:      ready' /tmp/nix-layer12-status-ready.log
+grep -q 'port:       2222' /tmp/nix-layer12-status-ready.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-doctor-state" \
+NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
+  "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer12-doctor.log || true
+grep -q 'Layer 12 guest SSH state: ready' /tmp/nix-layer12-doctor.log
+grep -q 'Layer 12 guest SSH port: 2222' /tmp/nix-layer12-doctor.log
+grep -q 'Layer 12 authorized keys checksum recorded' /tmp/nix-layer12-doctor.log
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service disable ssh >/tmp/nix-layer12-disable.log
+grep -q 'Layer 12 guest SSH disabled' /tmp/nix-layer12-disable.log
+grep -q '^state=disabled' "${TMP_DIR}/layer12-state/ssh/metadata"
+if NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service remove ssh >/tmp/nix-layer12-remove-without-yes.log 2>&1; then
+  echo 'expected Layer 12 SSH remove to require --yes' >&2
+  exit 1
+fi
+grep -q 'without --yes' /tmp/nix-layer12-remove-without-yes.log
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service remove ssh --yes >/tmp/nix-layer12-remove.log
+grep -q 'Layer 12 guest SSH metadata removed' /tmp/nix-layer12-remove.log
+[ ! -e "${TMP_DIR}/layer12-state/ssh" ]
+mkdir -p "${TMP_DIR}/layer10-import-symlink-src/sbin" "${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin"
+printf '#!/bin/sh\n' >"${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin/init"
+printf '#!/bin/sh\nexit 0\n' >"${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin/systemd-nspawn"
+chmod 0755 "${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin/init" "${TMP_DIR}/layer10-import-symlink-src/nix/store/fake-systemd/bin/systemd-nspawn"
+ln -s /nix/store/fake-systemd/bin/init "${TMP_DIR}/layer10-import-symlink-src/sbin/init"
+tar -cf "${TMP_DIR}/layer10-bootable-symlink.tar" -C "${TMP_DIR}/layer10-import-symlink-src" .
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-symlink-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-symlink-state" \
+  "${PKG_DIR}/scripts/nixctl" guest import --bootable "${TMP_DIR}/layer10-bootable-symlink.tar" >/tmp/nix-layer10-import-symlink.log
+[ -L "${TMP_DIR}/layer10-import-symlink-root/sbin/init" ]
+grep -q 'bootable-ready' "${TMP_DIR}/layer10-import-symlink-state/state"
+tar -czf "${TMP_DIR}/layer10-bootable.tar.gz" -C "${TMP_DIR}/layer10-import-src" .
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-gzip-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-gzip-state" \
+  "${PKG_DIR}/scripts/nixctl" guest import --bootable "${TMP_DIR}/layer10-bootable.tar.gz" >/tmp/nix-layer10-import-gzip.log
+[ -x "${TMP_DIR}/layer10-import-gzip-root/sbin/init" ]
+grep -q '^sha256=' "${TMP_DIR}/layer10-import-gzip-state/rootfs-provenance"
+if NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+  "${PKG_DIR}/scripts/nixctl" guest import --bootable "${TMP_DIR}/layer10-bootable.tar" >/tmp/nix-layer10-import-existing.log 2>&1; then
+  echo 'expected Layer 10 bootable import to refuse existing root' >&2
+  exit 1
+fi
+grep -q 'root already exists' /tmp/nix-layer10-import-existing.log
+if NIX_LAYER10_GUEST_ROOT="/storage" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-unsafe-state" \
+  "${PKG_DIR}/scripts/nixctl" guest import --bootable "${TMP_DIR}/layer10-bootable.tar" >/tmp/nix-layer10-import-unsafe.log 2>&1; then
+  echo 'expected Layer 10 bootable import to refuse unsafe root' >&2
+  exit 1
+fi
+grep -q 'refusing unsafe guest root' /tmp/nix-layer10-import-unsafe.log
+if NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-missing-root" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-missing-state" \
+  "${PKG_DIR}/scripts/nixctl" guest import --bootable "${TMP_DIR}/missing-layer10.tar" >/tmp/nix-layer10-import-missing.log 2>&1; then
+  echo 'expected Layer 10 bootable import to refuse missing artifact' >&2
+  exit 1
+fi
+grep -q 'artifact is not a regular file' /tmp/nix-layer10-import-missing.log
 mkdir -p "${TMP_DIR}/layer10-stale-state"
 printf 'running\n' >"${TMP_DIR}/layer10-stale-state/state"
 NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
@@ -225,14 +500,64 @@ FAKE_LAYER10_SYSTEMCTL="${TMP_DIR}/systemctl-layer10"
 cat >"${FAKE_LAYER10_SYSTEMCTL}" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >>"${NIX_SYSTEMCTL_LOG}"
+pid_file=${NIX_SYSTEMCTL_PID:-/tmp/nix-layer10-systemctl.pid}
 case "$1" in
-  is-active) echo inactive; exit 3 ;;
-  daemon-reload|start|stop) exit 0 ;;
+  is-active)
+    if [ -f "${pid_file}" ] && kill -0 "$(cat "${pid_file}")" 2>/dev/null; then
+      echo active
+      exit 0
+    fi
+    echo inactive
+    exit 3
+    ;;
+  daemon-reload) exit 0 ;;
+  start)
+    "${NIX_LAYER10_NSPAWN_BIN}" --boot --register=no --directory="${NIX_LAYER10_GUEST_ROOT}" >/dev/null 2>&1 &
+    echo $! >"${pid_file}"
+    exit 0
+    ;;
+  stop)
+    if [ -f "${pid_file}" ]; then
+      kill "$(cat "${pid_file}")" 2>/dev/null || true
+      rm -f "${pid_file}"
+    fi
+    exit 0
+    ;;
   enable) exit 99 ;;
   *) exit 0 ;;
 esac
 EOF
 chmod 0755 "${FAKE_LAYER10_SYSTEMCTL}"
+FAKE_LAYER10_ACTIVE_SYSTEMCTL="${TMP_DIR}/systemctl-layer10-active-no-process"
+cat >"${FAKE_LAYER10_ACTIVE_SYSTEMCTL}" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"${NIX_SYSTEMCTL_LOG}"
+case "$1" in
+  is-active) echo active; exit 0 ;;
+  daemon-reload|start|stop) exit 0 ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod 0755 "${FAKE_LAYER10_ACTIVE_SYSTEMCTL}"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-boot-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-active-no-process-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_SYSTEMCTL="${FAKE_LAYER10_ACTIVE_SYSTEMCTL}" \
+NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer10-active-no-process.log" \
+  "${PKG_DIR}/scripts/nixctl" guest status >/tmp/nix-layer10-active-no-process-status.log
+ grep -q 'state:      failed' /tmp/nix-layer10-active-no-process-status.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-boot-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-active-no-process-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_SYSTEMCTL="${FAKE_LAYER10_ACTIVE_SYSTEMCTL}" \
+NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer10-active-no-process.log" \
+NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate" \
+NIX_LAYER8_STATE_DIR="${TMP_DIR}/layer8-doctor-state" \
+NIX_USER_CONFIG_FILE="${TMP_DIR}/layer8-doctor-config/nix.conf" \
+  "${PKG_DIR}/scripts/nix-doctor" --offline >/tmp/nix-layer10-active-no-process-doctor.log 2>&1 || true
+grep -q 'unit is active but no nspawn process references' /tmp/nix-layer10-active-no-process-doctor.log
 if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
   NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-proof-root" \
   NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-start-proof-state" \
@@ -251,9 +576,11 @@ NIX_LAYER10_SYSTEMD_DIR="${TMP_DIR}/layer10-systemd" \
 NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
 NIX_SYSTEMCTL="${FAKE_LAYER10_SYSTEMCTL}" \
 NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer10.log" \
+NIX_SYSTEMCTL_PID="${TMP_DIR}/systemctl-layer10.pid" \
   "${PKG_DIR}/scripts/nixctl" guest start >/tmp/nix-layer10-start.log
 [ -f "${TMP_DIR}/layer10-systemd/rocknix-guest.service" ]
 grep -q -- '--register=no' "${TMP_DIR}/layer10-systemd/rocknix-guest.service"
+grep -q -- '--private-network' "${TMP_DIR}/layer10-systemd/rocknix-guest.service"
 grep -q 'CPUWeight=1' "${TMP_DIR}/layer10-systemd/rocknix-guest.service"
 ! grep -q '^\[Install\]' "${TMP_DIR}/layer10-systemd/rocknix-guest.service"
 grep -q '^start rocknix-guest.service' "${TMP_DIR}/systemctl-layer10.log"
@@ -265,9 +592,55 @@ NIX_LAYER10_SYSTEMD_DIR="${TMP_DIR}/layer10-systemd" \
 NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
 NIX_SYSTEMCTL="${FAKE_LAYER10_SYSTEMCTL}" \
 NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer10.log" \
+NIX_SYSTEMCTL_PID="${TMP_DIR}/systemctl-layer10.pid" \
   "${PKG_DIR}/scripts/nixctl" guest stop >/tmp/nix-layer10-stop.log
 grep -q '^stop rocknix-guest.service' "${TMP_DIR}/systemctl-layer10.log"
 grep -q 'stopped' "${TMP_DIR}/layer10-start-state/state"
+mkdir -p "${TMP_DIR}/layer12-start-keys"
+printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILayer12StartSmokeKey layer12-start\n' >"${TMP_DIR}/layer12-start-keys/authorized_keys"
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-start-state" \
+  "${PKG_DIR}/scripts/nixctl" guest service enable ssh --port 2222 --authorized-keys "${TMP_DIR}/layer12-start-keys/authorized_keys" >/tmp/nix-layer12-start-enable.log
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SYSTEMD_DIR="${TMP_DIR}/layer12-systemd" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-start-state" \
+NIX_SYSTEMCTL="${FAKE_LAYER10_SYSTEMCTL}" \
+NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer12.log" \
+NIX_SYSTEMCTL_PID="${TMP_DIR}/systemctl-layer12.pid" \
+  "${PKG_DIR}/scripts/nixctl" guest start >/tmp/nix-layer12-start.log
+[ -f "${TMP_DIR}/layer12-systemd/rocknix-guest.service" ]
+! grep -q -- '--private-network' "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
+! grep -q -- '--port=tcp:' "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
+grep -q -- "--bind-ro=${TMP_DIR}/layer12-start-keys/authorized_keys:/etc/ssh/authorized_keys.d/root" "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
+! grep -q -- '--port=tcp:22:22' "${TMP_DIR}/layer12-systemd/rocknix-guest.service"
+if NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+  NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+  NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+  NIX_LAYER10_SYSTEMD_DIR="${TMP_DIR}/layer12-systemd" \
+  NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+  NIX_LAYER12_STATE_DIR="${TMP_DIR}/layer12-start-state" \
+  NIX_SYSTEMCTL="${FAKE_LAYER10_SYSTEMCTL}" \
+  NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer12.log" \
+  NIX_SYSTEMCTL_PID="${TMP_DIR}/systemctl-layer12.pid" \
+  "${PKG_DIR}/scripts/nixctl" guest start >/tmp/nix-layer12-start-while-running.log 2>&1; then
+  echo 'expected Layer 12 start to refuse already-running guest' >&2
+  exit 1
+fi
+grep -q 'already running' /tmp/nix-layer12-start-while-running.log
+NIX_LAYER10_GUEST_ROOT="${TMP_DIR}/layer10-import-root" \
+NIX_LAYER10_STATE_DIR="${TMP_DIR}/layer10-import-state" \
+NIX_LAYER10_SYSTEMD_DIR="${TMP_DIR}/layer12-systemd" \
+NIX_LAYER10_SKIP_KERNEL_CHECK=1 \
+NIX_SYSTEMCTL="${FAKE_LAYER10_SYSTEMCTL}" \
+NIX_SYSTEMCTL_LOG="${TMP_DIR}/systemctl-layer12.log" \
+NIX_SYSTEMCTL_PID="${TMP_DIR}/systemctl-layer12.pid" \
+  "${PKG_DIR}/scripts/nixctl" guest stop >/tmp/nix-layer12-stop.log
 mkdir -p "${TMP_DIR}/nix/store/fake-nix/bin" "${TMP_DIR}/nix/store/fake-nix-store/bin" "${TMP_DIR}/nix/store/fake-bash/bin"
 printf '#!/bin/sh\necho nix-fake\n' >"${TMP_DIR}/nix/store/fake-nix/bin/nix"
 cat >"${TMP_DIR}/nix/store/fake-nix-store/bin/nix-store" <<EOF
@@ -485,7 +858,96 @@ NIX_LAYER6_PROFILE_D_DIR="${L7_TMP}/profile.d" \
 [ ! -e "${L7_TMP}/bin/rocknix-layer7-browser" ]
 [ ! -e "${L7_TMP}/profile.d/999-rocknix-layer7-browser" ]
 
+# Layer 13 host module fixture smoke. This is skipped on minimal build hosts
+# without Nix, but runs on developer machines and configured ROCKNIX devices.
+if command -v nix >/dev/null 2>&1; then
+  L13_TMP="${TMP_DIR}/layer13"
+  mkdir -p "${L13_TMP}/bin" "${L13_TMP}/profile.d" "${L13_TMP}/modules"
+  cp "${PKG_DIR}/tests/fixtures/modules/host-tools.nix" "${L13_TMP}/modules/host-tools.nix"
+  PATH="${PKG_DIR}/scripts:${PATH}" \
+  NIX_LAYER13_MODULE_KIT_DIR="${PKG_DIR}/modules" \
+  NIX_LAYER13_NIX_BIN="$(command -v nix)" \
+  NIX_LAYER13_STATE_DIR="${L13_TMP}/state" \
+  NIX_LAYER13_HOST_WORKSPACE="${L13_TMP}/modules" \
+  NIX_LAYER13_HOST_MODULE="${L13_TMP}/modules/host-tools.nix" \
+  NIX_LAYER6_BIN_DIR="${L13_TMP}/bin" \
+  NIX_LAYER6_PROFILE_D_DIR="${L13_TMP}/profile.d" \
+    "${PKG_DIR}/scripts/nixctl" module preflight >/tmp/nix-layer13-preflight.log
+  PATH="${PKG_DIR}/scripts:${PATH}" \
+  NIX_LAYER13_MODULE_KIT_DIR="${PKG_DIR}/modules" \
+  NIX_LAYER13_NIX_BIN="$(command -v nix)" \
+  NIX_LAYER13_STATE_DIR="${L13_TMP}/state" \
+  NIX_LAYER13_HOST_WORKSPACE="${L13_TMP}/modules" \
+  NIX_LAYER13_HOST_MODULE="${L13_TMP}/modules/host-tools.nix" \
+  NIX_LAYER6_BIN_DIR="${L13_TMP}/bin" \
+  NIX_LAYER6_PROFILE_D_DIR="${L13_TMP}/profile.d" \
+    "${PKG_DIR}/scripts/nixctl" module apply >/tmp/nix-layer13-apply.log
+  "${L13_TMP}/bin/rocknix-fixture-module-hello" >/tmp/nix-layer13-wrapper.log
+  grep -q 'rocknix-fixture-module-hello' /tmp/nix-layer13-wrapper.log
+  [ -f "${L13_TMP}/profile.d/999-rocknix-fixture-module" ]
+  PATH="${PKG_DIR}/scripts:${PATH}" \
+  NIX_LAYER13_STATE_DIR="${L13_TMP}/state" \
+  NIX_LAYER6_BIN_DIR="${L13_TMP}/bin" \
+  NIX_LAYER6_PROFILE_D_DIR="${L13_TMP}/profile.d" \
+    "${PKG_DIR}/scripts/nixctl" module deactivate >/tmp/nix-layer13-deactivate.log
+  [ ! -e "${L13_TMP}/bin/rocknix-fixture-module-hello" ]
+
+  cp "${PKG_DIR}/tests/fixtures/modules/invalid-host-path.nix" "${L13_TMP}/modules/invalid-host-path.nix"
+  if PATH="${PKG_DIR}/scripts:${PATH}" \
+    NIX_LAYER13_MODULE_KIT_DIR="${PKG_DIR}/modules" \
+    NIX_LAYER13_NIX_BIN="$(command -v nix)" \
+    NIX_LAYER13_STATE_DIR="${L13_TMP}/invalid-state" \
+    NIX_LAYER13_HOST_MODULE="${L13_TMP}/modules/invalid-host-path.nix" \
+    "${PKG_DIR}/scripts/nixctl" module preflight >/tmp/nix-layer13-invalid-host-path.log 2>&1; then
+    echo 'expected Layer 13 invalid host path preflight to fail' >&2
+    exit 1
+  fi
+  grep -q 'unsafe file target name' /tmp/nix-layer13-invalid-host-path.log
+else
+  printf 'nix-integration Layer 13 fixture smoke: skipped (nix unavailable)\n'
+fi
+
+# nspawn running detector: regression for the self-match bug.
+# Spawn a process whose comm is 'sh' (not 'systemd-nspawn') and whose argv
+# contains the literal substring 'systemd-nspawn' AND the configured guest
+# root path. The legacy 'ps|grep [s]ystemd-nspawn|grep -F <root>' idiom
+# matched this. The new exec-name + argv[0]-basename detector must not.
+NSPAWN_IMPOSTOR_ROOT="${TMP_DIR}/layer10-impostor-root"
+mkdir -p "${NSPAWN_IMPOSTOR_ROOT}"
+NSPAWN_IMPOSTOR_STATE="${TMP_DIR}/layer10-impostor-state"
+mkdir -p "${NSPAWN_IMPOSTOR_STATE}"
+printf 'mode=bootable\nsource=test\nsource_path=test\nsha256=0\nguest_root=%s\n' \
+  "${NSPAWN_IMPOSTOR_ROOT}" >"${NSPAWN_IMPOSTOR_STATE}/rootfs-provenance"
+sh -c "sleep 30 # systemd-nspawn --boot --register=no --directory=${NSPAWN_IMPOSTOR_ROOT}" &
+NSPAWN_IMPOSTOR_PID=$!
+sleep 1
+if ! smoke_nspawn_running "${NSPAWN_IMPOSTOR_ROOT}"; then
+  : # detector correctly ignores the impostor (comm=sh, argv[0]=sh)
+else
+  kill "${NSPAWN_IMPOSTOR_PID}" 2>/dev/null || true
+  wait "${NSPAWN_IMPOSTOR_PID}" 2>/dev/null || true
+  echo 'FAIL: smoke_nspawn_running self-matched a non-nspawn impostor process' >&2
+  exit 1
+fi
+NIX_LAYER10_NSPAWN_BIN="${FAKE_NSPAWN}" \
+NIX_LAYER10_GUEST_ROOT="${NSPAWN_IMPOSTOR_ROOT}" \
+NIX_LAYER10_STATE_DIR="${NSPAWN_IMPOSTOR_STATE}" \
+  "${PKG_DIR}/scripts/nixctl" guest status >"${TMP_DIR}/nspawn-impostor-status.log" 2>&1
+if grep -q 'running:    yes' "${TMP_DIR}/nspawn-impostor-status.log"; then
+  kill "${NSPAWN_IMPOSTOR_PID}" 2>/dev/null || true
+  wait "${NSPAWN_IMPOSTOR_PID}" 2>/dev/null || true
+  echo 'FAIL: nixctl guest status reported running=yes for an impostor' >&2
+  cat "${TMP_DIR}/nspawn-impostor-status.log" >&2
+  exit 1
+fi
+kill "${NSPAWN_IMPOSTOR_PID}" 2>/dev/null || true
+wait "${NSPAWN_IMPOSTOR_PID}" 2>/dev/null || true
+
 printf 'nix-integration runtime smoke passed\n'
+else
+printf '[smoke] hardware-only mode: skipping CI fixture preamble\n'
+fi
+# ---- end CI fixture preamble ----------------------------------------------
 
 # ---- Layer 4 device-side smoke (opt-in) ------------------------------------
 # Set LAYER4_SMOKE=1 to run the real install/use/uninstall cycle against the
@@ -495,18 +957,8 @@ printf 'nix-integration runtime smoke passed\n'
 #   - network reachability to releases.nixos.org and cache.nixos.org
 #   - >= 1 GB free on /storage
 # Not run in default CI; intended for manual validation on hardware.
-if [ "${LAYER10_SMOKE:-0}" = "1" ] || [ "${LAYER10_SMOKE:-0}" = "proof" ] || [ "${LAYER10_SMOKE:-0}" = "bootable" ]; then
-  LAYER10_REQUESTED=1
-else
-  LAYER10_REQUESTED=0
-fi
-if [ "${LAYER11_SMOKE:-0}" = "1" ]; then
-  LAYER11_REQUESTED=1
-else
-  LAYER11_REQUESTED=0
-fi
 
-if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ]; then
+if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ] && [ "${LAYER12_REQUESTED}" != "1" ]; then
   printf 'nix-integration Layer 4 smoke: skipped (set LAYER4_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 5 smoke: skipped (set LAYER5_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 6 smoke: skipped (set LAYER6_SMOKE=1 to enable)\n'
@@ -515,14 +967,15 @@ if [ "${LAYER4_SMOKE:-0}" != "1" ] && [ "${LAYER5_SMOKE:-0}" != "1" ] && [ "${LA
   printf 'nix-integration Layer 9 smoke: skipped (set LAYER9_SMOKE=1 to enable)\n'
   printf 'nix-integration Layer 10 smoke: skipped (set LAYER10_SMOKE=proof or bootable to enable)\n'
   printf 'nix-integration Layer 11 smoke: skipped (set LAYER11_SMOKE=1 to enable)\n'
+  printf 'nix-integration Layer 12 smoke: skipped (set LAYER12_SMOKE=ssh to enable)\n'
   exit 0
 fi
 
 # Device-side smokes use the real package script paths (not the fake-tarball
 # harness above), so reset the per-test environment.
 
-NIXCTL="${PKG_DIR}/scripts/nixctl"
-DOCTOR="${PKG_DIR}/scripts/nix-doctor"
+NIXCTL=$(resolve_smoke_bin nixctl) || exit 1
+DOCTOR=$(resolve_smoke_bin nix-doctor) || exit 1
 export NIX_LAYER6_ACTIVATE="${PKG_DIR}/scripts/nix-layer-activate"
 L4_LOG=/tmp/nix-integration-layer4-smoke.log
 rm -f "${L4_LOG}"
@@ -590,7 +1043,7 @@ fi
 # hardware. Requires Layer 4 real Nix to already be installed. The default
 # package is nixpkgs#hello because it is small and low-conflict.
 if [ "${LAYER5_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ]; then
+  if [ "${LAYER6_SMOKE:-0}" != "1" ] && [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ] && [ "${LAYER12_REQUESTED}" != "1" ]; then
     exit 0
   fi
 else
@@ -675,7 +1128,7 @@ fi
 # Set LAYER6_SMOKE=1 to validate managed storage-local user-environment
 # activation on hardware. Requires Layer 4/5 shell integration to be healthy.
 if [ "${LAYER6_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ]; then
+  if [ "${LAYER7_SMOKE:-0}" != "1" ] && [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ] && [ "${LAYER12_REQUESTED}" != "1" ]; then
     exit 0
   fi
 else
@@ -784,7 +1237,7 @@ fi
 # visual confirmation remains operator-observed because CI cannot inspect the
 # handheld screen.
 if [ "${LAYER7_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ]; then
+  if [ "${LAYER8_SMOKE:-0}" != "1" ] && [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ] && [ "${LAYER12_REQUESTED}" != "1" ]; then
     exit 0
   fi
 else
@@ -884,7 +1337,7 @@ fi
 # Requires Layer 4 real Nix, image-time daemon build identities/config, and
 # opt-in daemon units. Default CI never starts systemd units.
 if [ "${LAYER8_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ]; then
+  if [ "${LAYER9_SMOKE:-0}" != "1" ] && [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ] && [ "${LAYER12_REQUESTED}" != "1" ]; then
     exit 0
   fi
 else
@@ -970,7 +1423,7 @@ fi
 # on hardware. Requires a Layer 9-enabled image and a pre-staged guest rootfs.
 # The smoke does not download or generate the rootfs and never enables a unit.
 if [ "${LAYER9_SMOKE:-0}" != "1" ]; then
-  if [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ]; then
+  if [ "${LAYER10_REQUESTED}" != "1" ] && [ "${LAYER11_REQUESTED}" != "1" ] && [ "${LAYER12_REQUESTED}" != "1" ]; then
     exit 0
   fi
 else
@@ -988,15 +1441,11 @@ log9() {
 }
 
 layer9_guest_running() {
-  ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${L9_ROOT}" >/dev/null 2>&1
+  smoke_nspawn_running "${L9_ROOT}"
 }
 
 layer9_no_enabled_unit() {
-  if command -v systemctl >/dev/null 2>&1; then
-    if systemctl is-enabled systemd-nspawn@rocknix-guest.service >/dev/null 2>&1; then
-      return 1
-    fi
-  fi
+  unit_autostarts systemd-nspawn@rocknix-guest.service && return 1
   return 0
 }
 
@@ -1055,7 +1504,7 @@ fi
 # start/stop with resource-bounded disabled unit generation. Default CI never
 # starts a real nspawn guest.
 if [ "${LAYER10_SMOKE:-0}" != "1" ] && [ "${LAYER10_SMOKE:-0}" != "proof" ] && [ "${LAYER10_SMOKE:-0}" != "bootable" ]; then
-  if [ "${LAYER11_REQUESTED}" != "1" ]; then
+  if [ "${LAYER11_REQUESTED}" != "1" ] && [ "${LAYER12_REQUESTED}" != "1" ]; then
     exit 0
   fi
 else
@@ -1066,6 +1515,7 @@ L10_MODE="${LAYER10_SMOKE:-proof}"
 L10_NSPAWN="${LAYER10_NSPAWN_BIN:-${NIX_LAYER10_NSPAWN_BIN:-/usr/bin/systemd-nspawn}}"
 L10_ROOT="${LAYER10_GUEST_ROOT:-${NIX_LAYER10_GUEST_ROOT:-/storage/machines/rocknix-guest}}"
 L10_STATE="${LAYER10_STATE_DIR:-${NIX_LAYER10_STATE_DIR:-/storage/.config/nix-integration/layer10}}"
+L10_PROVENANCE="${L10_STATE}/rootfs-provenance"
 L10_TIMEOUT="${LAYER10_TIMEOUT:-45}"
 L10_PROOF_COMMAND="${LAYER10_PROOF_COMMAND:-printf 'layer10-guest-proof\\n'; if command -v nix >/dev/null 2>&1; then nix --version; fi}"
 rm -f "${L10_LOG}"
@@ -1076,14 +1526,12 @@ log10() {
 }
 
 layer10_guest_running() {
-  ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${L10_ROOT}" >/dev/null 2>&1
+  smoke_nspawn_running "${L10_ROOT}"
 }
 
 layer10_no_enabled_unit() {
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl is-enabled rocknix-guest.service >/dev/null 2>&1 && return 1
-    systemctl is-enabled systemd-nspawn@rocknix-guest.service >/dev/null 2>&1 && return 1
-  fi
+  unit_autostarts rocknix-guest.service && return 1
+  unit_autostarts systemd-nspawn@rocknix-guest.service && return 1
   return 0
 }
 
@@ -1122,6 +1570,11 @@ case "${L10_MODE}" in
       || { echo 'FAIL: Layer 10 guest proof marker missing' >&2; exit 1; }
     ;;
   bootable)
+    log10 'pre-flight: bootable provenance'
+    [ -f "${L10_PROVENANCE}" ] || { echo "FAIL: Layer 10 bootable smoke requires provenance metadata at ${L10_PROVENANCE}" >&2; exit 1; }
+    grep -q '^sha256=' "${L10_PROVENANCE}" \
+      || { echo "FAIL: Layer 10 bootable provenance missing sha256: ${L10_PROVENANCE}" >&2; exit 1; }
+    log10 "provenance: $(grep '^sha256=' "${L10_PROVENANCE}" | head -1)"
     log10 'start: manual bootable guest start'
     NIX_LAYER10_NSPAWN_BIN="${L10_NSPAWN}" \
     NIX_LAYER10_GUEST_ROOT="${L10_ROOT}" \
@@ -1173,8 +1626,10 @@ fi
 # hardware. Requires Layer 10 proof-mode readiness and removes the temporary
 # bridge before exiting.
 if [ "${LAYER11_SMOKE:-0}" != "1" ]; then
-  exit 0
-fi
+  if [ "${LAYER12_REQUESTED}" != "1" ]; then
+    exit 0
+  fi
+else
 
 L11_LOG=/tmp/nix-integration-layer11-smoke.log
 L11_NAME="${LAYER11_BRIDGE_NAME:-layer11-nix-version}"
@@ -1189,7 +1644,7 @@ log11() {
 }
 
 layer11_guest_running() {
-  ps -ef 2>/dev/null | grep '[s]ystemd-nspawn' | grep -F -- "${L11_ROOT}" >/dev/null 2>&1
+  smoke_nspawn_running "${L11_ROOT}"
 }
 
 log11 'pre-flight: Layer 11 bridge diagnostics'
@@ -1236,3 +1691,116 @@ NIX_LAYER11_BIN_DIR="${L11_BIN_DIR}" \
 
 printf 'nix-integration Layer 11 smoke passed\n'
 printf 'log: %s\n' "${L11_LOG}"
+fi
+
+# ---- Layer 12 device-side smoke (opt-in) -----------------------------------
+# Set LAYER12_SMOKE=ssh to validate key-only guest SSH on an alternate host
+# port. Requires a Layer 10b bootable root with provenance and an operator
+# supplied keypair whose public key appears in LAYER12_AUTHORIZED_KEYS.
+if [ "${LAYER12_SMOKE:-0}" != "ssh" ]; then
+  exit 0
+fi
+
+L12_LOG=/tmp/nix-integration-layer12-smoke.log
+L12_ROOT="${LAYER12_GUEST_ROOT:-${NIX_LAYER10_GUEST_ROOT:-/storage/machines/rocknix-guest}}"
+L12_L10_STATE="${LAYER12_LAYER10_STATE_DIR:-${NIX_LAYER10_STATE_DIR:-/storage/.config/nix-integration/layer10}}"
+L12_STATE="${LAYER12_STATE_DIR:-${NIX_LAYER12_STATE_DIR:-/storage/.config/nix-integration/layer12}}"
+L12_PORT="${LAYER12_SSH_PORT:-2222}"
+L12_KEYS="${LAYER12_AUTHORIZED_KEYS:-/storage/.ssh/authorized_keys}"
+L12_IDENTITY="${LAYER12_SSH_IDENTITY:-/storage/.ssh/id_ed25519}"
+L12_HOST="${LAYER12_SSH_HOST:-127.0.0.1}"
+L12_TIMEOUT="${LAYER12_TIMEOUT:-30}"
+rm -f "${L12_LOG}"
+
+log12() {
+  printf '[layer12-smoke] %s\n' "$*"
+  printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" >>"${L12_LOG}"
+}
+
+layer12_guest_running() {
+  smoke_nspawn_running "${L12_ROOT}"
+}
+
+layer12_stop_guest() {
+  NIX_LAYER10_GUEST_ROOT="${L12_ROOT}" \
+  NIX_LAYER10_STATE_DIR="${L12_L10_STATE}" \
+    "${NIXCTL}" guest stop >>"${L12_LOG}" 2>&1 || true
+}
+
+[ -f "${L12_L10_STATE}/rootfs-provenance" ] \
+  || { echo "FAIL: Layer 12 smoke requires Layer 10b provenance at ${L12_L10_STATE}/rootfs-provenance" >&2; exit 1; }
+grep -q '^sha256=' "${L12_L10_STATE}/rootfs-provenance" \
+  || { echo 'FAIL: Layer 12 smoke requires Layer 10b provenance sha256' >&2; exit 1; }
+[ -s "${L12_KEYS}" ] \
+  || { echo "FAIL: Layer 12 smoke requires authorized keys at ${L12_KEYS}" >&2; exit 1; }
+[ -s "${L12_IDENTITY}" ] \
+  || { echo "FAIL: Layer 12 smoke requires SSH identity at ${L12_IDENTITY}" >&2; exit 1; }
+command -v ssh >/dev/null 2>&1 \
+  || { echo 'FAIL: Layer 12 smoke requires ssh client' >&2; exit 1; }
+
+case "${L12_PORT}" in
+  22) echo 'FAIL: Layer 12 smoke refuses host port 22' >&2; exit 1 ;;
+esac
+
+log12 'pre-flight: Layer 12 guest SSH diagnostics'
+NIX_LAYER10_GUEST_ROOT="${L12_ROOT}" \
+NIX_LAYER10_STATE_DIR="${L12_L10_STATE}" \
+NIX_LAYER12_STATE_DIR="${L12_STATE}" \
+  "${NIXCTL}" guest service status >>"${L12_LOG}" 2>&1 \
+  || { echo 'FAIL: nixctl guest service status failed during Layer 12 preflight' >&2; exit 1; }
+
+log12 'configure: opt-in guest SSH metadata'
+NIX_LAYER10_GUEST_ROOT="${L12_ROOT}" \
+NIX_LAYER10_STATE_DIR="${L12_L10_STATE}" \
+NIX_LAYER12_STATE_DIR="${L12_STATE}" \
+  "${NIXCTL}" guest service enable ssh --port "${L12_PORT}" --authorized-keys "${L12_KEYS}" >>"${L12_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 12 guest SSH enable failed' >&2; exit 1; }
+
+log12 'start: bootable guest with SSH exposure'
+NIX_LAYER10_GUEST_ROOT="${L12_ROOT}" \
+NIX_LAYER10_STATE_DIR="${L12_L10_STATE}" \
+NIX_LAYER12_STATE_DIR="${L12_STATE}" \
+  "${NIXCTL}" guest start >>"${L12_LOG}" 2>&1 \
+  || { echo 'FAIL: Layer 12 guest start failed' >&2; layer12_stop_guest; exit 1; }
+
+log12 'ssh: execute guest nix version command'
+waited=0
+while [ "${waited}" -lt "${L12_TIMEOUT}" ]; do
+  if ssh -i "${L12_IDENTITY}" \
+      -o BatchMode=yes \
+      -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/tmp/nix-layer12-known-hosts \
+      -o ConnectTimeout=3 \
+      -p "${L12_PORT}" "root@${L12_HOST}" /usr/bin/nix --version >>"${L12_LOG}" 2>&1; then
+    break
+  fi
+  waited=$((waited + 3))
+  sleep 3
+done
+grep -q 'nix (Nix)' "${L12_LOG}" \
+  || { echo 'FAIL: Layer 12 guest SSH did not return nix version' >&2; layer12_stop_guest; exit 1; }
+
+log12 'stop: remove live SSH exposure'
+layer12_stop_guest
+sleep 1
+layer12_guest_running \
+  && { echo 'FAIL: Layer 12 guest process still running after stop' >&2; exit 1; }
+if ssh -i "${L12_IDENTITY}" \
+    -o BatchMode=yes \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/tmp/nix-layer12-known-hosts \
+    -o ConnectTimeout=3 \
+    -p "${L12_PORT}" "root@${L12_HOST}" /usr/bin/nix --version >>"${L12_LOG}" 2>&1; then
+  echo 'FAIL: Layer 12 guest SSH still reachable after guest stop' >&2
+  exit 1
+fi
+
+log12 'diagnostics: Layer 12 doctor remains readable'
+NIX_LAYER10_GUEST_ROOT="${L12_ROOT}" \
+NIX_LAYER10_STATE_DIR="${L12_L10_STATE}" \
+NIX_LAYER12_STATE_DIR="${L12_STATE}" \
+  "${DOCTOR}" --offline >>"${L12_LOG}" 2>&1 \
+  || { echo 'FAIL: nix-doctor failed after Layer 12 smoke' >&2; exit 1; }
+
+printf 'nix-integration Layer 12 smoke passed (ssh)\n'
+printf 'log: %s\n' "${L12_LOG}"

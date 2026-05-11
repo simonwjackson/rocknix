@@ -1,0 +1,69 @@
+## Repository Research Summary
+
+### Technology & Infrastructure
+- **Project type:** ROCKNIX is an immutable Linux distribution for handheld gaming devices. It is a large Makefile/shell/Nix-driven build tree, not an app/server repo (`README.md`, `Makefile`, `flake.nix`).
+- **Languages/tooling detected:** Makefile, shell/Bash, Python helpers, Nix flakes, C/C++ package recipes. Root `flake.nix` provides a ROCKNIX build/dev environment for `x86_64-linux` and `aarch64-linux`; the actual validated image build path uses Ubuntu Jammy/gcc-11-compatible container tooling rather than nixpkgs gcc.
+- **Build/deployment model:** monolithic distro image build with per-device targets (`Makefile`: `SM8550`, `RK3588`, etc.). Docker/Podman build environment exists (`Dockerfile`, `Makefile` `docker-%`, `scripts/local-image-build`). CI builds device artifacts and has a fast image-only workflow (`.github/workflows/build-image-only.yml`).
+- **Layer 14 model:** `THIN_HOST=yes` gates an SM8550-only image mode where host ROCKNIX stays the recovery plane and `rocknix-guest-v2.service` starts a NixOS `systemd-nspawn` guest as main graphical space (`projects/ROCKNIX/packages/tools/nix-integration/package.mk`, `system.d/rocknix-guest-v2.service`).
+- **API/data stores:** no web/API surface detected. Runtime state is filesystem/systemd/Nix-store based: `/storage/machines/rocknix-guest`, `/storage/.guest`, `/nix`, `/storage/.config/Cemu`, `/storage/roms`, `/storage/roms/bios/cemu`.
+- **Module organization:** packages are under `packages/<domain>/<package>` and project/device overlays under `projects/<Project>/...`. The active work is concentrated in `projects/ROCKNIX/packages/tools/nix-integration/` with `guest/`, `scripts/`, `system.d/`, `docs/`, and `tests/` subtrees.
+- **Monorepo-like structure:** convention-based distro tree, not npm/cargo workspaces. Relevant workspace for this plan is `projects/ROCKNIX/packages/tools/nix-integration/`, with host Cemu source-of-truth under `projects/ROCKNIX/packages/emulators/standalone/cemu-sa/`.
+
+### Architecture & Structure
+- **No `AGENTS.md`, `ARCHITECTURE.md`, or `CONTRIBUTING.md` found** in the scanned tree. Architecture is documented through `README.md`, package contract docs, plans, and solution notes.
+- **Layer 14 contract:** `projects/ROCKNIX/packages/tools/nix-integration/docs/layer14-main-space-contract.md` defines the thin-host architecture: clean nspawn unit, no host `/usr`/`/lib`/`/etc/profile`/`/etc/resolv.conf` leaks, narrow device binds, shared netns, guest-owned display/audio/network, and host reclaim on crash.
+- **Layer 14 systemd unit:** `projects/ROCKNIX/packages/tools/nix-integration/system.d/rocknix-guest-v2.service` is the main boundary file. It binds `/dev/snd`, `/dev/rfkill`, DRM nodes, `/dev/input`, `/dev/tty0`, `/dev/tty1`, staged `/run/.guest-udev`, sysfs CPU/GPU tuning paths, `/storage/roms` read-only, and `/storage/.guest` read-write. It explicitly forbids broad host binds by design comments and static checks.
+- **Guest profile:** `projects/ROCKNIX/packages/tools/nix-integration/guest/profiles/main-space.nix` composes `base`, `tools`, `ssh`, `display`, `audio`, `network`, and `lid` modules; starts `rocknix-sway-kiosk`; embeds Thor-specific sway output/touch routing.
+- **Display/GPU module:** `guest/modules/display.nix` enables `hardware.graphics` and `programs.sway`, ships `mesa-demos` and `vulkan-tools`, and sets wlroots safety env vars (`WLR_NO_HARDWARE_CURSORS=1`, `WLR_LIBINPUT_NO_DEVICES=1`).
+- **Recovery path:** `docs/HOW-TO-FALL-BACK.md`, `scripts/rocknix-recovery-toggle`, and `scripts/rocknix-host-reclaim` are first-class safety mechanisms. `THIN_HOST=yes` must remain SM8550-only and recoverable by `/flash/rocknix.no-nspawn` or `rocknix.safe=1`.
+- **Fast iteration:** `scripts/local-image-build` and `.github/workflows/build-image-only.yml` are the preferred image iteration paths for `nix-integration`/post-install work. `build-image-only.yml` can flip `THIN_HOST` at image step and forces `./scripts/clean nix-integration` by default.
+
+### Issue Conventions
+- **Issue template:** `.github/ISSUE_TEMPLATE/bug-report.md` requires prior Discord discussion, bug description, reproduction steps, ROCKNIX version, hardware platform, logs, and context. Default title prefix is `[BUG]`; default labels are `ISSUE NEEDS REVIEW`.
+- **Blank issues disabled:** `.github/ISSUE_TEMPLATE/config.yml` sets `blank_issues_enabled: false` and routes help/feature requests to Discord.
+- **PR template:** `.github/pull_request_template.md` expects Summary, Testing, Additional Context, and an explicit AI-usage answer (`YES | PARTIALLY | NO`).
+- **Automation:** `.github/workflows/ai-usage.yml` creates/maintains an `ai-generated` label and applies it when the PR description answers AI usage as `YES` or `PARTIALLY`.
+- **Local issue history:** no repository-local exported issue corpus was found; conventions above are template/automation-based rather than observed from downloaded issues.
+
+### Documentation Insights
+- **Plans are structured:** `docs/plans/*.md` use YAML front matter (`title`, `type`, `status`, `date`, `origin`, `scope`) and implementation units (`U1`, `U2`, etc.) with Goals, Requirements, Files, Approach, Test scenarios, Verification.
+- **Solutions are evidence logs:** `docs/solutions/performance-issues/rocknix-layer14-cemu-performance-audit-2026-05-09.md` records run directories, tables, decisions, and negative evidence. Follow-up planning should update this audit or add a sibling solution note after parity is proven.
+- **Relevant active plans:**
+  - `docs/plans/2026-05-09-001-fix-layer14-cemu-host-performance-plan.md`: remote Cemu performance harness and earlier Mesa/runtime findings.
+  - `docs/plans/2026-05-09-002-layer14-cemu-single-run-headless-validation-plan.md`: completed single-run validation; strongest headless result was `WARN max guest-gamescope-mangohud`.
+  - `docs/plans/2026-05-09-003-fix-layer14-cemu-build-parity-plan.md`: build fingerprinting and A/B harness plan.
+  - `docs/plans/2026-05-10-001-fix-rocknix-cemu-faithful-nix-plan.md`: faithful candidate plan; establishes host Cemu via guest display as diagnostic control.
+  - `docs/plans/2026-05-10-002-fix-rocknix-cemu-package-replica-plan.md`: direct package replica plan; current follow-up should build on this, not restart generic overrides.
+- **Testing expectations:** static checks are shell-driven (`projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-static-checks.sh`), plus runtime smoke (`nix-integration-runtime-smoke.sh`), plus device-side remote Cemu harness reports under `/storage/.guest/runs/`.
+
+### Templates Found
+- `.github/ISSUE_TEMPLATE/bug-report.md` — required fields: Discord pre-report confirmation, bug, reproduce, version/platform, log file, context.
+- `.github/ISSUE_TEMPLATE/config.yml` — disables blank issues; Discord contact links for support/features.
+- `.github/pull_request_template.md` — Summary, Testing, Additional Context, AI usage disclosure.
+- `.github/release-body.md` — release body template exists but was not central to Cemu/Layer 14 planning.
+- Planning/docs templates are implicit: existing `docs/plans` files show the expected YAML front matter and U-numbered implementation-unit format.
+
+### Implementation Patterns
+- **Host Cemu source-of-truth:** `projects/ROCKNIX/packages/emulators/standalone/cemu-sa/package.mk` uses commit `6f6c1299e29fa6e1062ae283a035b4ef787cc397`, all three ROCKNIX Cemu patches, bundled Cubeb (`sed` removes `find_package(cubeb)`), `glm` link-name fix, `-fpch-preprocess`, `-Wno-changes-meaning`, CMake feature flags, and installs binary/scripts/config/resources to `/usr/bin`, `/usr/config/Cemu`, `/usr/share/Cemu`.
+- **Host launcher contract:** `cemu-sa/scripts/start_cemu.sh` is the reference for `/storage/.config/Cemu`, `/storage/.local/share/Cemu`, `online/mlc01/keys` symlinks into `/storage/roms/bios/cemu`, controller profile setup, `settings.xml` mutation, audio sink, and `cemu -g` launch.
+- **Guest direct Cemu package:** `guest/flakes/cemu/rocknix-package-manifest.nix` and `rocknix-package.nix` define `cemu-rocknix-package` as a direct `stdenv.mkDerivation`, intentionally not `pkgs.cemu`/`baseCemu`/`overrideAttrs`/`wrapGAppsHook3`. It exports build evidence under `$out/nix-support/rocknix-cemu-build/`, asserts BOTW game profile, Cafe font, SM8550 settings, no dynamic `libcubeb`, and records `vulkan-loader-lib-path`.
+- **Current proven candidate path from planning context:** successful Thor run used `/nix/store/2vahrn6mc766rk5zchxk4a9601c0h648-cemu-rocknix-package-2.999.0-rocknix-package/bin/Cemu`, Nix Mesa 25.2.6, gameprofile present, RPL 153ms, HLE 145ms, visible ~40 FPS, CSV avg 38.11 / median 38.34 / p10 35.77. Prior host control was ~45 FPS.
+- **Stable guest launcher:** `guest/launchers/start_cemu_guest.sh` defaults to a hardcoded Nix Cemu store path but supports `CEMU_BIN`; seeds packaged SM8550 settings if present; reads `nix-support/rocknix-cemu-build/vulkan-loader-lib-path` and prepends it to `LD_LIBRARY_PATH` for Cemu's `dlopen` Vulkan path.
+- **Candidate wrapper:** `guest/launchers/start_cemu_guest_candidate.sh` requires `CEMU_BIN` and then delegates to `start_cemu_guest.sh`, preserving config/cache semantics while only swapping the binary.
+- **ROCKNIX Mesa diagnostic:** `guest/launchers/start_cemu_guest_rocknixmesa.sh` sets `VK_ICD_FILENAMES`/`VK_DRIVER_FILES` and a narrow host Mesa lib shim, while explicitly keeping the Nix Vulkan loader. Docs mark this diagnostic-only and not a product path.
+- **BOTW launcher:** `guest/launchers/botw-guest.sh` has seven profiles (`potato-30`, `540p-30`, `540p-45`, `720p-30`, `720p-45`, `900p-30`, `native-30`), mutates `settings.xml` with `sed -z`, tunes CPU/GPU where writable, launches via `swaymsg`, and pins Cemu threads with default affinity `0xF8` unless `CEMU_AFFINITY_MASK=none`.
+- **Host-side GPU tuning:** `guest/launchers/host-tune.sh` must run on the ROCKNIX host because guest `/sys/class/devfreq` writes are unreliable/RO under nspawn.
+- **Remote harness:** `remote-cemu-runner.sh` creates per-run dirs with logs, host/guest state, screenshots, title FPS samples, MangoHud CSV, settings snapshot/restore, power restore, exact cleanup, and run locks. Variants include `host-control`, `guest-direct[-mangohud]`, `guest-gamescope[-mangohud]`, and `*-rocknixmesa*` diagnostic variants.
+- **Same-session/live A/B harnesses:** `remote-cemu-runtime-ab.sh` compares current and candidate Cemu binaries; `remote-cemu-live-campaign.sh` runs sequential live checkpoint cases and supports `ROCKNIX_PACKAGE_CEMU=...` or `CAMPAIGN_CASES=label=/nix/store/...`. These are the right starting point for same-session host-control parity.
+- **Build fingerprint:** `remote-cemu-build-fingerprint.sh` compares host `/usr/bin/cemu`, current guest Cemu, and candidate Cemu on versions, ELF headers/dynamic deps, runtime data, build evidence, Vulkan ICDs, and Nix references.
+- **Static gates:** `tests/nix-integration-static-checks.sh` already checks Layer 14 unit shape, forbidden binds, launcher syntax, `CEMU_BIN` support, run locks, settings snapshot/restore, candidate outputs, direct Cemu manifest/derivation, patch sync with host `cemu-sa`, SM8550 settings sync, build evidence, no dynamic Cubeb, and Vulkan-loader-path support.
+
+### Recommendations
+- **Plan should start from the current evidence, not older failed candidates.** Treat `cemu-rocknix-package` at `/nix/store/2vahr.../bin/Cemu` as the current winner-candidate and old `cemu-rocknix-style`, `classic-sdl`, and `faithful` outputs as controls/cleanup candidates.
+- **Same-session parity gate:** run a fresh host-control and candidate in the same scene/profile/session before promotion. Use `remote-cemu-live-campaign.sh` or harden it if host-control needs a special thin-host-compatible launch path. Compare visible in-game FPS plus MangoHud CSV; title/loading-only FPS should not promote.
+- **Mesa decision:** keep `start_cemu_guest_rocknixmesa.sh` as diagnostic-only unless a separate Mesa plan promotes it. Current winning fact used Nix Mesa 25.2.6, so promotion should not depend on ROCKNIX Mesa passthrough unless a same-session A/B proves otherwise.
+- **Promotion target:** after parity is proven, update `start_cemu_guest.sh` away from a stale hardcoded store path. Preferred repo-documented future path is a stable profile/symlink under `/storage/.guest/profile/bin/Cemu` or equivalent, with `cemu-rocknix-package` as the default. Also update `guest/launchers/README.md` validation status and Cemu store path notes.
+- **Cleanup target:** simplify/remove stale diagnostic complexity only after a passing same-session report is archived. Candidates for removal or demotion: older override outputs if no longer needed (`rocknix-style`, `classic-sdl`, `faithful`), excessive runtime A/B branches, host-Mesa variants from default matrices, and hardcoded obsolete store paths. Keep safety primitives: exact cleanup, locks, settings snapshot/restore, power restore, fingerprint report.
+- **Static checks to adjust with promotion:** add/modify checks in `nix-integration-static-checks.sh` so the stable launcher resolves the promoted Cemu path, `cemu-rocknix-package` remains present, direct package patch/config drift remains guarded, and diagnostic-only ROCKNIX Mesa cannot become the default product launcher accidentally.
+- **Document final decision:** write/update a `docs/solutions/performance-issues/...` note with run directories, host-control result (~45 FPS target), candidate result, Mesa/runtime stack, exact promoted Cemu output, and cleanup rationale. Follow existing solutions style with tables and “negative evidence” preserved.
+- **Build path:** use Fuji/aarch64 builder for Cemu builds; use `build-image-only.yml` or `scripts/local-image-build --thin-host` for image changes. Do not heavy-build on Thor.

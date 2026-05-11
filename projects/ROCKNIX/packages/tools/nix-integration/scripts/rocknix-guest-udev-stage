@@ -1,0 +1,115 @@
+#!/bin/sh
+# rocknix-guest-udev-stage: build a scrubbed /run/udev tree the Layer 14
+# nspawn guest can safely bind as its own /run/udev.
+#
+# Why
+# ===
+# Sway / wlroots use libseat to enumerate and open input devices. libseat
+# walks the kernel udev DB at /run/udev/data/* to find every device the
+# kernel knows about, then tries to canonicalize the by-path symlinks and
+# open the device nodes.
+#
+# ROCKNIX runs InputPlumber as the host owner of the raw gamepad and
+# touchscreen devices. InputPlumber tags some devices it claims with
+# `S:inputplumber/by-hidden/<name>` in the udev DB, telling cooperating
+# compositors "this device is mine, don't open it." Sway/wlroots/seatd
+# do NOT honour that tag. Instead, libseat sees the entry, tries to open
+# the underlying /dev/input/eventN node (which InputPlumber has already
+# hot-removed) and aborts with:
+#   [ERROR] [libseat] [seatd/seat.c:335] Could not canonicalize path
+#     /dev/input/eventN: No such file or directory
+# The first such error during DRM session bring-up has been observed to
+# cascade into a wlroots GPU-reset loop that turns both DSI panels black.
+#
+# The fix
+# =======
+# Stage a writable copy of /run/udev under a guest-private path and
+# delete every udev-DB record marked `inputplumber/by-hidden`. Bind that
+# scrubbed tree into the guest at /run/udev (read-only) so libseat sees
+# only the devices the host expects the guest to use.
+#
+# Validated on Thor 2026-05-08:
+#   - With raw /run/udev bound: sway aborts on event3 (the InputPlumber-
+#     hidden source for the AYN gamepad), GPU resets, panels go black.
+#   - With this scrubbed copy bound: sway boots cleanly, enumerates
+#     InputPlumber's emitted virtual keyboard / mouse / touch devices
+#     and the touchscreens (ft5x06 x2) without errors.
+#
+# Idempotent: safe to re-run on every guest start.
+
+set -eu
+
+STAGE_DIR="${STAGE_DIR:-/run/.guest-udev}"
+SOURCE_DIR="${SOURCE_DIR:-/run/udev}"
+HIDDEN_TAG="${HIDDEN_TAG:-inputplumber/by-hidden}"
+SOUND_UDEV_WAIT_SECS="${SOUND_UDEV_WAIT_SECS:-5}"
+
+log() { printf 'rocknix-guest-udev-stage: %s\n' "$*" >&2; }
+
+sound_udev_record_ready() {
+  for dev_file in /sys/class/sound/controlC*/dev; do
+    [ -r "${dev_file}" ] || continue
+    dev_id=$(cat "${dev_file}" 2>/dev/null || true)
+    [ -n "${dev_id}" ] || continue
+    if [ -f "${SOURCE_DIR}/data/c${dev_id}" ] && \
+        grep -q 'E:ALSA_CARD_NUMBER=' "${SOURCE_DIR}/data/c${dev_id}" 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+if [ ! -d "${SOURCE_DIR}" ]; then
+  log "source directory ${SOURCE_DIR} missing, nothing to stage"
+  exit 0
+fi
+
+sound_controls_present=0
+for dev_file in /sys/class/sound/controlC*/dev; do
+  [ -r "${dev_file}" ] || continue
+  sound_controls_present=1
+  break
+done
+
+if [ "${sound_controls_present}" = "1" ]; then
+  waited=0
+  while ! sound_udev_record_ready; do
+    if [ "${waited}" -ge "${SOUND_UDEV_WAIT_SECS}" ]; then
+      log "warning: sound control udev record is not ready after ${SOUND_UDEV_WAIT_SECS}s; staging current udev DB"
+      break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+fi
+
+mkdir -p "${STAGE_DIR}"
+
+# Wipe + repopulate. The udev DB is small (typically <600 entries) so a
+# full copy is cheap, and avoiding rsync lets this script run with just
+# busybox.
+rm -rf "${STAGE_DIR}"/*
+cp -a "${SOURCE_DIR}/." "${STAGE_DIR}/"
+
+# Remove every data file marked InputPlumber-hidden. grep -l is fine on
+# busybox; we expect a small number of matches (one per claimed device).
+hidden_count=0
+if [ -d "${STAGE_DIR}/data" ]; then
+  for entry in $(grep -l "${HIDDEN_TAG}" "${STAGE_DIR}/data/"* 2>/dev/null || true); do
+    rm -f "${entry}"
+    hidden_count=$((hidden_count + 1))
+  done
+fi
+
+# Tag-link cleanup: if any /run/udev/tags/*/c13:NN -> ../data/c13:NN
+# symlink targets a record we just deleted, prune it. This keeps libseat
+# from following dangling tag links during enumeration.
+if [ -d "${STAGE_DIR}/tags" ]; then
+  find "${STAGE_DIR}/tags" -type l 2>/dev/null | while read -r link; do
+    if [ ! -e "${link}" ]; then
+      rm -f "${link}"
+    fi
+  done
+fi
+
+log "staged ${SOURCE_DIR} -> ${STAGE_DIR} (removed ${hidden_count} hidden entries)"

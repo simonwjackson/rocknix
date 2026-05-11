@@ -26,7 +26,21 @@
           diffutils
           file
           gawk
-          gcc
+          # NOTE: this FHS env is NOT what runs the actual cold-start
+          # build. `scripts/local-image-build` invokes CI's ubuntu:jammy
+          # container instead, because every nixpkgs gcc breaks a
+          # different host-phase package against the rocknix package set:
+          #   gcc-13.4: sed-4.9 (no <stdckdint.h>, gnulib needs it)
+          #   gcc-14.3: sed-4.9 (acl.h uses bool with no <stdbool.h>)
+          #   gcc-15.2: ncurses-6.5 (NCURSES_BOOL=unsigned char vs
+          #                          libstdc++-15 distinct-bool traits)
+          # CI uses ubuntu:jammy with the default `gcc` package =
+          # gcc-11.4, and rocknix is only validated against that. We
+          # pin gcc-14 here purely so this FHS env is still usable for
+          # ad-hoc inspection (running scripts/build_distro by hand,
+          # running tests under projects/.../tests/, etc.); the actual
+          # build path now goes through podman + ./Dockerfile.
+          gcc14
           gnumake
           gnupatch
           gperf

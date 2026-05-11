@@ -23,6 +23,11 @@ on:
         description: "build official version"
         type: string
         required: true
+      THIN_HOST:
+        description: "Layer 14 thin-host main-space build (yes/no). SM8550 only."
+        type: string
+        required: false
+        default: "no"
 
 jobs:
   build-arm:
@@ -107,11 +112,17 @@ jobs:
       OWNER_LC: ${{ inputs.OWNER_LC }}
       NIGHTLY: ${{ inputs.NIGHTLY }}
       OFFICIAL: ${{ inputs.OFFICIAL }}
+      THIN_HOST: ${{ inputs.THIN_HOST }}
 
   purge-artifact:
     name: Artifacts cleanup
     needs: build-aarch64-image
-    if: ${{ always() && !cancelled() && !contains(needs.*.result, 'failure')  }}
+    # Only purge intermediate artifacts on the main release branches.
+    # Feature branches keep them so build-image-only.yml (the fast-iter
+    # workflow) can reuse arm / emu-libretro / emu-standalone instead
+    # of rebuilding the full ~5h matrix when iterating on the image
+    # step alone (e.g. nix-integration post_install changes).
+    if: ${{ always() && !cancelled() && !contains(needs.*.result, 'failure') && (github.ref_name == 'main' || github.ref_name == 'next' || startsWith(github.ref, 'refs/tags/')) }}
     runs-on: ubuntu-24.04
     steps:
       - uses: geekyeggo/delete-artifact@v6
