@@ -41,15 +41,22 @@ commit, source hash, submodule requirement, copied patches, pre-configure edits,
 CMake flags, runtime data assertions, and default SM8550 settings.
 
 `rocknix-package.nix` then builds Cemu directly and installs the runtime shape
-expected by the guest launcher:
+expected by the guest launcher and direct package entry point:
 
-- Cemu binary under `$out/bin/Cemu`.
-- `gameProfiles` and `resources` under `$out/share/Cemu` so BOTW sees
-  `gameProfiles/default/00050000101c9400.ini` and Cafe shared fonts.
-- SM8550 default settings under `$out/share/Cemu/config/SM8550/settings.xml`.
+- Real Cemu binary under `$out/bin/Cemu`.
+- Package-owned entry point under `$out/bin/cemu`; it prepends the package's Nix
+  Vulkan loader library path and applies the generic SDL screensaver guard before
+  execing `$out/bin/Cemu`.
+- `gameProfiles` and `resources` under `$out/share/Cemu`, with generic runtime
+  data assertions for default game profiles and Cafe shared fonts. BOTW remains a
+  validation workload, not a package build assertion.
+- SM8550 default settings under `$out/share/Cemu/config/SM8550/settings.xml` for
+  the current compatibility adapter; longer-term this belongs in a guest/device
+  profile rather than the generic package surface.
 - Build evidence under `$out/nix-support/rocknix-cemu-build/`, including CMake
-  flags, ELF/linkage evidence, Cubeb evidence, runtime-data checks, and
-  `vulkan-loader-lib-path` for Cemu's `dlopen`-based Vulkan loader discovery.
+  flags, ELF/linkage evidence, Cubeb evidence, runtime-data checks, wrapper
+  metadata, and `vulkan-loader-lib-path` for Cemu's `dlopen`-based Vulkan loader
+  discovery.
 
 ## Runtime decision
 

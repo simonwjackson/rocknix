@@ -143,7 +143,26 @@ stdenv.mkDerivation rec {
     fi
 
     install -Dm755 "$cemuBinary" "$out/bin/Cemu"
-    ln -s Cemu "$out/bin/cemu"
+    cat > "$out/bin/cemu" <<EOF
+#!${stdenv.shell}
+set -eu
+
+cemu_wrapper_dir=\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)
+vulkan_loader_lib_path="${lib.makeLibraryPath [ vulkan-loader ]}"
+
+if [ -n "\$vulkan_loader_lib_path" ]; then
+  export LD_LIBRARY_PATH="\$vulkan_loader_lib_path''${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+fi
+
+# Cemu's Linux screensaver-inhibit path has crashed in SDL compatibility
+# stacks during ROM startup. The package entry point keeps this generic runtime
+# guard with the emulator instead of requiring ROCKNIX launcher glue.
+export SDL_VIDEO_ALLOW_SCREENSAVER="''${SDL_VIDEO_ALLOW_SCREENSAVER:-1}"
+export SDL_HINT_VIDEO_ALLOW_SCREENSAVER="''${SDL_HINT_VIDEO_ALLOW_SCREENSAVER:-1}"
+
+exec "\$cemu_wrapper_dir/Cemu" "\$@"
+EOF
+    chmod 755 "$out/bin/cemu"
 
     mkdir -p "$out/share/Cemu/config/SM8550"
     cp ${./settings.SM8550.xml} "$out/share/Cemu/config/SM8550/settings.xml"
@@ -169,8 +188,12 @@ stdenv.mkDerivation rec {
       cp -r "$dataDir" "$out/share/Cemu/"
     done
 
-    test -f "$out/share/Cemu/gameProfiles/default/00050000101c9400.ini" || {
-      echo "error: BOTW game profile missing from direct ROCKNIX Cemu output" >&2
+    test -d "$out/share/Cemu/gameProfiles/default" || {
+      echo "error: Cemu default gameProfiles runtime data missing from direct ROCKNIX Cemu output" >&2
+      exit 1
+    }
+    find "$out/share/Cemu/gameProfiles/default" -type f -name '*.ini' -print -quit | grep -q . || {
+      echo "error: Cemu default gameProfiles runtime data contains no profiles" >&2
       exit 1
     }
     test -f "$out/share/Cemu/resources/sharedFonts/CafeCn.ttf" || {
@@ -209,6 +232,9 @@ stdenv.mkDerivation rec {
       printf '%s\n' 'patches=${lib.concatMapStringsSep " " (patch: patch.name) manifest.patches}'
       printf '%s\n' 'expected-runtime-data=${lib.concatStringsSep " " manifest.runtimeData}'
       printf '%s\n' 'default-settings=share/Cemu/config/SM8550/settings.xml'
+      printf '%s\n' 'package-entry-point=bin/cemu'
+      printf '%s\n' 'real-binary=bin/Cemu'
+      printf '%s\n' 'wrapper-vulkan-loader=true'
       printf '%s\n' 'bundled-cubeb=true'
       printf '%s\n' 'no-dynamic-cubeb=true'
       printf '%s\n' 'vulkan-loader-lib-path=${lib.makeLibraryPath [ vulkan-loader ]}'

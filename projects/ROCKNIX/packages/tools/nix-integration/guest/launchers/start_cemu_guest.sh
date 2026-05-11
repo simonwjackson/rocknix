@@ -10,10 +10,11 @@
 # /usr/bin/start_cemu.sh inside the guest.
 set -eu
 
-# Default to the promoted direct ROCKNIX package profile. This avoids
-# baking a stale /nix/store hash into the product launcher while keeping
-# CEMU_BIN available for parity/rollback diagnostics.
-PROMOTED_CEMU=${CEMU_PROMOTED_BIN:-/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/Cemu}
+# Default to the promoted direct package's package-owned entry point. This
+# avoids baking a stale /nix/store hash into the product launcher while keeping
+# CEMU_BIN available for parity/rollback diagnostics. Older promoted profiles
+# exposed bin/cemu as a symlink to bin/Cemu, so this remains rollback-safe.
+PROMOTED_CEMU=${CEMU_PROMOTED_BIN:-/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/cemu}
 CEMU=${CEMU_BIN:-$PROMOTED_CEMU}
 
 ROM="${1:-}"
@@ -51,7 +52,10 @@ CEMU_VULKAN_LOADER_LIB_PATH="${CEMU_OUT}/nix-support/rocknix-cemu-build/vulkan-l
 if [ ! -f "${CEMU_CONFIG_ROOT}/settings.xml" ] && [ -f "$CEMU_DEFAULT_SETTINGS" ]; then
   cp "$CEMU_DEFAULT_SETTINGS" "${CEMU_CONFIG_ROOT}/settings.xml"
 fi
-if [ -f "$CEMU_VULKAN_LOADER_LIB_PATH" ]; then
+# New direct packages own Vulkan loader visibility in bin/cemu. Keep this
+# compatibility path only for explicit CEMU_BIN=/.../bin/Cemu diagnostics and
+# older promoted profiles where bin/cemu was still a symlink to bin/Cemu.
+if [ -f "$CEMU_VULKAN_LOADER_LIB_PATH" ] && [ "$(basename "$CEMU_REAL")" != "cemu" ]; then
   export LD_LIBRARY_PATH="$(cat "$CEMU_VULKAN_LOADER_LIB_PATH")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
