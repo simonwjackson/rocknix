@@ -4,12 +4,8 @@
 #
 # Layer 14 standalone soak harness.
 #
-# Runs the new rocknix-guest-v2.service alongside the legacy host UI on
-# the existing image (THIN_HOST=no) and samples 8 invariants every hour.
+# Samples the guest/main-space runtime invariants every hour.
 # Pass criteria: zero alarms across N hourly samples (default 24).
-#
-# This is the gate before flipping THIN_HOST=yes on a flashed image.
-# A clean 24h run earns the right to take the swing.
 #
 # Usage:
 #   rocknix-layer14-soak [--hours N] [--interval-seconds S] [--guest-pid PID]

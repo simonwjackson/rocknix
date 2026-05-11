@@ -10,9 +10,6 @@ PKG_DEPENDS_TARGET="toolchain"
 PKG_LONGDESC="nix-integration: custom-image Nix tooling for ROCKNIX"
 PKG_TOOLCHAIN="manual"
 
-# Layer 14 thin-host main-space build flag. SM8550-only.
-THIN_HOST="${THIN_HOST:-no}"
-
 # Pinned source of the Nix main-space guest. The host repo carries
 # only the bootstrap plumbing for the guest; the guest itself lives in
 # https://github.com/simonwjackson/rocknix-nix-guest and is fetched
@@ -26,11 +23,11 @@ PKG_NIX_GUEST_SHA256="0b5be6020609e31a63bed073a87b7b14cc7e66f7456e7a9002becee5a5
 PKG_NIX_GUEST_URL="https://github.com/simonwjackson/rocknix-nix-guest/archive/${PKG_NIX_GUEST_REV}.tar.gz"
 
 post_install() {
-  # Layer 14 hard guard: THIN_HOST=yes is SM8550-only. Other devices
-  # do not have the validated guest closure (Tier A-E spike series
-  # ran on Thor/SM8550) and we refuse to ship the build flag for them.
-  if [ "${THIN_HOST}" = "yes" ] && [ "${DEVICE}" != "SM8550" ]; then
-    echo "Layer 14 nix-integration: THIN_HOST=yes is SM8550-only (got DEVICE=${DEVICE})" >&2
+  # nix-integration is an SM8550-only package. Other devices do not
+  # have the validated guest closure (Tier A-E spike series ran on
+  # Thor/SM8550) and should not include this package.
+  if [ "${DEVICE}" != "SM8550" ]; then
+    echo "nix-integration: SM8550-only (got DEVICE=${DEVICE})" >&2
     exit 1
   fi
 
@@ -92,43 +89,17 @@ post_install() {
   enable_service nix-storage-setup.service
   enable_service nix.mount
 
-  # Layer 14 main-space wiring. The whole boot-routing / runtime block
-  # (recovery-toggle service, rocknix-graphical.target, guest unit
-  # WantedBy that target) is gated strictly behind THIN_HOST=yes so a
-  # legacy (THIN_HOST=no) image is byte-equivalent to today's modulo
-  # inert files in /usr/bin/ and /usr/lib/systemd/system/.
-  #
-  # Lesson from the first flash on Thor (2026-05-08): scripts/install
-  # globs system.d/*.* unconditionally, so rocknix-graphical.target
-  # ends up on disk even when this conditional `cp` is skipped. The
-  # target's mere presence let the toggle's existence-check fire and
-  # rewrite default.target, breaking the THIN_HOST=no contract. Fix
-  # below: under THIN_HOST=no, safe_remove the target after the glob
-  # has copied it; under THIN_HOST=yes, leave it in place.
-  if [ "${THIN_HOST}" = "yes" ]; then
-    enable_service rocknix-graphical.target
-    enable_service rocknix-guest-v2.service
+  # Main-space wiring. SM8550 always boots the Nix guest by default;
+  # ROCKNIX remains the recovery plane via rocknix-recovery-toggle.
+  enable_service rocknix-graphical.target
+  enable_service rocknix-guest-v2.service
+  enable_service rocknix-recovery-toggle.service
 
-    # rocknix-recovery-toggle.service runs Before=sysinit.target and
-    # is what selects between rocknix-graphical.target (main-space)
-    # and graphical.target (legacy recovery) on every THIN_HOST=yes
-    # boot. It must NOT be enabled under THIN_HOST=no -- there is no
-    # rocknix-graphical.target to escape FROM, and silently rewriting
-    # default.target would violate the legacy-equivalent contract.
-    enable_service rocknix-recovery-toggle.service
-
-    # Ship the recovery readme to /flash/. Pulled from the fetched
-    # rocknix-nix-guest tarball (docs/contracts/HOW-TO-FALL-BACK.md) so
-    # a teardown / SD-card reader on another machine can read it without
-    # booting Thor.
-    mkdir -p ${INSTALL}/flash
-    cp "${guest_extract}/docs/contracts/HOW-TO-FALL-BACK.md" ${INSTALL}/flash/HOW-TO-FALL-BACK.md
-  else
-    # THIN_HOST=no: scrub the target file that scripts/install's glob
-    # copied. The file's mere presence on disk would let any future
-    # boot-time logic (or a stray manual `systemctl set-default`) flip
-    # the device into main-space mode without the build flag's consent.
-    safe_remove ${INSTALL}/usr/lib/systemd/system/rocknix-graphical.target
-  fi
+  # Ship the recovery readme to /flash/. Pulled from the fetched
+  # rocknix-nix-guest tarball (docs/contracts/HOW-TO-FALL-BACK.md) so
+  # a teardown / SD-card reader on another machine can read it without
+  # booting Thor.
+  mkdir -p ${INSTALL}/flash
+  cp "${guest_extract}/docs/contracts/HOW-TO-FALL-BACK.md" ${INSTALL}/flash/HOW-TO-FALL-BACK.md
 
 }
