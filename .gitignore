@@ -31,6 +31,9 @@ mkpkg-temp
 # direnv
 /.direnv/
 
+# nix build symlink
+/result
+
 # backup files
 *.orig
 
