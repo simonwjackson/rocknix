@@ -690,6 +690,12 @@ grep -q 'vulkan-loader-lib-path' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
   || fail "direct Cemu package must record its Vulkan loader path"
 grep -q 'CEMU_VULKAN_LOADER_LIB_PATH' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
   || fail "start_cemu_guest.sh must expose the packaged Vulkan loader to dlopen-based Cemu"
+grep -q 'Cemu runtime responsibility map' "${PKG_DIR}/guest/launchers/README.md" \
+  || fail "launcher README must document Cemu runtime responsibility peelback baseline"
+grep -q 'BOTW profile/settings mutation.*Validation workload only' "${PKG_DIR}/guest/launchers/README.md" \
+  || fail "launcher README must keep BOTW profile mutation out of generic Cemu runtime scope"
+grep -q 'guest-owned runtime peelback baseline' "${REPO_ROOT}/docs/solutions/performance-issues/rocknix-layer14-cemu-performance-audit-2026-05-09.md" \
+  || fail "Cemu performance audit must document guest-owned peelback baseline"
 grep -q 'cemu-promoted' "${PKG_DIR}/guest/launchers/remote-cemu-promote.sh" \
   || fail "remote-cemu-promote.sh must install direct Cemu into a dedicated promoted profile"
 grep -q 'vulkan-loader-lib-path' "${PKG_DIR}/guest/launchers/remote-cemu-promote.sh" \

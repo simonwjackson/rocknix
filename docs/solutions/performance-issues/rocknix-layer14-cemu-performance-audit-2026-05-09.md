@@ -303,3 +303,21 @@ Simplification decision:
 - Keep `cemu-rocknix-package`, promoted profile launch, `CEMU_BIN` rollback, exact cleanup, stale-window cleanup, fingerprinting, and typed host-control support.
 - Retire the override-based flake outputs and files (`cemu-rocknix-style`, `cemu-rocknix-style-classic-sdl`, `cemu-rocknix-faithful`).
 - Remove ROCKNIX-Mesa variants from default validation matrices; require an explicit diagnostic opt-in.
+
+### 2026-05-11 guest-owned runtime peelback baseline
+
+The next step is not more emulator breadth. It is to peel Cemu away from ROCKNIX launcher glue while preserving in-game performance. The current responsibility map is:
+
+| Responsibility | Current owner | Target owner | Keep condition |
+|---|---|---|---|
+| Cemu build/resources | Direct Nix package | Cemu package | Always; generic runtime data only, not BOTW-specific assertions. |
+| Vulkan loader visibility | `start_cemu_guest.sh` | Cemu package wrapper | Required until direct package launch proves Vulkan without old launcher setup. |
+| Promoted binary selection | Launcher/profile helper | Deployment adapter | Temporary until direct package entry is proven and rollback remains clear. |
+| HOME/XDG/display/audio defaults | Launcher plus guest Sway unit | Guest session profile | Keep in guest session, not in the generic Cemu package. |
+| `/storage` settings/saves/keys layout | Launcher | Guest compatibility adapter or migration | Keep only to preserve existing user state; avoid package hardcoding. |
+| SM8550 settings/performance policy | Package/launcher/BOTW helper | Guest/device profile | Keep only with measured benefit or compatibility need. |
+| CPU/GPU tuning and affinity | BOTW helper/host tune | SM8550 profile, host helper only if privileged | Keep only with paired in-game evidence and restore path. |
+| BOTW profile mutation | `botw-guest.sh` | Game-specific validation helper | Validation workload only; never generic derivation scope. |
+| Host Cemu control | Diagnostic launcher | Diagnostic harness | Future parity control only, not product path. |
+
+Each peelback should compare against the promoted baseline and classify the result as PASS, FAIL, or INCONCLUSIVE using live in-game evidence, Vulkan/driver logs, MangoHud stats, and cleanup proof.
