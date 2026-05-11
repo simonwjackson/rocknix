@@ -87,23 +87,24 @@ if [ -f "${CEMU_CONFIG_ROOT}/settings.xml" ] && [ ! -e "${CEMU_HOME_CONFIG}/sett
   ln -sf "${CEMU_CONFIG_ROOT}/settings.xml" "${CEMU_HOME_CONFIG}/settings.xml"
 fi
 
-# Audio + display env -- inherit from caller; only fill defaults
-export SDL_AUDIODRIVER="${SDL_AUDIODRIVER:-pulseaudio}"
-# nixpkgs SDL2 is sdl2-compat (SDL3 shim); SDL3's screensaver-inhibit
-# path crashes in C++ regex code on first ROM load. Tell SDL to skip
-# the inhibit entirely.
-export SDL_VIDEO_ALLOW_SCREENSAVER=1
-export SDL_HINT_VIDEO_ALLOW_SCREENSAVER=1
-export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}"
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/0}"
-export HOME="${HOME:-/storage}"
-export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/storage/.cache}"
+# Display/audio/XDG defaults are owned by the Layer 14 guest session. A normal
+# product launch reaches this script through swaymsg and therefore inherits
+# them from rocknix-sway-kiosk. Debug shells must provide them explicitly rather
+# than silently writing to root paths.
+: "${XDG_RUNTIME_DIR:?missing XDG_RUNTIME_DIR; launch from guest session or export it explicitly}"
+: "${WAYLAND_DISPLAY:?missing WAYLAND_DISPLAY; launch from guest session or export it explicitly}"
+: "${HOME:?missing HOME; launch from guest session or export it explicitly}"
+: "${XDG_CONFIG_HOME:?missing XDG_CONFIG_HOME; launch from guest session or export it explicitly}"
+: "${XDG_DATA_HOME:?missing XDG_DATA_HOME; launch from guest session or export it explicitly}"
+: "${XDG_CACHE_HOME:?missing XDG_CACHE_HOME; launch from guest session or export it explicitly}"
+: "${SDL_AUDIODRIVER:?missing SDL_AUDIODRIVER; launch from guest session or export it explicitly}"
 
-# Force HOME to /storage so cemu's XDG paths point at shared config,
-# regardless of caller env (sway-kiosk inherits HOME=/root).
-export HOME=/storage
-export XDG_CONFIG_HOME=/storage/.config
-export XDG_DATA_HOME=/storage/.local/share
+# Compatibility for explicit CEMU_BIN=/.../bin/Cemu rollback diagnostics. The
+# package-owned bin/cemu entry point owns this Cemu-specific SDL guard now.
+if [ "$(basename "$CEMU_REAL")" != "cemu" ]; then
+  export SDL_VIDEO_ALLOW_SCREENSAVER=1
+  export SDL_HINT_VIDEO_ALLOW_SCREENSAVER=1
+fi
 
 # Capture stdout/stderr so we can see what cemu prints. Append, not
 # overwrite, so multi-launch sessions still leave a trail.
