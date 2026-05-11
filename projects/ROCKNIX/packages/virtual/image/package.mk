@@ -107,7 +107,7 @@ mkdir -p ${INSTALL}
 ln -sf /storage/.opt ${INSTALL}/opt
 PKG_DEPENDS_TARGET+=" entware"
 
-# Experimental Nix integration support
-[ "${NIX_INTEGRATION_SUPPORT}" = "yes" ] && PKG_DEPENDS_TARGET+=" nix-integration"
+# Nix integration: SM8550-only (Layer 14 thin-host main-space).
+[ "${DEVICE}" = "SM8550" ] && PKG_DEPENDS_TARGET+=" nix-integration"
 
 true

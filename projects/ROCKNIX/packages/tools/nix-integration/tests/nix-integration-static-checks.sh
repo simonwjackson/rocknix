@@ -171,11 +171,12 @@ grep -q 'nspawn_bin=' "${PKG_DIR}/scripts/nixctl" || fail "Layer 10 provenance m
 
 SYSTEMD_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/systemd/package.mk"
 [ -f "${SYSTEMD_PKG}" ] || fail "missing ROCKNIX systemd package.mk"
-grep -q 'NIX_INTEGRATION_SUPPORT=' "${REPO_ROOT}/projects/ROCKNIX/options" || fail "missing NIX_INTEGRATION_SUPPORT build option"
-grep -q 'NIX_NSPAWN_SUPPORT=' "${REPO_ROOT}/projects/ROCKNIX/options" || fail "missing NIX_NSPAWN_SUPPORT build option"
-grep -q 'nix-integration' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk" || fail "image package does not include nix-integration gate"
-grep -q 'NIX_NSPAWN_SUPPORT=' "${SYSTEMD_PKG}" || fail "systemd package missing Layer 9 nspawn support gate"
-grep -q 'if \[ "${NIX_NSPAWN_SUPPORT}" != "yes" \]' "${SYSTEMD_PKG}" || fail "systemd package must remove nspawn only when Layer 9 support is disabled"
+# nix-integration is included for SM8550 only (Layer 14 thin-host).
+grep -q '\[ "\${DEVICE}" = "SM8550" \] && PKG_DEPENDS_TARGET+=" nix-integration"' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk" \
+  || fail "image package must gate nix-integration on DEVICE=SM8550"
+# systemd ships nspawn only on SM8550 (everything else strips it).
+grep -q 'if \[ "${DEVICE}" != "SM8550" \]' "${SYSTEMD_PKG}" \
+  || fail "systemd package must strip nspawn on non-SM8550 devices"
 grep -q 'safe_remove ${INSTALL}/usr/bin/systemd-nspawn' "${SYSTEMD_PKG}" || fail "systemd package missing nspawn binary removal fallback"
 grep -q 'safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-nspawn@.service' "${SYSTEMD_PKG}" || fail "systemd package missing nspawn unit removal fallback"
 ! grep -qE 'enable_service .*nspawn' "${SYSTEMD_PKG}" || fail "systemd package must not enable nspawn services by default"

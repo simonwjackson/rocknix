@@ -10,7 +10,6 @@ PKG_URL="https://github.com/systemd/systemd-stable/archive/v${PKG_VERSION}.tar.g
 PKG_DEPENDS_TARGET="toolchain libcap kmod util-linux libidn2 Python3:host Jinja2:host pcre2 zstd libgcrypt openssl"
 PKG_LONGDESC="A system and session manager for Linux, compatible with SysV and LSB init scripts."
 
-NIX_NSPAWN_SUPPORT="${NIX_NSPAWN_SUPPORT:-no}"
 SYSTEMD_DEFAULT_HIERARCHY="${SYSTEMD_DEFAULT_HIERARCHY:-hybrid}"
 
 PKG_MESON_OPTS_TARGET="--libdir=/usr/lib \
@@ -160,8 +159,9 @@ post_makeinstall_target() {
   # adjust systemd-hwdb-update (we have read-only /etc).
   sed '/^ConditionNeedsUpdate=.*$/d' -i ${INSTALL}/usr/lib/systemd/system/systemd-hwdb-update.service
 
-  # remove nspawn unless explicitly preserved for Layer 9 proof images
-  if [ "${NIX_NSPAWN_SUPPORT}" != "yes" ]; then
+  # systemd-nspawn ships only on SM8550 (the thin-host main-space target).
+  # Strip it from every other device's image -- they have no use for it.
+  if [ "${DEVICE}" != "SM8550" ]; then
     safe_remove ${INSTALL}/usr/bin/systemd-nspawn
     safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-nspawn@.service
   fi
