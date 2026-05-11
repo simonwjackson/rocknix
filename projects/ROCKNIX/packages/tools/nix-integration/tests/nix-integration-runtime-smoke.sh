@@ -89,9 +89,9 @@ if [ "${ROCKNIX_LAYER14_LIVE_SMOKE:-0}" = "1" ]; then
   systemctl list-unit-files rocknix-guest-v2.service >/dev/null 2>&1 || fail "rocknix-guest-v2.service not installed"
   systemctl list-unit-files rocknix-recovery-toggle.service >/dev/null 2>&1 || fail "recovery toggle service not installed"
 
-  default_target=$(readlink /etc/systemd/system/default.target 2>/dev/null || true)
+  default_target=$(systemctl get-default 2>/dev/null || true)
   case "${default_target}" in
-    *rocknix-graphical.target|*rocknix.target) : ;;
+    rocknix-graphical.target|rocknix.target) : ;;
     *) fail "default.target points at unexpected target: ${default_target}" ;;
   esac
 fi
