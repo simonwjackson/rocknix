@@ -66,9 +66,6 @@ post_install() {
   cp ${PKG_DIR}/tests/nix-integration-runtime-smoke.sh ${INSTALL}/usr/lib/nix-integration/tests
   chmod 0755 ${INSTALL}/usr/lib/nix-integration/tests/nix-integration-runtime-smoke.sh
 
-  mkdir -p ${INSTALL}/usr/lib/nix-integration/modules
-  cp -PR ${PKG_DIR}/modules/. ${INSTALL}/usr/lib/nix-integration/modules/
-
   # Fetch the pinned rocknix-nix-guest source and stage it under
   # /usr/lib/nix-integration/guest/. Cached under ${SOURCES}/ so
   # repeat builds (and the fast-iter image-only workflow) hit the
