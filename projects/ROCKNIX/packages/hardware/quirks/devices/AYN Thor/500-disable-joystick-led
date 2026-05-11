@@ -1,0 +1,14 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2024-present ROCKNIX (https://github.com/ROCKNIX)
+
+. /etc/profile.d/001-functions
+
+cat <<EOF >/storage/.config/profile.d/999-disable_joystick_led
+DEVICE_ANALOG_STICKS_LED_CONTROL="false"
+DEVICE_BATTERY_LED_STATUS="false"
+EOF
+
+set_setting led.color off
+systemctl stop batteryledstatus.service 2>/dev/null || true
+/usr/bin/ledcontrol off 2>/dev/null || true
