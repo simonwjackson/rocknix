@@ -33,6 +33,11 @@ In:
 - Guest NixOS modules: `display.nix` (sway + Mesa freedreno/turnip),
   `audio.nix` (pipewire + wireplumber + bluez + dbus),
   `network.nix` (NetworkManager + nftables, no resolvconf).
+- Cemu compatibility state remains narrow and explicit while the package
+  runtime is peeled back: `/storage/.config/Cemu`, `/storage/.local`,
+  `/storage/.config/MangoHud`, and writable `/storage/roms/bios` are
+  bound for guest-owned adapters; the generic Cemu package wrapper must
+  not hardcode these ROCKNIX paths.
 - 24-hour standalone soak harness `rocknix-layer14-soak` is the gate
   before flipping the build flag on a flashed image.
 - HOW-TO-FALL-BACK.md ships to `/flash/` on `THIN_HOST=yes` builds.
@@ -144,6 +149,28 @@ SM8550 only:
 
 The build flag hard-fails on any other device. Other ROCKNIX devices
 continue to build the legacy path with no behavior change.
+
+## Cemu compatibility state
+
+Layer 14 does not broad-bind `/storage`. Cemu-specific state is exposed
+through narrow compatibility binds and normalized inside the guest by
+`/storage/.guest/cemu-storage-adapter.sh` (installed from the guest
+launcher directory):
+
+- `/storage/.config/Cemu` — existing settings and package-seeded default
+  settings destination.
+- `/storage/.local` — preserves the historical `~/.local/share/Cemu`
+  symlink/state visible to Cemu when `HOME=/storage`.
+- `/storage/roms/bios` — writable compatibility root for `online`,
+  `mlc01`, and `keys`; this overrides the read-only `/storage/roms`
+  bind for that sub-tree only.
+- `/storage/.config/MangoHud` — validation overlay config; run-local
+  MangoHud configs should still point CSV output at their run directory.
+
+This is a temporary guest adapter contract, not a Cemu package contract.
+The package-owned `bin/cemu` entry point owns package-relative runtime
+setup such as Vulkan loader visibility and remains free of `/storage`,
+BOTW, and SM8550 policy.
 
 ## Sibling profiles
 

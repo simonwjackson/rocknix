@@ -105,6 +105,10 @@ ExecStart=/usr/bin/systemd-nspawn \
   --bind=/sys/class/devfreq \
   --bind=/sys/devices/system/cpu/cpufreq \
   --bind-ro=/storage/roms \
+  --bind=/storage/roms/bios:/storage/roms/bios \
+  --bind=/storage/.config/Cemu:/storage/.config/Cemu \
+  --bind=/storage/.config/MangoHud:/storage/.config/MangoHud \
+  --bind=/storage/.local:/storage/.local \
   --bind=/storage/.guest
 
 # When systemd-nspawn exits, hand off to reclaim. Reclaim distinguishes

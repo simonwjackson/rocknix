@@ -106,6 +106,10 @@
       XDG_CONFIG_HOME = "/storage/.config";
       XDG_DATA_HOME = "/storage/.local/share";
       XDG_CACHE_HOME = "/storage/.cache";
+      # Temporary Cemu compatibility root for existing ROCKNIX BIOS/keys/MLC
+      # state. cemu-storage-adapter.sh consumes this; the package wrapper does
+      # not know about ROCKNIX /storage paths.
+      CEMU_BIOS_ROOT = "/storage/roms/bios/cemu";
 
       WLR_NO_HARDWARE_CURSORS = "1";
       WLR_LIBINPUT_NO_DEVICES = "1";
