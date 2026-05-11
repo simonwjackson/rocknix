@@ -1,13 +1,16 @@
-# Cemu — ROCKNIX package replica for the Layer 14 Nix guest
+# Cemu — package-owned runtime for the Layer 14 Nix guest
 
-This flake builds the promoted Cemu path for the ROCKNIX Layer 14 Nix guest.
-The only product output is the direct package replica:
+This flake builds the promoted Cemu package for the ROCKNIX Layer 14 Nix guest.
+The product surface is intentionally one obvious package:
 
 ```sh
-nix build .#packages.aarch64-linux.cemu-rocknix-package --print-build-logs
+nix build .#packages.aarch64-linux.cemu --print-build-logs
 # or, equivalently:
 nix build .#packages.aarch64-linux.default --print-build-logs
 ```
+
+`cemu-rocknix-package` remains as a transitional compatibility alias while older
+scripts/docs are retired.
 
 Use Fuji or another aarch64 builder for compile-heavy work; Thor is the live
 validation target, not the builder.
@@ -31,8 +34,9 @@ performance.
 
 | Output | Purpose |
 |---|---|
-| `.#default` | Alias for the promoted direct ROCKNIX package replica. |
-| `.#cemu-rocknix-package` | Direct package replica used for promotion into `/nix/var/nix/profiles/per-user/root/cemu-promoted`. |
+| `.#default` | Alias for the promoted direct Cemu package. |
+| `.#cemu` | Primary package-owned runtime output. |
+| `.#cemu-rocknix-package` | Transitional compatibility alias for older promotion/build commands. |
 
 ## What the package mirrors
 
@@ -53,6 +57,11 @@ expected by the guest launcher and direct package entry point:
 - SM8550 default settings under `$out/share/Cemu/config/SM8550/settings.xml` for
   the current compatibility adapter; longer-term this belongs in a guest/device
   profile rather than the generic package surface.
+
+After package-owned launch was proven live, ROCKNIX launcher glue was thinned:
+`start_cemu_guest.sh` now selects/delegates to `$out/bin/cemu`, while storage and
+SM8550 policy live in guest adapters. Vulkan loader visibility and the SDL guard
+stay in the package-owned entry point.
 - Build evidence under `$out/nix-support/rocknix-cemu-build/`, including CMake
   flags, ELF/linkage evidence, Cubeb evidence, runtime-data checks, wrapper
   metadata, and `vulkan-loader-lib-path` for Cemu's `dlopen`-based Vulkan loader
