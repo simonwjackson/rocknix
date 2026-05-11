@@ -3,9 +3,13 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    # External package-only monorepo for SM8550 emulator packages. Keep the
+    # branch pin until https://github.com/simonwjackson/nix-sm8550/pull/1 is
+    # reviewed/merged, then collapse this to github:simonwjackson/nix-sm8550.
+    nix-sm8550.url = "git+ssh://git@github.com/simonwjackson/nix-sm8550.git?ref=feat/rocknix-cemu-monorepo";
   };
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, nix-sm8550 }:
     let
       targetSystem = "aarch64-linux";
       hostSystems = [ "x86_64-linux" "aarch64-linux" ];
@@ -16,7 +20,16 @@
       };
       mainSpaceConfiguration = nixpkgs.lib.nixosSystem {
         system = targetSystem;
-        modules = [ ./profiles/main-space.nix ];
+        modules = [
+          ./profiles/main-space.nix
+          ({ ... }: {
+            # Make the package-only monorepo the Cemu source of truth for the
+            # main-space guest while keeping ROCKNIX launch/storage/perf glue
+            # downstream in this repository.
+            nix.registry.nix-sm8550.flake = nix-sm8550;
+            environment.systemPackages = [ nix-sm8550.packages.${targetSystem}.cemu ];
+          })
+        ];
       };
       devEnvConfiguration = nixpkgs.lib.nixosSystem {
         system = targetSystem;
