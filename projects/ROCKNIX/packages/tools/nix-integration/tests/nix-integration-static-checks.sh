@@ -572,6 +572,7 @@ for launcher in \
   remote-cemu-promote.sh \
   host-tune.sh \
   launch-host-cemu-through-guest-display.sh \
+  cemu-storage-adapter.sh \
   start_cemu_guest.sh \
   start_cemu_guest_candidate.sh \
   start_cemu_guest_gamescope.sh \
@@ -585,6 +586,18 @@ grep -q 'CEMU_BIN:-$PROMOTED_CEMU' "${PKG_DIR}/guest/launchers/start_cemu_guest.
   || fail "start_cemu_guest.sh must preserve CEMU_BIN override over promoted profile"
 grep -q 'readlink -f "$CEMU"' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
   || fail "start_cemu_guest.sh must resolve promoted profile symlink before reading package metadata"
+grep -q 'cemu-storage-adapter.sh' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
+  || fail "start_cemu_guest.sh must delegate Cemu /storage user-data compatibility to cemu-storage-adapter.sh"
+! grep -q '^CEMU_\(CONFIG_ROOT\|HOME_CONFIG\|HOME_LOCAL\|BIOS\)=' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
+  || fail "start_cemu_guest.sh must not own Cemu user-data path layout directly"
+grep -q 'CEMU_DEFAULT_SETTINGS' "${PKG_DIR}/guest/launchers/cemu-storage-adapter.sh" \
+  || fail "cemu-storage-adapter.sh must own fresh-state default settings seeding"
+grep -q 'XDG_CONFIG_HOME' "${PKG_DIR}/guest/launchers/cemu-storage-adapter.sh" \
+  || fail "cemu-storage-adapter.sh must derive Cemu config paths from guest XDG_CONFIG_HOME"
+grep -q 'XDG_DATA_HOME' "${PKG_DIR}/guest/launchers/cemu-storage-adapter.sh" \
+  || fail "cemu-storage-adapter.sh must derive Cemu data paths from guest XDG_DATA_HOME"
+grep -q 'CEMU_BIOS_ROOT = "/storage/roms/bios/cemu"' "${PKG_DIR}/guest/profiles/main-space.nix" \
+  || fail "main-space session must own the temporary Cemu BIOS compatibility root"
 for env_name in XDG_RUNTIME_DIR WAYLAND_DISPLAY SDL_AUDIODRIVER HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME; do
   grep -q "${env_name} =" "${PKG_DIR}/guest/profiles/main-space.nix" \
     || fail "main-space sway session must own ${env_name} for guest-launched apps"
@@ -599,6 +612,18 @@ grep -q 'P3_MAX=2803200; *P7_MAX=2956800' "${PKG_DIR}/guest/launchers/botw-guest
   || fail "high-FPS BOTW validation profile must keep CPU unrestricted"
 grep -q 'GPU_MIN=680000000; *GPU_MAX=680000000' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
   || fail "high-FPS BOTW validation profile must keep GPU pinned to max"
+for bind_path in \
+  '--bind=/storage/.config/Cemu:/storage/.config/Cemu' \
+  '--bind=/storage/.config/MangoHud:/storage/.config/MangoHud' \
+  '--bind=/storage/.local:/storage/.local' \
+  '--bind=/storage/roms/bios:/storage/roms/bios'; do
+  grep -F -q -- "${bind_path}" "${PKG_DIR}/system.d/rocknix-guest-v2.service" \
+    || fail "rocknix-guest-v2.service missing narrow Cemu compatibility bind: ${bind_path}"
+done
+! grep -F -q -- '--bind=/storage \' "${PKG_DIR}/system.d/rocknix-guest-v2.service" \
+  || fail "rocknix-guest-v2.service must not broad-bind /storage"
+grep -q 'Cemu compatibility state' "${PKG_DIR}/docs/layer14-main-space-contract.md" \
+  || fail "layer14 main-space contract must document Cemu compatibility state ownership"
 grep -q '540p-45).*P3=2803200 P7=2956800 GMIN=680000000 GMAX=680000000' "${PKG_DIR}/guest/launchers/host-tune.sh" \
   || fail "host-tune high-FPS profile must preserve unrestricted CPU/GPU validation clocks"
 grep -q 'RUNNER_CEMU_START=' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
@@ -696,7 +721,9 @@ cmp -s "${HOST_CEMU_SA_DIR}/config/SM8550/settings.xml" "${CEMU_FLAKE_DIR}/setti
 grep -q 'config/SM8550/settings.xml' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
   || fail "direct Cemu package must install SM8550 default settings"
 grep -q 'CEMU_DEFAULT_SETTINGS' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
-  || fail "start_cemu_guest.sh must seed clean guests from packaged default settings"
+  || fail "start_cemu_guest.sh must pass packaged default settings metadata to the guest storage adapter"
+grep -q 'CEMU_DEFAULT_SETTINGS' "${PKG_DIR}/guest/launchers/cemu-storage-adapter.sh" \
+  || fail "cemu-storage-adapter.sh must seed clean guests from packaged default settings"
 grep -q 'readelf-header.txt' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
   || fail "direct Cemu package must capture ELF header evidence"
 grep -q 'readelf-dynamic.txt' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
