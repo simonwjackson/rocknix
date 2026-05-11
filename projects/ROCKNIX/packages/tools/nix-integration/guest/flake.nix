@@ -3,10 +3,8 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
-    # External package-only monorepo for SM8550 emulator packages. Keep the
-    # branch pin until https://github.com/simonwjackson/nix-sm8550/pull/1 is
-    # reviewed/merged, then collapse this to github:simonwjackson/nix-sm8550.
-    nix-sm8550.url = "github:simonwjackson/nix-sm8550/feat/rocknix-cemu-monorepo";
+    # External package-only monorepo for SM8550 emulator packages.
+    nix-sm8550.url = "github:simonwjackson/nix-sm8550";
   };
 
   outputs = { self, nixpkgs, nix-sm8550 }:

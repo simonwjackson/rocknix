@@ -6,16 +6,15 @@
         "nixpkgs-sdl2-classic": "nixpkgs-sdl2-classic"
       },
       "locked": {
-        "lastModified": 1778470822,
+        "lastModified": 1778471476,
         "narHash": "sha256-jytCr6hAHduGLXf2LRFLPBMUKdoOGEcEkyVZ4Ndw6dg=",
         "owner": "simonwjackson",
         "repo": "nix-sm8550",
-        "rev": "3d6ec95a183680e96c992f6de0ec2c9673178181",
+        "rev": "aad5273cf1c6fa9e007d44d9ef9236dcec7a55f2",
         "type": "github"
       },
       "original": {
         "owner": "simonwjackson",
-        "ref": "feat/rocknix-cemu-monorepo",
         "repo": "nix-sm8550",
         "type": "github"
       }
