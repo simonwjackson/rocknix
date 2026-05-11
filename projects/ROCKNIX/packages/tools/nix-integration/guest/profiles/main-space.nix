@@ -10,7 +10,34 @@
 #
 # Used by THIN_HOST=yes builds via nixosConfigurations.rocknix-guest-main-space
 # in flake.nix.
+#
+# Combined-profile note (2026-05-11): main-space now bakes the interactive
+# bits formerly only available in profiles/dev-env.nix -- a bottom swaybar
+# with clock/battery, the standard sway keybinds (Mod+Return foot,
+# Mod+d fuzzel, Mod+g games-launcher, workspaces 1-9, focus/move/layout),
+# and `exec foot` so a cold boot lands the user on something interactive
+# instead of a black screen. The audio/Steam/Cemu module composition is
+# unchanged.
 { lib, pkgs, ... }:
+
+let
+  # Status line script for swaybar. Lives as a separate file rather
+  # than inline in the bar block because sway's config parser strips
+  # shell quoting from `status_command`, which silently mangles any
+  # multi-token script. As an absolute path to a writeShellScript
+  # output, it survives sway parsing untouched and runs under the same
+  # bash the kiosk unit adds to its PATH.
+  swayBarStatus = pkgs.writeShellScript "sway-bar-status" ''
+    while true; do
+      cap=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null \
+         || cat /sys/class/power_supply/BAT*/capacity 2>/dev/null \
+         | head -1)
+      clock=$(date '+%H:%M')
+      printf '%s | bat %s%%\n' "$clock" "''${cap:-?}"
+      sleep 5
+    done
+  '';
+in
 
 {
   imports = [
@@ -21,6 +48,7 @@
     ../modules/audio.nix
     ../modules/network.nix
     ../modules/lid.nix
+    ../modules/steam.nix
   ];
 
   # Layer 14 hostname: distinguish from the Layer 10b minimal "rocknix-guest"
@@ -39,6 +67,27 @@
     Storage=volatile
     RuntimeMaxUse=64M
   '';
+
+  # Stable root session bus for the kiosk session and FHS-wrapped generic
+  # Linux apps such as Steam.  sway's wrapper can create a private dbus socket
+  # under /tmp via dbus-run-session, but that breaks FHS private-tmp wrappers:
+  # /run/user/0/bus becomes a symlink into a different /tmp.  Owning the bus at
+  # /run/user/0/bus keeps it visible through the bind-mounted /run namespace.
+  systemd.services.rocknix-session-dbus = {
+    description = "ROCKNIX Layer 14 root session D-Bus";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "rocknix-sway-kiosk.service" ];
+    serviceConfig = {
+      Type = "simple";
+      User = "root";
+      ExecStartPre = "${pkgs.coreutils}/bin/install -d -m 0700 -o 0 -g 0 /run/user/0";
+      ExecStart = "${pkgs.dbus}/bin/dbus-daemon --session --address=unix:path=/run/user/0/bus --nofork --nopidfile";
+      Restart = "on-failure";
+      RestartSec = 3;
+      StandardOutput = "journal";
+      StandardError = "journal";
+    };
+  };
 
   # Layer 14 first-light autostart wiring (Thor validation 2026-05-08).
   #
@@ -63,7 +112,8 @@
   systemd.services.rocknix-sway-kiosk = {
     description = "ROCKNIX Layer 14 sway kiosk session";
     wantedBy = [ "multi-user.target" ];
-    after = [ "multi-user.target" "systemd-user-sessions.service" ];
+    after = [ "multi-user.target" "systemd-user-sessions.service" "rocknix-session-dbus.service" ];
+    requires = [ "rocknix-session-dbus.service" ];
 
     # sway's wrapper invokes dbus-run-session which spawns dbus-daemon.
     # Without dbus on the unit's PATH the wrapper fails with
@@ -83,7 +133,26 @@
     # PATH on NixOS does not include any shell. Verified live on Thor
     # 2026-05-08: PATH inspection of sway's /proc/<pid>/environ showed
     # only nix store package bin/ dirs, none containing `sh`.
-    path = with pkgs; [ dbus foot swaybg swaylock bashInteractive ];
+    #
+    # Interactive-profile additions (combined main-space):
+    #   - fuzzel: launcher invoked by `bindsym $mod+d exec fuzzel`.
+    #   - git: handy for in-session scratch work; matches dev-env parity.
+    #   - coreutils: provides `date` and `cat` used by swayBarStatus.
+    #   - sway: makes the `swaybar` helper reachable. Sway forks swaybar
+    #     via execlp("swaybar", ...), same PATH-lookup mechanism as the
+    #     exec fix above. Without sway's bin/ on PATH the bar block
+    #     never spawns and only swaybg is visible.
+    path = with pkgs; [
+      dbus
+      foot
+      swaybg
+      swaylock
+      bashInteractive
+      fuzzel
+      git
+      coreutils
+      sway
+    ];
 
     serviceConfig = {
       Type = "simple";
@@ -100,7 +169,17 @@
       # Cemu's launcher should not have to manufacture Wayland/audio/XDG
       # basics; those belong to the Layer 14 guest session.
       XDG_RUNTIME_DIR = "/run/user/0";
-      WAYLAND_DISPLAY = "wayland-1";
+      # WAYLAND_DISPLAY intentionally NOT pre-set here. Sway exports its
+      # own WAYLAND_DISPLAY into the systemd activation environment when
+      # the compositor finishes initializing, which is what clients
+      # spawned via `swaymsg exec` / `bindsym ... exec` inherit. If we
+      # pre-set it on the unit, wlroots reads the same variable at
+      # startup, decides a parent Wayland socket exists, and selects its
+      # nested *Wayland* backend instead of DRM. Sway then dies with
+      # "backend/wayland/backend.c:608 Could not connect to remote
+      # display: No such file or directory". Verified live on Thor
+      # 2026-05-11 after cold boot.
+      DBUS_SESSION_BUS_ADDRESS = "unix:path=/run/user/0/bus";
       SDL_AUDIODRIVER = "pulseaudio";
       HOME = "/storage";
       XDG_CONFIG_HOME = "/storage/.config";
@@ -120,12 +199,22 @@
     };
   };
 
+  # Developer-shell packages baked in for parity with the former
+  # dev-env profile. None of these are needed by sway itself; they
+  # exist so the interactive keybinds below (Mod+d fuzzel, etc.) and
+  # an interactive `foot` shell are useful out of the box.
+  environment.systemPackages = with pkgs; [
+    fuzzel
+    git
+    htop
+    btop
+  ];
+
   # Bake a Thor-aware sway config into /etc. Mirrors legacy ROCKNIX's
   # /storage/.config/sway/config so the panels render correctly on the
   # AYN Thor: DSI-2 is the main 1080x1920 panel (held landscape, panel
   # is physically portrait, so transform 90), DSI-1 is the smaller
-  # 1080x1240 secondary panel which we leave disabled in main-space
-  # for now (kept for future dual-screen apps).
+  # 1080x1240 secondary panel.
   environment.etc."sway/config".text = ''
     # ROCKNIX Layer 14 sway config (Thor / SM8550).
     # Validated on Thor 2026-05-08: foot terminal renders readably in
@@ -171,5 +260,90 @@
     # kernels both rules are no-ops because no input matches them.
     input "0:0:ft5x06-top"    map_to_output DSI-2
     input "0:0:ft5x06-bottom" map_to_output DSI-1
+
+    # The panels are physically portrait and displayed with transform 90.
+    # Rotate touch coordinates the same way or taps land offset/rotated from
+    # the rendered surface. Validated live on Thor 2026-05-11.
+    input "0:0:ft5x06-top"    calibration_matrix 0 -1 1 1 0 0
+    input "0:0:ft5x06-bottom" calibration_matrix 0 -1 1 1 0 0
+
+    # ---- Interactive bindings (combined main-space, 2026-05-11) ----
+
+    set $mod Mod4
+
+    # Launch core apps
+    bindsym $mod+Return exec foot
+    bindsym $mod+d exec fuzzel
+    bindsym $mod+g exec /storage/.guest/games-launcher.sh
+    bindsym $mod+Shift+q kill
+    bindsym $mod+Shift+e exec swaymsg exit
+
+    # Reload config in place (useful for live tweaking)
+    bindsym $mod+Shift+c reload
+
+    # Focus
+    bindsym $mod+Left  focus left
+    bindsym $mod+Down  focus down
+    bindsym $mod+Up    focus up
+    bindsym $mod+Right focus right
+
+    # Move window
+    bindsym $mod+Shift+Left  move left
+    bindsym $mod+Shift+Down  move down
+    bindsym $mod+Shift+Up    move up
+    bindsym $mod+Shift+Right move right
+
+    # Layout
+    bindsym $mod+f       fullscreen toggle
+    bindsym $mod+space   floating toggle
+    bindsym $mod+s       layout stacking
+    bindsym $mod+w       layout tabbed
+    bindsym $mod+e       layout toggle split
+
+    # Workspaces
+    bindsym $mod+1 workspace number 1
+    bindsym $mod+2 workspace number 2
+    bindsym $mod+3 workspace number 3
+    bindsym $mod+4 workspace number 4
+    bindsym $mod+5 workspace number 5
+    bindsym $mod+6 workspace number 6
+    bindsym $mod+7 workspace number 7
+    bindsym $mod+8 workspace number 8
+    bindsym $mod+9 workspace number 9
+
+    bindsym $mod+Shift+1 move container to workspace number 1
+    bindsym $mod+Shift+2 move container to workspace number 2
+    bindsym $mod+Shift+3 move container to workspace number 3
+    bindsym $mod+Shift+4 move container to workspace number 4
+    bindsym $mod+Shift+5 move container to workspace number 5
+    bindsym $mod+Shift+6 move container to workspace number 6
+    bindsym $mod+Shift+7 move container to workspace number 7
+    bindsym $mod+Shift+8 move container to workspace number 8
+    bindsym $mod+Shift+9 move container to workspace number 9
+
+    # ---- Status bar ----
+    #
+    # status_command is a fixed absolute path to a writeShellScript
+    # output (Nix-built, immutable) so sway's config parser doesn't
+    # have to deal with shell quoting. The script writes one line
+    # every 5 s -- swaybar reads stdin line-by-line and redraws on
+    # each newline.
+    bar {
+      position bottom
+      status_command ${swayBarStatus}
+      colors {
+        background #1a1a1a
+        statusline #d4d4d4
+        focused_workspace #4d8eff #4d8eff #ffffff
+        active_workspace  #2a2a2a #2a2a2a #d4d4d4
+        inactive_workspace #1a1a1a #1a1a1a #888888
+      }
+    }
+
+    # ---- Auto-launch on session start ----
+    #
+    # One terminal so the user lands on something interactive instead
+    # of an empty dark screen. They can close it with Mod+Shift+Q.
+    exec foot
   '';
 }

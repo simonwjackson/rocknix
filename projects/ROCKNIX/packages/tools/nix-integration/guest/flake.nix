@@ -12,6 +12,11 @@
       targetSystem = "aarch64-linux";
       hostSystems = [ "x86_64-linux" "aarch64-linux" ];
       forAllHostSystems = nixpkgs.lib.genAttrs hostSystems;
+      packageSetFor = system:
+        let pkgs = nixpkgs.legacyPackages.${system};
+        in {
+          ayn-odin2-ucm = pkgs.callPackage ./packages/audio/ayn-odin2-ucm { };
+        };
       configuration = nixpkgs.lib.nixosSystem {
         system = targetSystem;
         modules = [ ./rocknix-guest.nix ];
@@ -25,7 +30,10 @@
             # main-space guest while keeping ROCKNIX launch/storage/perf glue
             # downstream in this repository.
             nix.registry.nix-sm8550.flake = nix-sm8550;
-            environment.systemPackages = [ nix-sm8550.packages.${targetSystem}.cemu ];
+            environment.systemPackages = [
+              nix-sm8550.packages.${targetSystem}.cemu
+              (packageSetFor targetSystem).ayn-odin2-ucm
+            ];
           })
         ];
       };
@@ -74,7 +82,7 @@
       packages = forAllHostSystems (hostSystem:
         let
           rootfs = mkRootfs hostSystem;
-        in {
+        in (packageSetFor hostSystem) // {
           inherit rootfs;
           default = rootfs;
         });
