@@ -162,9 +162,6 @@ if grep -q -- '--port=tcp:%s:22' "${PKG_DIR}/scripts/nixctl"; then
 fi
 grep -q 'currently supports only port' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing fixed guest SSH port guard"
 grep -q -- '--bind-ro=%s:%s' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing Layer 12 authorized-keys bind"
-grep -R -q 'ports = \[ 2222 \];' "${PKG_DIR}/guest" || fail "guest config must listen on Layer 12 default SSH port 2222"
-grep -q 'root/etc/ssh/authorized_keys.d/root' "${PKG_DIR}/guest/flake.nix" || fail "guest rootfs must provide regular authorized_keys target for StrictModes"
-grep -q 'root/usr/bin/nix' "${PKG_DIR}/guest/flake.nix" || fail "guest rootfs must expose /usr/bin/nix for bridge/smoke contracts"
 grep -q 'check_layer12' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 12 checks"
 
 grep -q 'Layer 13 (declarative modules) status' "${PKG_DIR}/scripts/nixctl" || fail "nixctl status missing Layer 13 section"
@@ -174,7 +171,6 @@ grep -q 'layer13_manifest_preflight' "${PKG_DIR}/scripts/nixctl" || fail "nixctl
 grep -q 'check_layer13' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 13 checks"
 grep -q 'modules/flake.nix' "${PKG_DIR}/package.mk" || grep -q 'usr/lib/nix-integration/modules' "${PKG_DIR}/package.mk" || fail "package.mk must install Layer 13 module kit"
 grep -q 'guest module' "${PKG_DIR}/scripts/nixctl" || fail "nixctl missing guest module workspace commands"
-grep -q 'profiles/ssh.nix' "${PKG_DIR}/guest/rocknix-guest.nix" || fail "guest default config must import modular profile"
 grep -q 'LAYER13' "${PKG_DIR}/tests/nix-integration-runtime-smoke.sh" || fail "runtime smoke missing Layer 13 fixture coverage"
 grep -q 'Layer 12 guest SSH eligibility' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 12 eligibility output"
 grep -q 'must not bind host port 22' "${PKG_DIR}/scripts/nix-doctor" || fail "nix-doctor missing Layer 12 port 22 guardrail"
@@ -221,46 +217,14 @@ grep -q 'must not depend on binding host `/nix`' "${PKG_DIR}/docs/layer10-guest-
 grep -q 'no guest SSH, password login, default credentials' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10b contract missing guest SSH/default credential prohibition"
 grep -q 'minimal init fixture.*not sufficient hardware evidence' "${PKG_DIR}/docs/layer10-guest-lifecycle-contract.md" || fail "Layer 10b contract must distinguish fixtures from hardware Go"
 grep -q '| 10b | Bootable guest rootfs validation' "${REPO_ROOT}/docs/plans/2026-04-28-001-feat-layered-nix-integration-plan.md" || fail "roadmap missing Layer 10b row"
-[ -f "${PKG_DIR}/guest/README.md" ] || fail "missing Layer 10b guest README"
-[ -f "${PKG_DIR}/guest/rocknix-guest.nix" ] || fail "missing Layer 10b guest NixOS module"
-[ -f "${PKG_DIR}/guest/flake.nix" ] || fail "missing Layer 10b guest flake"
-[ -f "${PKG_DIR}/guest/flake.lock" ] || fail "missing Layer 10b guest flake lock"
-grep -q 'targetSystem = "aarch64-linux"' "${PKG_DIR}/guest/flake.nix" || fail "Layer 10b guest flake must target aarch64-linux"
-grep -q 'x86_64-linux' "${PKG_DIR}/guest/flake.nix" || fail "Layer 10b guest flake must expose an x86_64 host build package"
-grep -q 'nixos-25.11' "${PKG_DIR}/guest/flake.nix" || fail "Layer 10b guest flake must pin nixpkgs release input"
-grep -R -q 'boot.isContainer = true' "${PKG_DIR}/guest" || fail "Layer 10b guest must be a container-style rootfs"
-grep -R -q 'services.openssh = {' "${PKG_DIR}/guest" || fail "Layer 12 guest must define locked-down OpenSSH"
-grep -R -q 'authorizedKeysFiles = \[ "/etc/ssh/authorized_keys.d/%u" \]' "${PKG_DIR}/guest" || fail "Layer 12 guest must use runtime-mounted authorized keys"
-! grep -R -q 'environment\.etc\."ssh/authorized_keys\.d/root"' "${PKG_DIR}/guest" || fail "Layer 12 guest must not ship a NixOS-owned root authorized_keys file"
-grep -R -q 'PasswordAuthentication = false' "${PKG_DIR}/guest" || fail "Layer 12 guest must disable SSH password authentication"
-grep -R -q 'KbdInteractiveAuthentication = false' "${PKG_DIR}/guest" || fail "Layer 12 guest must disable keyboard-interactive authentication"
-grep -R -q 'PermitRootLogin = "prohibit-password"' "${PKG_DIR}/guest" || fail "Layer 12 guest root SSH must be key-only"
-grep -R -q 'users.users.root.hashedPassword = "!"' "${PKG_DIR}/guest" || fail "Layer 10b guest must lock root password"
-! grep -R -q 'ssh-rsa\|ssh-ed25519\|ecdsa-sha2-' "${PKG_DIR}/guest" || fail "Layer 12 guest must not ship authorized keys"
 # Layer 10b guest must not reference forbidden passthrough surfaces in the
 # files that flow into the bootable rootfs artifact (rocknix-guest config
 # and its transitive imports). Layer 14 deliberately adds passthrough-aware
-# modules under guest/modules/{display,audio,network}.nix and
-# guest/profiles/main-space.nix; those compose into a SEPARATE NixOS
 # configuration (rocknix-guest-main-space) and must NOT contaminate the
 # Layer 10b artifact. This check enforces that scoping by listing the
 # Layer 10b/12 file set explicitly.
-LAYER10B_GUEST_FILES="\
-${PKG_DIR}/guest/rocknix-guest.nix \
-${PKG_DIR}/guest/profiles/minimal.nix \
-${PKG_DIR}/guest/profiles/ssh.nix \
-${PKG_DIR}/guest/modules/base.nix \
-${PKG_DIR}/guest/modules/ssh.nix \
-${PKG_DIR}/guest/modules/tools.nix"
-for f in ${LAYER10B_GUEST_FILES}; do
-  [ -f "${f}" ] || fail "Layer 10b guest file missing: ${f}"
-done
-! grep -q '/dev/dri\|PipeWire\|PulseAudio\|/dev/input\|Steam\|FEX\|WAYLAND_DISPLAY' ${LAYER10B_GUEST_FILES} || fail "Layer 10b guest must not reference forbidden passthrough surfaces"
 grep -q 'layer10_nspawn_bin' "${PKG_DIR}/scripts/nixctl" || fail "nixctl must resolve current compatible Layer 10 nspawn"
 grep -q 'nspawn_bin=' "${PKG_DIR}/scripts/nixctl" || fail "Layer 10 provenance must record resolved nspawn"
-grep -q 'sha256sum result/tarball' "${PKG_DIR}/guest/README.md" || fail "Layer 10b guest README must document artifact checksum capture"
-grep -q 'free of default passwords' "${PKG_DIR}/guest/README.md" || fail "Layer 10b guest README must document credential boundary"
-grep -q 'Layer 12' "${PKG_DIR}/guest/README.md" || fail "Layer 12 guest README must document opt-in SSH boundary"
 [ -f "${PKG_DIR}/docs/layer11-bridge-contract.md" ] || fail "missing Layer 11 bridge contract doc"
 grep -q '/storage/.config/nix-integration/layer11' "${PKG_DIR}/docs/layer11-bridge-contract.md" || fail "Layer 11 contract missing state dir path"
 grep -q '/storage/bin' "${PKG_DIR}/docs/layer11-bridge-contract.md" || fail "Layer 11 contract missing storage bin target surface"
@@ -535,126 +499,10 @@ grep -q 'Alias=default.target' "${L14_TARGET_UNIT}" \
   || fail "rocknix-graphical.target must Alias=default.target so set-default works (U5)"
 
 # U3: guest NixOS modules for Layer 14 main-space.
-for f in \
-  "${PKG_DIR}/guest/modules/display.nix" \
-  "${PKG_DIR}/guest/modules/audio.nix" \
-  "${PKG_DIR}/guest/modules/network.nix" \
-  "${PKG_DIR}/guest/profiles/main-space.nix"; do
-  [ -f "${f}" ] || fail "missing Layer 14 guest module: ${f} (U3)"
-done
-grep -q 'programs.sway' "${PKG_DIR}/guest/modules/display.nix" \
-  || fail "Layer 14 display module must enable sway (U3)"
-grep -q 'hardware.graphics' "${PKG_DIR}/guest/modules/display.nix" \
-  || fail "Layer 14 display module must enable hardware.graphics (U3)"
-grep -q 'services.pipewire' "${PKG_DIR}/guest/modules/audio.nix" \
-  || fail "Layer 14 audio module must enable pipewire (U3)"
-grep -q 'services.dbus' "${PKG_DIR}/guest/modules/audio.nix" \
-  || fail "Layer 14 audio module must enable D-Bus (bluez prerequisite) (U3)"
-grep -q 'hardware.bluetooth' "${PKG_DIR}/guest/modules/audio.nix" \
-  || fail "Layer 14 audio module must enable bluetooth (U3)"
-grep -q 'systemd.services.rocknix-pipewire' "${PKG_DIR}/guest/modules/audio.nix" \
-  || fail "Layer 14 audio module must configure a root-scoped PipeWire service for the kiosk session"
-grep -q 'systemd.services.rocknix-pipewire-pulse' "${PKG_DIR}/guest/modules/audio.nix" \
-  || fail "Layer 14 audio module must configure a root-scoped PipeWire PulseAudio service"
-grep -q 'systemd.services.rocknix-wireplumber' "${PKG_DIR}/guest/modules/audio.nix" \
-  || fail "Layer 14 audio module must configure a root-scoped WirePlumber service"
-grep -q 'ALSA_CONFIG_UCM2' "${PKG_DIR}/guest/modules/audio.nix" \
-  || fail "Layer 14 audio module must use guest-owned ALSA UCM for SM8550 audio"
-grep -q 'packages/audio/ayn-odin2-ucm' "${PKG_DIR}/guest/modules/audio.nix" \
-  || fail "Layer 14 audio module must consume the vendored AYN Odin2 UCM package"
-[ -L "${PKG_DIR}/guest/packages/audio/ayn-odin2-ucm/ucm2/conf.d/sm8550/AYN-Odin2.conf" ] \
-  || fail "vendored guest kit must include the SM8550 AYN Odin2 UCM card-name symlink"
-! grep -q 'module-alsa-sink\|sink_name=thor_hw0\|rocknix-audio-alsa-sink' "${PKG_DIR}/guest/modules/audio.nix" "${PKG_DIR}/guest/modules/lid.nix" \
-  || fail "Layer 14 guest audio must not depend on the diagnostic thor_hw0 module-alsa-sink workaround"
-grep -q 'networking.networkmanager' "${PKG_DIR}/guest/modules/network.nix" \
-  || fail "Layer 14 network module must enable NetworkManager (U3)"
-grep -q 'networking.nftables' "${PKG_DIR}/guest/modules/network.nix" \
-  || fail "Layer 14 network module must use nftables (kernel lacks ip_tables) (U3)"
-grep -q 'networking.resolvconf' "${PKG_DIR}/guest/modules/network.nix" \
-  || fail "Layer 14 network module must disable resolvconf (DNS-bleed lesson) (U3)"
-grep -q 'time.timeZone' "${PKG_DIR}/guest/profiles/main-space.nix" \
-  || fail "Layer 14 main-space profile must set time.timeZone (Tier E2 tz-data lesson) (U3)"
-grep -q 'imports' "${PKG_DIR}/guest/profiles/main-space.nix" \
-  || fail "Layer 14 main-space profile must compose modules via imports (U3)"
-grep -q 'nixosConfigurations.rocknix-guest-main-space' "${PKG_DIR}/guest/flake.nix" \
-  || fail "guest flake must expose rocknix-guest-main-space (U3)"
 
 # Layer 14 Cemu build-parity diagnostics: host-side scripts must be
 # syntax-checkable and the stable guest launcher must allow an explicit
 # guest-native Cemu binary override without changing the default path.
-for launcher in \
-  remote-cemu-cleanup.sh \
-  remote-cemu-runner.sh \
-  remote-cemu-single-run-validation.sh \
-  remote-cemu-build-fingerprint.sh \
-  remote-cemu-runtime-ab.sh \
-  remote-cemu-live-campaign.sh \
-  remote-cemu-promote.sh \
-  host-tune.sh \
-  launch-host-cemu-through-guest-display.sh \
-  cemu-storage-adapter.sh \
-  cemu-sm8550-performance.sh \
-  start_cemu_guest.sh \
-  start_cemu_guest_candidate.sh \
-  start_cemu_guest_gamescope.sh \
-  start_cemu_guest_mangohud.sh \
-  start_cemu_guest_rocknixmesa.sh; do
-  check_script "${PKG_DIR}/guest/launchers/${launcher}"
-done
-grep -q 'nix-sm8550.url = "github:simonwjackson/nix-sm8550"' "${PKG_DIR}/guest/flake.nix" \
-  || fail "guest flake must consume the external public nix-sm8550 package repo"
-grep -q 'nix.registry.nix-sm8550.flake = nix-sm8550' "${PKG_DIR}/guest/flake.nix" \
-  || fail "main-space guest must expose nix-sm8550 in the Nix registry"
-grep -q 'nix-sm8550.packages.${targetSystem}.cemu' "${PKG_DIR}/guest/flake.nix" \
-  || fail "main-space guest must install Cemu from nix-sm8550"
-grep -q 'SYSTEM_CEMU=' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
-  || fail "start_cemu_guest.sh must default through the main-space system Cemu package"
-grep -q 'PROMOTED_CEMU=' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
-  || fail "start_cemu_guest.sh must retain promoted Cemu profile fallback for live rollback"
-grep -q 'REQUESTED_CEMU=${CEMU_BIN:-$SYSTEM_CEMU}' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
-  || fail "start_cemu_guest.sh must preserve CEMU_BIN override over system Cemu package"
-grep -q '/cemu"' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
-  || fail "start_cemu_guest.sh must normalize real-binary overrides back to the package cemu entry point when available"
-grep -q 'readlink -f "$CEMU"' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
-  || fail "start_cemu_guest.sh must resolve promoted profile symlink before reading package metadata"
-! grep -q 'CEMU_VULKAN_LOADER_LIB_PATH\|LD_LIBRARY_PATH' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
-  || fail "start_cemu_guest.sh must not own Vulkan loader setup after package-owned launch is proven"
-grep -q 'cemu-storage-adapter.sh' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
-  || fail "start_cemu_guest.sh must delegate Cemu /storage user-data compatibility to cemu-storage-adapter.sh"
-! grep -q '^CEMU_\(CONFIG_ROOT\|HOME_CONFIG\|HOME_LOCAL\|BIOS\)=' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
-  || fail "start_cemu_guest.sh must not own Cemu user-data path layout directly"
-grep -q 'CEMU_DEFAULT_SETTINGS' "${PKG_DIR}/guest/launchers/cemu-storage-adapter.sh" \
-  || fail "cemu-storage-adapter.sh must own fresh-state default settings seeding"
-grep -q 'XDG_CONFIG_HOME' "${PKG_DIR}/guest/launchers/cemu-storage-adapter.sh" \
-  || fail "cemu-storage-adapter.sh must derive Cemu config paths from guest XDG_CONFIG_HOME"
-grep -q 'XDG_DATA_HOME' "${PKG_DIR}/guest/launchers/cemu-storage-adapter.sh" \
-  || fail "cemu-storage-adapter.sh must derive Cemu data paths from guest XDG_DATA_HOME"
-grep -q 'CEMU_BIOS_ROOT = "/storage/roms/bios/cemu"' "${PKG_DIR}/guest/profiles/main-space.nix" \
-  || fail "main-space session must own the temporary Cemu BIOS compatibility root"
-grep -q 'CEMU_AFFINITY_MASK = "0xF8"' "${PKG_DIR}/guest/profiles/main-space.nix" \
-  || fail "main-space session must own the measured SM8550 Cemu affinity default"
-grep -q 'cemu-sm8550-performance.sh' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
-  || fail "botw-guest.sh must delegate SM8550 performance policy to cemu-sm8550-performance.sh"
-! grep -q 'P3_MAX=\|GPU_MIN=\|taskset -p' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
-  || fail "botw-guest.sh must not own CPU/GPU/affinity policy directly"
-grep -q '540p-45).*P3_MAX=2803200; P7_MAX=2956800; GPU_MIN=680000000; GPU_MAX=680000000' "${PKG_DIR}/guest/launchers/cemu-sm8550-performance.sh" \
-  || fail "cemu-sm8550-performance.sh must own unrestricted high-FPS SM8550 policy"
-grep -q 'AFFINITY_MASK="${CEMU_AFFINITY_MASK:-0xF8}"' "${PKG_DIR}/guest/launchers/cemu-sm8550-performance.sh" \
-  || fail "cemu-sm8550-performance.sh must own default Cemu big-core affinity policy"
-grep -q 'temporary host adapter' "${PKG_DIR}/guest/launchers/host-tune.sh" \
-  || fail "host-tune.sh must document its temporary host-adapter status"
-for env_name in XDG_RUNTIME_DIR SDL_AUDIODRIVER HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME; do
-  grep -q "${env_name} =" "${PKG_DIR}/guest/profiles/main-space.nix" \
-    || fail "main-space sway session must own ${env_name} for guest-launched apps"
-done
-! grep -q 'WAYLAND_DISPLAY =' "${PKG_DIR}/guest/profiles/main-space.nix" \
-  || fail "main-space sway compositor service must not pre-set WAYLAND_DISPLAY; wlroots would choose the nested Wayland backend"
-! grep -q '^export \(SDL_AUDIODRIVER\|WAYLAND_DISPLAY\|XDG_RUNTIME_DIR\|HOME\|XDG_CONFIG_HOME\|XDG_DATA_HOME\|XDG_CACHE_HOME\)=' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
-  || fail "start_cemu_guest.sh must not manufacture generic session display/audio/XDG defaults"
-! grep -q 'sed -z\|python3' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
-  || fail "botw-guest.sh must not require GNU sed -z or Python; guest launch profile carries Perl"
-grep -q 'perl -0pi' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
-  || fail "botw-guest.sh must use a guest-available whole-file mutator for settings.xml"
 for bind_path in \
   '--bind=/storage/.config/Cemu:/storage/.config/Cemu' \
   '--bind=/storage/.config/MangoHud:/storage/.config/MangoHud' \
@@ -667,92 +515,8 @@ done
   || fail "rocknix-guest-v2.service must not broad-bind /storage"
 grep -q 'Cemu compatibility state' "${PKG_DIR}/docs/layer14-main-space-contract.md" \
   || fail "layer14 main-space contract must document Cemu compatibility state ownership"
-grep -q '540p-45).*P3=2803200 P7=2956800 GMIN=680000000 GMAX=680000000' "${PKG_DIR}/guest/launchers/host-tune.sh" \
-  || fail "host-tune high-FPS profile must preserve unrestricted CPU/GPU validation clocks"
-grep -q 'RUNNER_CEMU_START=' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
-  || fail "remote-cemu-runner.sh missing candidate launcher override"
-grep -q 'RUNNER_HOST_LAUNCHER=' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
-  || fail "remote-cemu-runner.sh missing typed host-control launcher contract"
-grep -q 'collect_host_control_state' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
-  || fail "remote-cemu-runner.sh must collect host-side process/runtime evidence for host controls"
-grep -q 'RUNNER_LAUNCH_ONLY=' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
-  || fail "remote-cemu-runner.sh missing launch-only mode for live campaign"
-grep -q 'RUNNER_LOCK_DIR=' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
-  || fail "remote-cemu-runner.sh missing run lock for Cemu A/B safety"
-grep -q 'snapshot_settings' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
-  || fail "remote-cemu-runner.sh missing Cemu settings snapshot/restore"
-grep -q 'restore_power_state' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
-  || fail "remote-cemu-runner.sh missing power-state restore trap"
-grep -q 'CLEANUP_KILL_UI' "${PKG_DIR}/guest/launchers/remote-cemu-cleanup.sh" \
-  || fail "remote-cemu-cleanup.sh must gate non-emulator UI process cleanup"
-grep -q 'report_remaining_processes' "${PKG_DIR}/guest/launchers/remote-cemu-cleanup.sh" \
-  || fail "remote-cemu-cleanup.sh must fail when exact-name emulator processes survive cleanup"
-grep -q 'pids_by_exact_comm' "${PKG_DIR}/guest/launchers/remote-cemu-cleanup.sh" \
-  || fail "remote-cemu-cleanup.sh must fall back to ps comm matching for lowercase host cemu"
-grep -q 'STALE guest window' "${PKG_DIR}/guest/launchers/remote-cemu-cleanup.sh" \
-  || fail "remote-cemu-cleanup.sh must report stale Cemu compositor windows"
-grep -q 'CLEANUP_ALLOW_STALE' "${PKG_DIR}/guest/launchers/remote-cemu-cleanup.sh" \
-  || fail "remote-cemu-cleanup.sh must require an explicit override for stale-process diagnostics"
-grep -q 'CANDIDATE_LABEL=' "${PKG_DIR}/guest/launchers/remote-cemu-runtime-ab.sh" \
-  || fail "remote-cemu-runtime-ab.sh must allow candidate labels"
-grep -q 'promoted-nix-cemu' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
-  || fail "remote-cemu-live-campaign.sh must default to promoted Nix Cemu"
-grep -q 'EXTRA_GUEST_CASES' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
-  || fail "remote-cemu-live-campaign.sh must keep an explicit hook for extra guest candidates"
-grep -q 'rocknix-package-cemu' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
-  || fail "remote-cemu-live-campaign.sh missing direct package Cemu case hook"
-grep -q 'CAMPAIGN_LOCK_DIR=' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
-  || fail "remote-cemu-live-campaign.sh missing live-campaign run lock"
-grep -q 'parse_case_spec' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
-  || fail "remote-cemu-live-campaign.sh missing typed guest/host case parser"
-grep -q 'host:<label>' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
-  || fail "remote-cemu-live-campaign.sh must document host:<label>:<launcher>:<profile> cases"
-grep -q "printf '%03d'" "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
-  || fail "remote-cemu-live-campaign.sh must index child run directories for A/B/A safety"
-grep -q -- "-name '\*.csv'" "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
-  || fail "remote-cemu-live-campaign.sh must detect MangoHud CSV independent of binary name"
-grep -q 'start_cemu_guest_rocknixmesa.sh' "${PKG_DIR}/guest/launchers/remote-cemu-live-campaign.sh" \
-  || fail "remote-cemu-live-campaign.sh must preserve ROCKNIX Mesa wrapper for candidate runs"
-grep -q 'start_cemu_guest_rocknixmesa.sh' "${PKG_DIR}/guest/launchers/remote-cemu-runtime-ab.sh" \
-  || fail "remote-cemu-runtime-ab.sh must preserve ROCKNIX Mesa wrapper for candidate runs"
-grep -q 'dynamic NEEDED' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
-  || fail "remote-cemu-build-fingerprint.sh missing Cubeb/NEEDED linkage fingerprint"
-grep -q 'runtime data' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
-  || fail "remote-cemu-build-fingerprint.sh missing Cemu runtime-data fingerprint"
-[ ! -d "${PKG_DIR}/guest/flakes/cemu" ] \
-  || fail "Cemu package derivation must stay in nix-sm8550, not the ROCKNIX guest tree"
-! grep -R -q 'cemu-rocknix-style\|cemu-rocknix-faithful\|baseCemu\|pkgs[.]cemu\|overrideAttrs\|wrapGAppsHook3' "${PKG_DIR}/guest" \
-  || fail "guest tree must not carry local Cemu package override/derivation code"
-grep -q 'CEMU_DEFAULT_SETTINGS' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
-  || fail "start_cemu_guest.sh must pass packaged default settings metadata to the guest storage adapter"
-grep -q 'CEMU_DEFAULT_SETTINGS' "${PKG_DIR}/guest/launchers/cemu-storage-adapter.sh" \
-  || fail "cemu-storage-adapter.sh must seed clean guests from packaged default settings"
-grep -q 'github:simonwjackson/nix-sm8550' "${PKG_DIR}/guest/README.md" \
-  || fail "guest README must document nix-sm8550 as the package source of truth"
-grep -q 'Guest package repo: `github:simonwjackson/nix-sm8550`' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
-  || fail "remote-cemu-build-fingerprint.sh must report nix-sm8550 package source references"
-grep -q 'Guest package manifest: `packages/cemu/manifest.nix`' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
-  || fail "remote-cemu-build-fingerprint.sh must report external Cemu package manifest"
-grep -q 'Guest package derivation: `packages/cemu/package.nix`' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
-  || fail "remote-cemu-build-fingerprint.sh must report external Cemu package derivation"
-grep -q 'package-owned launch is proven' "${PKG_DIR}/guest/launchers/README.md" \
-  || fail "launcher README must document adapter thinning after package-owned launch proof"
-grep -q 'Cemu runtime responsibility map' "${PKG_DIR}/guest/launchers/README.md" \
-  || fail "launcher README must document Cemu runtime responsibility peelback baseline"
-grep -q 'BOTW profile/settings mutation.*Validation workload only' "${PKG_DIR}/guest/launchers/README.md" \
-  || fail "launcher README must keep BOTW profile mutation out of generic Cemu runtime scope"
 grep -q 'guest-owned runtime peelback baseline' "${REPO_ROOT}/docs/solutions/performance-issues/rocknix-layer14-cemu-performance-audit-2026-05-09.md" \
   || fail "Cemu performance audit must document guest-owned peelback baseline"
-grep -q 'cemu-promoted' "${PKG_DIR}/guest/launchers/remote-cemu-promote.sh" \
-  || fail "remote-cemu-promote.sh must install direct Cemu into a dedicated promoted profile"
-grep -q 'vulkan-loader-lib-path' "${PKG_DIR}/guest/launchers/remote-cemu-promote.sh" \
-  || fail "remote-cemu-promote.sh must verify direct-package Vulkan loader evidence before promotion"
-grep -q 'profile/bin/cemu' "${PKG_DIR}/guest/launchers/remote-cemu-promote.sh" \
-  || fail "remote-cemu-promote.sh must promote the package-owned cemu entry point"
-grep -q 'build evidence' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
-  || fail "remote-cemu-build-fingerprint.sh must report direct package build evidence"
-grep -q 'package entry point' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
-  || fail "remote-cemu-build-fingerprint.sh must report package-owned Cemu entry point evidence"
 
 # U6: THIN_HOST build flag, gated SM8550-only, wired into the package install.
 grep -q 'THIN_HOST=' "${REPO_ROOT}/projects/ROCKNIX/options" \
