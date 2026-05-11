@@ -13,7 +13,7 @@ TS="$(date '+%Y%m%d-%H%M%S')"
 RUN_DIR="${FINGERPRINT_RUN_DIR:-/storage/.guest/runs/${TS}-cemu-build-fingerprint}"
 REPORT="$RUN_DIR/report.md"
 HOST_CEMU="${HOST_CEMU:-/usr/bin/cemu}"
-GUEST_CEMU="${GUEST_CEMU:-/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/Cemu}"
+GUEST_CEMU="${GUEST_CEMU:-/run/current-system/sw/bin/cemu}"
 CANDIDATE_CEMU="${CANDIDATE_CEMU:-}"
 CEMU_COMMIT="6f6c1299e29fa6e1062ae283a035b4ef787cc397"
 
@@ -130,7 +130,7 @@ host_file_section "ROCKNIX host Cemu" "$HOST_CEMU"
 printf '\n## Guest environment\n' >> "$REPORT"
 if guest_pid >/dev/null 2>&1; then
   append_guest_cmd "guest os-release" 'cat /etc/os-release 2>/dev/null || true'
-  append_guest_cmd "guest tool versions" 'PATH=/run/current-system/sw/bin:/bin:/usr/bin:/nix/var/nix/profiles/per-user/root/profile/bin; for c in Cemu vulkaninfo strings readelf file ldd nix-store; do printf "%s: " "$c"; command -v "$c" || echo missing; done'
+  append_guest_cmd "guest tool versions" 'PATH=/run/current-system/sw/bin:/bin:/usr/bin:/nix/var/nix/profiles/per-user/root/profile/bin; for c in cemu Cemu vulkaninfo strings readelf file ldd nix-store; do printf "%s: " "$c"; command -v "$c" || echo missing; done'
   append_guest_cmd "guest Vulkan ICDs" 'for d in /run/opengl-driver/share/vulkan/icd.d /usr/share/vulkan/icd.d /nix/var/nix/profiles/per-user/root/profile/share/vulkan/icd.d; do [ -d "$d" ] || continue; echo "== $d =="; ls -l "$d"; for f in "$d"/*.json; do [ -f "$f" ] && { echo "--- $f"; cat "$f"; }; done; done'
   guest_file_section "Current guest Nix Cemu" "$GUEST_CEMU"
   if [ -n "$CANDIDATE_CEMU" ]; then
@@ -142,9 +142,9 @@ fi
 
 printf '\n## Build source references\n' >> "$REPORT"
 printf '\n- Host package: `projects/ROCKNIX/packages/emulators/standalone/cemu-sa/package.mk`\n' >> "$REPORT"
-printf -- '- Guest flake: `projects/ROCKNIX/packages/tools/nix-integration/guest/flakes/cemu/flake.nix`\n' >> "$REPORT"
-printf -- '- Direct package manifest: `projects/ROCKNIX/packages/tools/nix-integration/guest/flakes/cemu/rocknix-package-manifest.nix`\n' >> "$REPORT"
-printf -- '- Direct package derivation: `projects/ROCKNIX/packages/tools/nix-integration/guest/flakes/cemu/rocknix-package.nix`\n' >> "$REPORT"
+printf -- '- Guest package repo: `github:simonwjackson/nix-sm8550`\n' >> "$REPORT"
+printf -- '- Guest package manifest: `packages/cemu/manifest.nix`\n' >> "$REPORT"
+printf -- '- Guest package derivation: `packages/cemu/package.nix`\n' >> "$REPORT"
 
 log "fingerprint done: $RUN_DIR"
 printf '%s\n' "$RUN_DIR"

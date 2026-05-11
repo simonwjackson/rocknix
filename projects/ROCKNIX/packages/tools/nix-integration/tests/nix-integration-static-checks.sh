@@ -697,81 +697,22 @@ grep -q 'dynamic NEEDED' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerpri
   || fail "remote-cemu-build-fingerprint.sh missing Cubeb/NEEDED linkage fingerprint"
 grep -q 'runtime data' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
   || fail "remote-cemu-build-fingerprint.sh missing Cemu runtime-data fingerprint"
-! grep -q 'cemu-rocknix-style\|cemu-rocknix-faithful\|baseCemu\|pkgs[.]cemu\|overrideAttrs' "${PKG_DIR}/guest/flakes/cemu/flake.nix" \
-  || fail "cemu flake must expose only the promoted direct package path"
-
-HOST_CEMU_SA_DIR="${REPO_ROOT}/projects/ROCKNIX/packages/emulators/standalone/cemu-sa"
-CEMU_FLAKE_DIR="${PKG_DIR}/guest/flakes/cemu"
-host_cemu_rev=$(sed -n 's/^PKG_VERSION="\([^"]*\)"/\1/p' "${HOST_CEMU_SA_DIR}/package.mk")
-[ -n "${host_cemu_rev}" ] || fail "could not read ROCKNIX cemu-sa PKG_VERSION"
-grep -q 'cemu = pkgs.callPackage ./rocknix-package.nix' "${CEMU_FLAKE_DIR}/flake.nix" \
-  || fail "cemu flake must expose one obvious cemu package output"
-grep -q 'default = cemu' "${CEMU_FLAKE_DIR}/flake.nix" \
-  || fail "cemu flake default must be the promoted direct Cemu package"
-grep -q '"cemu-rocknix-package" = cemu' "${CEMU_FLAKE_DIR}/flake.nix" \
-  || fail "cemu flake must retain transitional cemu-rocknix-package compatibility alias"
-[ -f "${CEMU_FLAKE_DIR}/rocknix-package-manifest.nix" ] \
-  || fail "missing direct ROCKNIX Cemu package manifest"
-[ -f "${CEMU_FLAKE_DIR}/rocknix-package.nix" ] \
-  || fail "missing direct ROCKNIX Cemu package derivation"
-grep -q "rev = \"${host_cemu_rev}\"" "${CEMU_FLAKE_DIR}/rocknix-package-manifest.nix" \
-  || fail "direct Cemu manifest source rev must match ROCKNIX cemu-sa package.mk"
-grep -q 'fetchSubmodules = true' "${CEMU_FLAKE_DIR}/rocknix-package-manifest.nix" \
-  || fail "direct Cemu manifest must require submodule fetches"
-for patch in \
-  000-build-fixes.patch \
-  002-opt-seeprom-mlc01-keys-dir.patch \
-  003-disable-cmake-interprocedural-optimization.patch; do
-  grep -q "${patch}" "${CEMU_FLAKE_DIR}/rocknix-package-manifest.nix" \
-    || fail "direct Cemu manifest missing patch: ${patch}"
-  cmp -s "${HOST_CEMU_SA_DIR}/patches/${patch}" "${CEMU_FLAKE_DIR}/${patch}" \
-    || fail "direct Cemu patch copy drifted from cemu-sa package: ${patch}"
-done
-! grep -Eq 'pkgs[.]cemu|baseCemu|overrideAttrs|wrapGAppsHook3' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "direct Cemu package must not inherit nixpkgs Cemu or wrapper/fixup machinery"
-grep -q 'stdenv.mkDerivation' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "direct Cemu package must use an explicit stdenv derivation"
-grep -q 'rocknix-cemu-build' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "direct Cemu package must export build evidence"
-grep -q 'gameProfiles/default' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "direct Cemu package must assert generic default gameProfiles runtime data"
-! grep -q 'gameProfiles/default/00050000101c9400.ini' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "direct Cemu package must not make BOTW a generic build assertion"
-grep -q 'resources/sharedFonts/CafeCn.ttf' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "direct Cemu package must assert Cafe shared font runtime data"
-cmp -s "${HOST_CEMU_SA_DIR}/config/SM8550/settings.xml" "${CEMU_FLAKE_DIR}/settings.SM8550.xml" \
-  || fail "direct Cemu SM8550 default settings must stay synced with cemu-sa package"
-grep -q 'config/SM8550/settings.xml' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "direct Cemu package must install SM8550 default settings"
+[ ! -d "${PKG_DIR}/guest/flakes/cemu" ] \
+  || fail "Cemu package derivation must stay in nix-sm8550, not the ROCKNIX guest tree"
+! grep -R -q 'cemu-rocknix-style\|cemu-rocknix-faithful\|baseCemu\|pkgs[.]cemu\|overrideAttrs\|wrapGAppsHook3' "${PKG_DIR}/guest" \
+  || fail "guest tree must not carry local Cemu package override/derivation code"
 grep -q 'CEMU_DEFAULT_SETTINGS' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
   || fail "start_cemu_guest.sh must pass packaged default settings metadata to the guest storage adapter"
 grep -q 'CEMU_DEFAULT_SETTINGS' "${PKG_DIR}/guest/launchers/cemu-storage-adapter.sh" \
   || fail "cemu-storage-adapter.sh must seed clean guests from packaged default settings"
-grep -q 'readelf-header.txt' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "direct Cemu package must capture ELF header evidence"
-grep -q 'readelf-dynamic.txt' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "direct Cemu package must capture dynamic linkage evidence"
-grep -q 'cubeb-evidence.txt' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "direct Cemu package must capture bundled Cubeb evidence"
-grep -q 'libcubeb' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "direct Cemu package must reject dynamic Cubeb linkage"
-grep -q 'vulkan-loader-lib-path' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "direct Cemu package must record its Vulkan loader path"
-grep -q 'cat > "\$out/bin/cemu"' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "direct Cemu package must install a package-owned cemu entry point"
-grep -q 'vulkan_loader_lib_path=' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "package-owned cemu entry point must own Vulkan loader visibility"
-grep -F -q 'exec "\$cemu_wrapper_dir/Cemu"' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "package-owned cemu entry point must exec the real package Cemu binary"
-cemu_entry_block=$(awk '
-  /cat > "\$out\/bin\/cemu"/ { in_entry=1 }
-  in_entry { print }
-  in_entry && /^EOF$/ { exit }
-' "${CEMU_FLAKE_DIR}/rocknix-package.nix")
-printf '%s\n' "${cemu_entry_block}" | grep -q 'vulkan_loader_lib_path=' \
-  || fail "package-owned cemu entry point block missing Vulkan loader setup"
-! printf '%s\n' "${cemu_entry_block}" | grep -Eq '/storage|LD_PRELOAD|BOTW|00050000101c9400|cemu-promoted|CEMU_PROMOTED|SM8550|/host|/usr/lib' \
-  || fail "package-owned cemu entry point must stay free of ROCKNIX/BOTW/host assumptions"
+grep -q 'github:simonwjackson/nix-sm8550' "${PKG_DIR}/guest/README.md" \
+  || fail "guest README must document nix-sm8550 as the package source of truth"
+grep -q 'Guest package repo: `github:simonwjackson/nix-sm8550`' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
+  || fail "remote-cemu-build-fingerprint.sh must report nix-sm8550 package source references"
+grep -q 'Guest package manifest: `packages/cemu/manifest.nix`' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
+  || fail "remote-cemu-build-fingerprint.sh must report external Cemu package manifest"
+grep -q 'Guest package derivation: `packages/cemu/package.nix`' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
+  || fail "remote-cemu-build-fingerprint.sh must report external Cemu package derivation"
 grep -q 'package-owned launch is proven' "${PKG_DIR}/guest/launchers/README.md" \
   || fail "launcher README must document adapter thinning after package-owned launch proof"
 grep -q 'Cemu runtime responsibility map' "${PKG_DIR}/guest/launchers/README.md" \
