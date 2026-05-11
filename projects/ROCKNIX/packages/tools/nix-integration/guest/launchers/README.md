@@ -79,6 +79,24 @@ Build-parity diagnostics may override the binary with `CEMU_BIN` via `start_cemu
 
 The direct ROCKNIX package replica is built as `cemu-rocknix-package` from `guest/flakes/cemu/rocknix-package.nix`. Build it on Fuji or another aarch64 builder, import its closure into the Thor guest store when Thor is back online, fingerprint it, live-test it against same-session host control, then promote it with `remote-cemu-promote.sh` if it passes the parity gate.
 
+## Cemu runtime responsibility map
+
+This is the Layer 14 Cemu peelback baseline. Do not delete launcher behavior until its destination and validation gate are explicit.
+
+| Current responsibility | Current owner | Target owner | Classification | Validation gate |
+|---|---|---|---|---|
+| Cemu source/build/resources | `guest/flakes/cemu/rocknix-package.nix` | Cemu package | Required correctness | Build/fingerprint proves generic `gameProfiles` and `resources` exist. |
+| Vulkan loader visibility | `start_cemu_guest.sh` reads package metadata | Cemu package wrapper | Required correctness | Direct package entry logs Vulkan backend and Nix Mesa driver without old launcher setup. |
+| Promoted binary selection | `start_cemu_guest.sh` / `remote-cemu-promote.sh` | Deployment/profile adapter | Temporary ROCKNIX adapter | Direct package entry works, while profile rollback still functions. |
+| HOME/XDG/display/audio defaults | `start_cemu_guest.sh` and Sway unit | Guest session profile | Required session policy | Cemu launched from guest session inherits correct env without Cemu-specific exports. |
+| `/storage` config/save/BIOS layout | `start_cemu_guest.sh` | Guest compatibility adapter or migration | Temporary ROCKNIX adapter | Existing settings/saves/keys survive; fresh state seeds once; no broad bind added. |
+| SM8550 default settings | Cemu package + launcher seed | Guest/device profile | Device policy | Package-owned launch works after settings move; generic package has no SM8550 runtime default. |
+| SDL screensaver workaround | `start_cemu_guest.sh` | Package wrapper or guest session | Required if crash still reproduces | Run without/with hint and keep only if it prevents a real crash. |
+| CPU affinity | `botw-guest.sh` | SM8550 guest/device profile | Measured optimization | Paired in-game run proves pinned guest Cemu improves FPS/frame pacing. |
+| CPU/GPU governors/clocks | `botw-guest.sh` / `host-tune.sh` | SM8550 guest/device profile, host helper only if privileged | Measured optimization | Paired in-game run proves benefit and restore path. |
+| BOTW profile/settings mutation | `botw-guest.sh` | Game-specific validation/helper | Validation workload only | Never enters generic Cemu package or package wrapper. |
+| Host Cemu parity control | `launch-host-cemu-through-guest-display.sh` | Diagnostic harness | Temporary diagnostic | Used only for future parity comparisons; not product path. |
+
 ## Required nspawn binds
 
 ```
