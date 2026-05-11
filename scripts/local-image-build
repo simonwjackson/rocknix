@@ -39,7 +39,6 @@
 #
 # Options:
 #   --device=DEVICE      ROCKNIX device target (default: SM8550)
-#   --thin-host          Set THIN_HOST=yes (Layer 14 main-space build)
 #   --background         Detach the build and tail logs to a file
 #   --check              Print resolved caps and exit (no build)
 #   --status             Show running local build (if any)
@@ -53,7 +52,6 @@
 set -u
 
 DEVICE="${DEVICE:-SM8550}"
-THIN_HOST="${THIN_HOST:-no}"
 BACKGROUND=0
 CHECK=0
 STATUS=0
@@ -131,8 +129,6 @@ podman_sh() {
 while [ $# -gt 0 ]; do
   case "$1" in
     --device=*)        DEVICE="${1#*=}"; shift ;;
-    --thin-host)       THIN_HOST=yes; shift ;;
-    --no-thin-host)    THIN_HOST=no; shift ;;
     --background)      BACKGROUND=1; shift ;;
     --check)           CHECK=1; shift ;;
     --status)          STATUS=1; shift ;;
@@ -289,7 +285,6 @@ cat << EOF
 ======================================================================
   PROJECT          ROCKNIX
   DEVICE           ${DEVICE}
-  THIN_HOST        ${THIN_HOST}
   Container image  ${IMAGE_TAG}
   cwd              ${PWD}
 
@@ -344,7 +339,7 @@ mkdir -p "${LOG_DIR}"
 #                          --user $(id -u):$(id -g)       no root in container
 #                          --userns=keep-id               same uid inside as out
 #                          -v ${PWD}:${PWD} -w ${PWD}     bind-mount source tree
-#                          -e PROJECT/DEVICE/THIN_HOST    drive scripts/build_distro
+#                          -e PROJECT/DEVICE              drive scripts/build_distro
 # Layer 4:             bash -c 'nice ... make ${DEVICE}' -- the actual build.
 #                      `make ${DEVICE}` is the per-device target which runs
 #                      build_distro arm then aarch64 (each ends with image-roll).
@@ -360,7 +355,6 @@ PODMAN_RUN_CMD=(
     --workdir "${PWD}"
     --env "PROJECT=ROCKNIX"
     --env "DEVICE=${DEVICE}"
-    --env "THIN_HOST=${THIN_HOST}"
     --env "LC_ALL=C.UTF-8"
     "${IMAGE_TAG}"
     bash -c "nice -n 19 ionice -c 3 make ${DEVICE}"
@@ -373,7 +367,7 @@ SCOPE_CMD=(
     --collect
     --quiet
     --unit="${UNIT_NAME}"
-    --description="ROCKNIX local image build (${DEVICE} THIN_HOST=${THIN_HOST})"
+    --description="ROCKNIX local image build (${DEVICE})"
     --property="CPUQuota=${CPU_PERCENT}%"
     --property="CPUWeight=50"
     --property="MemoryHigh=${MEMORY_HIGH}"

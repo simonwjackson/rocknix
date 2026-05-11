@@ -30,13 +30,11 @@
 #   ExecStartPre seeds /run/current-system + /run/booted-system from
 #     /nix/var/nix/profiles/system (Tier E3 finding: /run is tmpfs and
 #     does not persist across cold boot)
-#   ExecStopPost runs reclaim contract: if guest exited unexpectedly under
-#     THIN_HOST=yes, restart host fallback userland so the device stays
-#     usable until the next boot.
+#   ExecStopPost runs reclaim contract: if guest exited unexpectedly,
+#     restart host fallback userland so the device stays usable until the
+#     next boot.
 #
-# This unit is INSTALLED but NOT enabled by package.mk. It is enabled by
-# the THIN_HOST=yes build path (Layer 14 U6) via Wants= on the new
-# rocknix-graphical.target.
+# This unit is enabled on SM8550 via Wants= on rocknix-graphical.target.
 
 [Unit]
 Description=ROCKNIX Layer 14 guest (Nix main-space, v2)
@@ -125,8 +123,6 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
-# Intentionally NOT WantedBy=multi-user.target. The Layer 14 build flag
-# (THIN_HOST=yes) wires this into rocknix-graphical.target instead.
-# Under THIN_HOST=no, this unit stays inert: installed on disk, never
-# started by default boot.
+# Intentionally NOT WantedBy=multi-user.target; this unit is owned by the
+# SM8550 main-space target instead.
 WantedBy=rocknix-graphical.target

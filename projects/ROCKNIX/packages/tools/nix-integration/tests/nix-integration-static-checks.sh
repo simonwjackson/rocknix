@@ -86,9 +86,9 @@ check_unit "${PKG_DIR}/system.d/rocknix-recovery-toggle.service"
 grep -q 'mkdir -p ${INSTALL}/nix' "${PKG_DIR}/package.mk" || fail "package.mk does not create /nix mountpoint"
 grep -q 'enable_service nix-storage-setup.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable nix-storage-setup.service"
 grep -q 'enable_service nix.mount' "${PKG_DIR}/package.mk" || fail "package.mk does not enable nix.mount"
-grep -q 'enable_service rocknix-graphical.target' "${PKG_DIR}/package.mk" || fail "package.mk does not enable rocknix-graphical.target under thin-host mode"
-grep -q 'enable_service rocknix-guest-v2.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable rocknix-guest-v2.service under thin-host mode"
-grep -q 'enable_service rocknix-recovery-toggle.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable recovery toggle under thin-host mode"
+grep -q 'enable_service rocknix-graphical.target' "${PKG_DIR}/package.mk" || fail "package.mk does not enable rocknix-graphical.target"
+grep -q 'enable_service rocknix-guest-v2.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable rocknix-guest-v2.service"
+grep -q 'enable_service rocknix-recovery-toggle.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable recovery toggle"
 
 grep -q 'RequiresMountsFor=/storage' "${PKG_DIR}/system.d/nix-storage-setup.service" || fail "setup service does not require /storage"
 grep -q '/storage/.nix-root' "${PKG_DIR}/system.d/nix-storage-setup.service" || fail "setup service does not prepare storage-backed Nix root"
@@ -146,7 +146,7 @@ grep -q 'safe_remove ${INSTALL}/usr/lib/systemd/system/systemd-nspawn@.service' 
 ! grep -qE 'enable_service .*nspawn' "${SYSTEMD_PKG}" || fail "systemd package must not enable nspawn services by default"
 
 # Old support flags should not be resurrected.
-! grep -R --exclude='nix-integration-static-checks.sh' -q 'NIX_INTEGRATION_SUPPORT\|NIX_NSPAWN_SUPPORT\|NIX_DAEMON_SUPPORT' \
-  "${REPO_ROOT}/projects/ROCKNIX" || fail "removed NIX_* support gate still referenced under projects/ROCKNIX"
+! grep -R --exclude='nix-integration-static-checks.sh' -q 'NIX_INTEGRATION_SUPPORT\|NIX_NSPAWN_SUPPORT\|NIX_DAEMON_SUPPORT\|THIN_HOST' \
+  "${REPO_ROOT}/projects/ROCKNIX" "${REPO_ROOT}/.github" "${REPO_ROOT}/scripts" || fail "removed support gate still referenced"
 
 printf 'nix-integration static checks passed\n'

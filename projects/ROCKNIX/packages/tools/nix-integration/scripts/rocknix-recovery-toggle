@@ -11,12 +11,9 @@
 #   neither                              -> Layer 14 main-space
 #
 # Safety:
-#   - Setting default.target when rocknix-graphical.target doesn't
-#     exist (THIN_HOST=no build) is allowed; systemctl set-default
-#     accepts the symlink swap and the next normal boot will use
-#     graphical.target via the existing chain since there's no
-#     rocknix-graphical.target unit to actually start.
-#   - Setting default.target to graphical.target is always safe.
+#   - Setting default.target to rocknix-graphical.target is the normal
+#     SM8550 path.
+#   - Setting default.target to rocknix.target is the recovery-plane path.
 #   - This script never reboots; the user (or recovery flow) controls
 #     reboots.
 
@@ -68,15 +65,8 @@ fi
 # Refuse to set a non-existent target (catch typos in this script
 # during dev). systemctl will fail-fast on a missing unit file.
 if ! systemctl list-unit-files "${target}" >/dev/null 2>&1; then
-  if [ "${target}" = "${NORMAL_TARGET}" ]; then
-    # THIN_HOST=no build path: rocknix-graphical.target is not shipped.
-    # Fall through to graphical.target which is always present.
-    log "${target} not installed (THIN_HOST=no?); falling back to ${RECOVERY_TARGET}"
-    target="${RECOVERY_TARGET}"
-  else
-    log "FATAL: ${target} not installed; refusing to set default.target"
-    exit 1
-  fi
+  log "FATAL: ${target} not installed; refusing to set default.target"
+  exit 1
 fi
 
 if systemctl set-default "${target}" >/dev/null 2>&1; then
