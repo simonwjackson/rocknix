@@ -66,8 +66,11 @@ case "$PROFILE" in
     ;;
   540p-45)
     RES="960x540";        FPS_LIMIT="45FPS Limit"; FRAMERATE="40FPS (ideal for 240/120/60Hz displays)"
-    P3_MAX=1785600;       P7_MAX=1843200
-    GPU_MIN=;             GPU_MAX=;                GPU_GOV=performance
+    # Live U3 validation in heavy Zora/rain scenes showed the old capped
+    # high-FPS profile could sit around 30-35 FPS. Keep CPU unrestricted and
+    # pin the GPU at its available max for subsequent peelback validation.
+    P3_MAX=2803200;       P7_MAX=2956800
+    GPU_MIN=680000000;    GPU_MAX=680000000;       GPU_GOV=simple_ondemand
     ;;
   720p-30)
     RES="1280x720 (HD, Default)"; FPS_LIMIT="30FPS Limit"; FRAMERATE="30FPS (ideal for 240/120/60Hz displays)"
@@ -76,8 +79,8 @@ case "$PROFILE" in
     ;;
   720p-45)
     RES="1280x720 (HD, Default)"; FPS_LIMIT="45FPS Limit"; FRAMERATE="40FPS (ideal for 240/120/60Hz displays)"
-    P3_MAX=2054400;       P7_MAX=2092800
-    GPU_MIN=;             GPU_MAX=;                GPU_GOV=performance
+    P3_MAX=2803200;       P7_MAX=2956800
+    GPU_MIN=680000000;    GPU_MAX=680000000;       GPU_GOV=simple_ondemand
     ;;
   900p-30)
     RES="1600x900 (HD+)"; FPS_LIMIT="30FPS Limit"; FRAMERATE="30FPS (ideal for 240/120/60Hz displays)"

@@ -14,9 +14,9 @@ P="${1:-}"
 case "$P" in
   potato-30)  P3=1401600 P7=1478400 GMIN=220000000 GMAX=475000000 GGOV=simple_ondemand ;;
   540p-30)    P3=1401600 P7=1478400 GMIN=220000000 GMAX=550000000 GGOV=simple_ondemand ;;
-  540p-45)    P3=1785600 P7=1843200 GMIN=                         GGOV=performance ;;
+  540p-45)    P3=2803200 P7=2956800 GMIN=680000000 GMAX=680000000 GGOV=simple_ondemand ;;
   720p-30)    P3=1401600 P7=1478400 GMIN=220000000 GMAX=615000000 GGOV=simple_ondemand ;;
-  720p-45)    P3=2054400 P7=2092800 GMIN=                         GGOV=performance ;;
+  720p-45)    P3=2803200 P7=2956800 GMIN=680000000 GMAX=680000000 GGOV=simple_ondemand ;;
   900p-30)    P3=1401600 P7=1478400 GMIN=220000000 GMAX=680000000 GGOV=simple_ondemand ;;
   native-30)  P3=1401600 P7=1478400 GMIN=220000000 GMAX=680000000 GGOV=simple_ondemand ;;
   *) echo "usage: $0 <potato-30|540p-30|540p-45|720p-30|720p-45|900p-30|native-30>" >&2; exit 1 ;;

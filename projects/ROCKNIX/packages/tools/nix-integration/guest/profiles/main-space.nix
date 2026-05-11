@@ -96,10 +96,19 @@
       StandardError = "journal";
     };
     environment = {
+      # Session-owned defaults for graphical apps launched via swaymsg exec.
+      # Cemu's launcher should not have to manufacture Wayland/audio/XDG
+      # basics; those belong to the Layer 14 guest session.
       XDG_RUNTIME_DIR = "/run/user/0";
+      WAYLAND_DISPLAY = "wayland-1";
+      SDL_AUDIODRIVER = "pulseaudio";
+      HOME = "/storage";
+      XDG_CONFIG_HOME = "/storage/.config";
+      XDG_DATA_HOME = "/storage/.local/share";
+      XDG_CACHE_HOME = "/storage/.cache";
+
       WLR_NO_HARDWARE_CURSORS = "1";
       WLR_LIBINPUT_NO_DEVICES = "1";
-      HOME = "/root";
       USER = "root";
     };
   };

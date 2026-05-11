@@ -570,6 +570,7 @@ for launcher in \
   remote-cemu-runtime-ab.sh \
   remote-cemu-live-campaign.sh \
   remote-cemu-promote.sh \
+  host-tune.sh \
   launch-host-cemu-through-guest-display.sh \
   start_cemu_guest.sh \
   start_cemu_guest_candidate.sh \
@@ -584,6 +585,18 @@ grep -q 'CEMU_BIN:-$PROMOTED_CEMU' "${PKG_DIR}/guest/launchers/start_cemu_guest.
   || fail "start_cemu_guest.sh must preserve CEMU_BIN override over promoted profile"
 grep -q 'readlink -f "$CEMU"' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
   || fail "start_cemu_guest.sh must resolve promoted profile symlink before reading package metadata"
+for env_name in XDG_RUNTIME_DIR WAYLAND_DISPLAY SDL_AUDIODRIVER HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME; do
+  grep -q "${env_name} =" "${PKG_DIR}/guest/profiles/main-space.nix" \
+    || fail "main-space sway session must own ${env_name} for guest-launched apps"
+done
+! grep -q '^export \(SDL_AUDIODRIVER\|WAYLAND_DISPLAY\|XDG_RUNTIME_DIR\|HOME\|XDG_CONFIG_HOME\|XDG_DATA_HOME\|XDG_CACHE_HOME\)=' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
+  || fail "start_cemu_guest.sh must not manufacture generic session display/audio/XDG defaults"
+grep -q 'P3_MAX=2803200; *P7_MAX=2956800' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
+  || fail "high-FPS BOTW validation profile must keep CPU unrestricted"
+grep -q 'GPU_MIN=680000000; *GPU_MAX=680000000' "${PKG_DIR}/guest/launchers/botw-guest.sh" \
+  || fail "high-FPS BOTW validation profile must keep GPU pinned to max"
+grep -q '540p-45).*P3=2803200 P7=2956800 GMIN=680000000 GMAX=680000000' "${PKG_DIR}/guest/launchers/host-tune.sh" \
+  || fail "host-tune high-FPS profile must preserve unrestricted CPU/GPU validation clocks"
 grep -q 'RUNNER_CEMU_START=' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
   || fail "remote-cemu-runner.sh missing candidate launcher override"
 grep -q 'RUNNER_HOST_LAUNCHER=' "${PKG_DIR}/guest/launchers/remote-cemu-runner.sh" \
