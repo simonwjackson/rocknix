@@ -83,7 +83,7 @@ let
     done
     nmcli -t -f WIFI radio 2>/dev/null | head -1 > "${stateDir}/wifi.state" || true
     rfkill list bluetooth 2>/dev/null > "${stateDir}/bt.state" || true
-    if systemctl --quiet is-active pipewire.service 2>/dev/null; then
+    if systemctl --quiet is-active rocknix-pipewire.service 2>/dev/null; then
       echo active > "${stateDir}/pipewire.state"
     fi
 
@@ -124,7 +124,7 @@ let
 
     # ---- 4. stop audio if running ----
     if [ -f "${stateDir}/pipewire.state" ]; then
-      systemctl stop pipewire.service wireplumber.service 2>/dev/null || true
+      systemctl stop rocknix-pipewire-pulse.service rocknix-wireplumber.service rocknix-pipewire.service 2>/dev/null || true
     fi
 
     # ---- 5. Wi-Fi off (kills SSH if you're connected -- by design) ----
@@ -189,7 +189,7 @@ let
 
     # ---- 4. Audio restore ----
     if [ -f "${stateDir}/pipewire.state" ]; then
-      systemctl start pipewire.service wireplumber.service 2>/dev/null || true
+      systemctl start rocknix-pipewire.service rocknix-wireplumber.service rocknix-pipewire-pulse.service 2>/dev/null || true
       rm -f "${stateDir}/pipewire.state"
     fi
 
@@ -213,48 +213,150 @@ let
     echo "$(date -Is) lid-open: completed" >> "$log"
   '';
 
-  lidHandler = pkgs.writeShellScript "rocknix-lid-handler" ''
+  volumeControl = pkgs.writeShellScriptBin "rocknix-volume" ''
+    set -u
+    export PATH=${lib.makeBinPath (with pkgs; [ pipewire pulseaudio coreutils gnugrep ])}
+
+    step="5%"
+    case "''${1:-}" in
+      up|+) delta="$step+" ;;
+      down|-) delta="$step-" ;;
+      *)
+        echo "rocknix-volume: usage: $0 up|down" >&2
+        exit 64
+        ;;
+    esac
+
+    if wpctl status >/dev/null 2>&1; then
+      wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ "$delta"
+      wpctl get-volume @DEFAULT_AUDIO_SINK@ >&2 || true
+    elif pactl info >/dev/null 2>&1; then
+      case "$delta" in
+        *+) pactl set-sink-volume @DEFAULT_SINK@ +"$step" ;;
+        *-) pactl set-sink-volume @DEFAULT_SINK@ -"$step" ;;
+      esac
+      pactl get-sink-volume @DEFAULT_SINK@ >&2 || true
+    else
+      echo "rocknix-volume: no PipeWire/PulseAudio control socket available" >&2
+      exit 69
+    fi
+  '';
+
+  powerToggle = pkgs.writeShellScriptBin "rocknix-power-toggle" ''
+    set -u
+    export PATH=${lib.makeBinPath (with pkgs; [ coreutils ])}
+
+    flag="${stateDir}/power-fake-suspend-active.flag"
+    mkdir -p "${stateDir}"
+
+    if [ -e "${killSwitch}" ]; then
+      echo "power-toggle: kill switch present (${killSwitch}); skipping" >&2
+      exit 0
+    fi
+
+    if [ -f "$flag" ]; then
+      rm -f "$flag"
+      echo "power-toggle: resume" >&2
+      ${lidOpen} || true
+    else
+      touch "$flag"
+      echo "power-toggle: fake suspend" >&2
+      ${lidClose} || true
+    fi
+  '';
+
+  hardwareButtonHandler = pkgs.writeShellScriptBin "rocknix-hardware-button-handler" ''
     set -u
     export PATH=${lib.makeBinPath (with pkgs; [ evtest coreutils gnugrep ])}
 
-    DEVICE=/dev/input/event6
-    if [ ! -r "$DEVICE" ]; then
-      echo "lid-handler: $DEVICE not readable; exiting" >&2
-      exit 1
-    fi
+    find_event_by_name() {
+      wanted="$1"
+      for name_file in /sys/class/input/event*/device/name; do
+        [ -r "$name_file" ] || continue
+        name=$(cat "$name_file" 2>/dev/null || true)
+        [ "$name" = "$wanted" ] || continue
+        event_dir=$(dirname "$(dirname "$name_file")")
+        echo "/dev/input/$(basename "$event_dir")"
+        return 0
+      done
+      return 1
+    }
 
-    echo "lid-handler: watching $DEVICE for SW_LID transitions" >&2
+    watch_device() {
+      label="$1"
+      device="$2"
+      if [ -z "$device" ]; then
+        echo "hardware-button-handler: $label device not found" >&2
+        return 0
+      fi
 
-    # evtest emits lines like:
-    #   Event: time 1234.567890, type 5 (EV_SW), code 0 (SW_LID), value 1
-    # value 1 = closed, value 0 = open.
-    evtest "$DEVICE" 2>/dev/null | while IFS= read -r line; do
-      case "$line" in
-        *"type 5 (EV_SW)"*"code 0 (SW_LID)"*"value 1"*)
-          echo "lid-handler: CLOSE event" >&2
-          ${lidClose} || true
-          ;;
-        *"type 5 (EV_SW)"*"code 0 (SW_LID)"*"value 0"*)
-          echo "lid-handler: OPEN event" >&2
-          ${lidOpen} || true
-          ;;
-      esac
-    done
+      while true; do
+        if [ ! -r "$device" ]; then
+          echo "hardware-button-handler: $label $device not readable; retrying" >&2
+          sleep 5
+          continue
+        fi
+
+        echo "hardware-button-handler: watching $label on $device" >&2
+        evtest "$device" 2>/dev/null | while IFS= read -r line; do
+          case "$line" in
+            *"type 1 (EV_KEY)"*"code 115 (KEY_VOLUMEUP)"*"value 1"*|*"type 1 (EV_KEY)"*"code 115 (KEY_VOLUMEUP)"*"value 2"*)
+              echo "hardware-button-handler: volume up" >&2
+              ${volumeControl}/bin/rocknix-volume up || true
+              ;;
+            *"type 1 (EV_KEY)"*"code 114 (KEY_VOLUMEDOWN)"*"value 1"*|*"type 1 (EV_KEY)"*"code 114 (KEY_VOLUMEDOWN)"*"value 2"*)
+              echo "hardware-button-handler: volume down" >&2
+              ${volumeControl}/bin/rocknix-volume down || true
+              ;;
+            *"type 1 (EV_KEY)"*"code 116 (KEY_POWER)"*"value 1"*)
+              echo "hardware-button-handler: power press" >&2
+              ${powerToggle}/bin/rocknix-power-toggle || true
+              ;;
+            *"type 5 (EV_SW)"*"code 0 (SW_LID)"*"value 1"*)
+              echo "hardware-button-handler: lid close" >&2
+              rm -f "${stateDir}/power-fake-suspend-active.flag"
+              ${lidClose} || true
+              ;;
+            *"type 5 (EV_SW)"*"code 0 (SW_LID)"*"value 0"*)
+              echo "hardware-button-handler: lid open" >&2
+              rm -f "${stateDir}/power-fake-suspend-active.flag"
+              ${lidOpen} || true
+              ;;
+          esac
+        done
+
+        echo "hardware-button-handler: $label watcher exited; restarting" >&2
+        sleep 2
+      done
+    }
+
+    power_device=$(find_event_by_name pmic_pwrkey || true)
+    volume_down_device=$(find_event_by_name pmic_resin || true)
+    gpio_keys_device=$(find_event_by_name gpio-keys || true)
+
+    watch_device power "$power_device" &
+    watch_device volume-down "$volume_down_device" &
+    watch_device gpio-keys "$gpio_keys_device" &
+
+    wait
   '';
 in
 {
   environment.systemPackages = with pkgs; [
     evtest
     util-linux  # for rfkill
+    volumeControl
+    powerToggle
   ];
 
   # CRITICAL: disable logind's built-in lid/power/suspend handling so the
-  # guest's logind does NOT try to react to SW_LID events flowing through
-  # the bound /dev/input/event6. Default NixOS logind has
+  # guest's logind does NOT try to react to SW_LID or KEY_POWER events flowing
+  # through the bound /dev/input devices. Default NixOS logind has
   # HandleLidSwitch=suspend; in nspawn, suspend isn't supported, but the
   # error handling escalates and the cumulative effect on Thor 2026-05-08
   # was a full container shutdown on the next lid edge. Our
-  # rocknix-lid-handler is the SINGLE owner of lid semantics in Layer 14.
+  # rocknix-hardware-button-handler is the SINGLE owner of lid/power/volume
+  # semantics in Layer 14.
   services.logind.settings.Login = {
     HandleLidSwitch = "ignore";
     HandleLidSwitchExternalPower = "ignore";
@@ -263,17 +365,45 @@ in
     HandleSuspendKey = "ignore";
   };
 
-  systemd.services.rocknix-lid-handler = {
-    description = "ROCKNIX Layer 14 lid-switch handler (fake suspend)";
+  systemd.services.rocknix-hardware-button-handler = {
+    description = "ROCKNIX Layer 14 hardware button handler (volume, power, lid)";
     wantedBy = [ "multi-user.target" ];
-    after = [ "systemd-user-sessions.service" "rocknix-sway-kiosk.service" ];
+    # Order after the root-scoped audio services this module's audio.nix
+    # sibling actually provides. The legacy NixOS-managed unit names
+    # (pipewire.service / pipewire-pulse.service) are inactive in
+    # main-space mode because we own pipewire/wireplumber/pipewire-pulse
+    # as separate root-scoped units anchored to /run/user/0. If the
+    # handler started before those, the first volume button press would
+    # race the socket creation and `wpctl status` would fail with
+    # "no PipeWire/PulseAudio control socket available".
+    after = [
+      "systemd-user-sessions.service"
+      "rocknix-sway-kiosk.service"
+      "rocknix-pipewire.service"
+      "rocknix-pipewire-pulse.service"
+      "rocknix-wireplumber.service"
+    ];
+    # rocknix-volume invokes wpctl / pactl, which both probe the
+    # PipeWire socket at $XDG_RUNTIME_DIR/pipewire-0 and the Pulse
+    # socket at $PULSE_SERVER. The handler unit runs as root with the
+    # systemd minimal environment by default; without these vars its
+    # children fail with "no PipeWire/PulseAudio control socket
+    # available" even though the sockets exist under /run/user/0/.
+    # Same triplet the rocknix-pipewire* services use for their own
+    # anchor (see modules/audio.nix). Verified on Thor 2026-05-11.
+    environment = {
+      XDG_RUNTIME_DIR = "/run/user/0";
+      PULSE_SERVER = "unix:/run/user/0/pulse/native";
+      DBUS_SESSION_BUS_ADDRESS = "unix:path=/run/user/0/bus";
+    };
     serviceConfig = {
       Type = "simple";
-      ExecStart = "${lidHandler}";
+      ExecStart = "${hardwareButtonHandler}/bin/rocknix-hardware-button-handler";
       Restart = "on-failure";
       RestartSec = "5s";
-      # No sandboxing -- needs to write /sys cpufreq, run nmcli/rfkill,
-      # touch /run state, talk to systemd. Keep it simple.
+      # No sandboxing -- needs to read /dev/input, write /sys cpufreq, run
+      # nmcli/rfkill, touch /run state, talk to systemd, and control audio.
+      # Keep it simple.
     };
   };
 }

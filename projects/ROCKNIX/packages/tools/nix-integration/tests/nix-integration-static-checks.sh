@@ -444,6 +444,12 @@ fi
 # scrubbed tree exists when systemd-nspawn attempts the bind-ro mount.
 grep -q 'ExecStartPre=/usr/bin/rocknix-guest-udev-stage' "${L14_UNIT}" \
   || fail "Layer 14 unit missing ExecStartPre=/usr/bin/rocknix-guest-udev-stage (U2)"
+grep -q 'SOUND_UDEV_WAIT_SECS' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" \
+  || fail "udev stage script must wait boundedly for sound udev metadata"
+grep -q 'E:ALSA_CARD_NUMBER=' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" \
+  || fail "udev stage script must verify sound records contain ALSA card metadata"
+grep -q 'inputplumber/by-hidden' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" \
+  || fail "udev stage script must continue scrubbing InputPlumber-hidden records"
 
 # Forbidden binds (negative shape; the lessons of Tier A-E). Strip comment
 # lines first so descriptive prose explaining what NOT to do does not
@@ -546,6 +552,20 @@ grep -q 'services.dbus' "${PKG_DIR}/guest/modules/audio.nix" \
   || fail "Layer 14 audio module must enable D-Bus (bluez prerequisite) (U3)"
 grep -q 'hardware.bluetooth' "${PKG_DIR}/guest/modules/audio.nix" \
   || fail "Layer 14 audio module must enable bluetooth (U3)"
+grep -q 'systemd.services.rocknix-pipewire' "${PKG_DIR}/guest/modules/audio.nix" \
+  || fail "Layer 14 audio module must configure a root-scoped PipeWire service for the kiosk session"
+grep -q 'systemd.services.rocknix-pipewire-pulse' "${PKG_DIR}/guest/modules/audio.nix" \
+  || fail "Layer 14 audio module must configure a root-scoped PipeWire PulseAudio service"
+grep -q 'systemd.services.rocknix-wireplumber' "${PKG_DIR}/guest/modules/audio.nix" \
+  || fail "Layer 14 audio module must configure a root-scoped WirePlumber service"
+grep -q 'ALSA_CONFIG_UCM2' "${PKG_DIR}/guest/modules/audio.nix" \
+  || fail "Layer 14 audio module must use guest-owned ALSA UCM for SM8550 audio"
+grep -q 'packages/audio/ayn-odin2-ucm' "${PKG_DIR}/guest/modules/audio.nix" \
+  || fail "Layer 14 audio module must consume the vendored AYN Odin2 UCM package"
+[ -L "${PKG_DIR}/guest/packages/audio/ayn-odin2-ucm/ucm2/conf.d/sm8550/AYN-Odin2.conf" ] \
+  || fail "vendored guest kit must include the SM8550 AYN Odin2 UCM card-name symlink"
+! grep -q 'module-alsa-sink\|sink_name=thor_hw0\|rocknix-audio-alsa-sink' "${PKG_DIR}/guest/modules/audio.nix" "${PKG_DIR}/guest/modules/lid.nix" \
+  || fail "Layer 14 guest audio must not depend on the diagnostic thor_hw0 module-alsa-sink workaround"
 grep -q 'networking.networkmanager' "${PKG_DIR}/guest/modules/network.nix" \
   || fail "Layer 14 network module must enable NetworkManager (U3)"
 grep -q 'networking.nftables' "${PKG_DIR}/guest/modules/network.nix" \
@@ -623,10 +643,12 @@ grep -q 'AFFINITY_MASK="${CEMU_AFFINITY_MASK:-0xF8}"' "${PKG_DIR}/guest/launcher
   || fail "cemu-sm8550-performance.sh must own default Cemu big-core affinity policy"
 grep -q 'temporary host adapter' "${PKG_DIR}/guest/launchers/host-tune.sh" \
   || fail "host-tune.sh must document its temporary host-adapter status"
-for env_name in XDG_RUNTIME_DIR WAYLAND_DISPLAY SDL_AUDIODRIVER HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME; do
+for env_name in XDG_RUNTIME_DIR SDL_AUDIODRIVER HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME; do
   grep -q "${env_name} =" "${PKG_DIR}/guest/profiles/main-space.nix" \
     || fail "main-space sway session must own ${env_name} for guest-launched apps"
 done
+! grep -q 'WAYLAND_DISPLAY =' "${PKG_DIR}/guest/profiles/main-space.nix" \
+  || fail "main-space sway compositor service must not pre-set WAYLAND_DISPLAY; wlroots would choose the nested Wayland backend"
 ! grep -q '^export \(SDL_AUDIODRIVER\|WAYLAND_DISPLAY\|XDG_RUNTIME_DIR\|HOME\|XDG_CONFIG_HOME\|XDG_DATA_HOME\|XDG_CACHE_HOME\)=' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
   || fail "start_cemu_guest.sh must not manufacture generic session display/audio/XDG defaults"
 ! grep -q 'sed -z\|python3' "${PKG_DIR}/guest/launchers/botw-guest.sh" \

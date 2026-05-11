@@ -42,12 +42,45 @@ set -eu
 STAGE_DIR="${STAGE_DIR:-/run/.guest-udev}"
 SOURCE_DIR="${SOURCE_DIR:-/run/udev}"
 HIDDEN_TAG="${HIDDEN_TAG:-inputplumber/by-hidden}"
+SOUND_UDEV_WAIT_SECS="${SOUND_UDEV_WAIT_SECS:-5}"
 
 log() { printf 'rocknix-guest-udev-stage: %s\n' "$*" >&2; }
+
+sound_udev_record_ready() {
+  for dev_file in /sys/class/sound/controlC*/dev; do
+    [ -r "${dev_file}" ] || continue
+    dev_id=$(cat "${dev_file}" 2>/dev/null || true)
+    [ -n "${dev_id}" ] || continue
+    if [ -f "${SOURCE_DIR}/data/c${dev_id}" ] && \
+        grep -q 'E:ALSA_CARD_NUMBER=' "${SOURCE_DIR}/data/c${dev_id}" 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
 
 if [ ! -d "${SOURCE_DIR}" ]; then
   log "source directory ${SOURCE_DIR} missing, nothing to stage"
   exit 0
+fi
+
+sound_controls_present=0
+for dev_file in /sys/class/sound/controlC*/dev; do
+  [ -r "${dev_file}" ] || continue
+  sound_controls_present=1
+  break
+done
+
+if [ "${sound_controls_present}" = "1" ]; then
+  waited=0
+  while ! sound_udev_record_ready; do
+    if [ "${waited}" -ge "${SOUND_UDEV_WAIT_SECS}" ]; then
+      log "warning: sound control udev record is not ready after ${SOUND_UDEV_WAIT_SECS}s; staging current udev DB"
+      break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
 fi
 
 mkdir -p "${STAGE_DIR}"
