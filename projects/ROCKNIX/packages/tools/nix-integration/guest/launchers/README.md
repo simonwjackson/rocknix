@@ -25,7 +25,7 @@ or host Cemu binaries.
 | `remote-cemu-build-fingerprint.sh` | Host-side build/runtime fingerprint report for ROCKNIX host Cemu, current guest Nix Cemu, and an optional candidate Cemu. |
 | `remote-cemu-runtime-ab.sh` | Host-side current-vs-candidate Cemu A/B harness, including a live checkpoint mode for in-game sampling. |
 | `remote-cemu-live-campaign.sh` | Host-side one-session live campaign. Runs typed guest and host-control cases sequentially, waits for in-game checkpoint notes, captures maps/thread/cache/CSV evidence, then cleans up and restores power state. Child run directories are indexed so A/B/A repeats do not overwrite evidence. |
-| `remote-cemu-promote.sh` | Host-side promotion helper. Installs an already-imported direct `cemu-rocknix-package` output into `/nix/var/nix/profiles/per-user/root/cemu-promoted` inside the guest so the product launcher has a stable GC-rooted Cemu path. |
+| `remote-cemu-promote.sh` | Host-side promotion helper. Installs an already-imported `nix-sm8550` Cemu output into `/nix/var/nix/profiles/per-user/root/cemu-promoted` inside the guest as a stable GC-rooted rollback path. |
 | `launch-host-cemu-through-guest-display.sh` | Diagnostic host-control launcher. Runs host `/usr/bin/cemu` through the guest-visible display path for same-session parity checks. |
 
 ## BOTW profiles
@@ -63,24 +63,26 @@ explicit temporary host adapter for privileged GPU devfreq writes.
 
 ## Cemu promotion and override contract
 
-`start_cemu_guest.sh` defaults to the promoted direct-package profile:
+`start_cemu_guest.sh` defaults to the main-space guest system package:
 
 ```text
-/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/Cemu
+/run/current-system/sw/bin/cemu
 ```
 
-Promote only an already-imported `cemu-rocknix-package` output:
+It retains `/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/cemu` as a live rollback fallback for guests that have not switched to the current system package yet.
+
+Promote only an already-imported `cemu` output from [`nix-sm8550`](https://github.com/simonwjackson/nix-sm8550):
 
 ```sh
 /storage/.guest/remote-cemu-promote.sh \
-  /nix/store/...-cemu-rocknix-package-2.999.0-rocknix-package/bin/Cemu
+  /nix/store/...-cemu-rocknix-package-2.999.0-rocknix-package/bin/cemu
 ```
 
 The helper installs the package output into a dedicated Nix profile/GC root and refuses outputs that lack the direct package's `nix-support/rocknix-cemu-build/vulkan-loader-lib-path` evidence. The launcher resolves the profile symlink with `readlink -f` before reading package metadata, so Vulkan loader discovery still comes from the real store output.
 
 Build-parity diagnostics may override the binary with `CEMU_BIN` via `start_cemu_guest_candidate.sh`; this keeps settings, saves, XDG paths, and logging identical while changing only the Cemu binary under test. Do not use `CEMU_BIN` to point at host `/usr/bin/cemu` as a product path; host binaries are diagnostic controls only and must not become the Layer 14 runtime contract.
 
-The Cemu package is built as `cemu` from `guest/flakes/cemu/rocknix-package.nix`; `cemu-rocknix-package` is a transitional compatibility alias. Build it on Fuji or another aarch64 builder, import its closure into the Thor guest store when Thor is back online, fingerprint it, live-test it against same-session host control, then promote it with `remote-cemu-promote.sh` if it passes the parity gate.
+The Cemu package is built as `cemu` in [`nix-sm8550`](https://github.com/simonwjackson/nix-sm8550) and installed into `rocknix-guest-main-space`. Build it on Fuji or another aarch64 builder, import its closure into the Thor guest store when Thor is back online, fingerprint it, live-test it against same-session host control, then promote a rollback profile with `remote-cemu-promote.sh` only when needed.
 
 ## Cemu runtime responsibility map
 
@@ -88,12 +90,12 @@ This is the Layer 14 Cemu peelback baseline. Do not delete launcher behavior unt
 
 | Current responsibility | Current owner | Target owner | Classification | Validation gate |
 |---|---|---|---|---|
-| Cemu source/build/resources | `guest/flakes/cemu/rocknix-package.nix` | Cemu package | Required correctness | Build/fingerprint proves generic `gameProfiles` and `resources` exist. |
+| Cemu source/build/resources | `nix-sm8550/packages/cemu/package.nix` | Cemu package | Required correctness | Build/fingerprint proves generic `gameProfiles` and `resources` exist. |
 | Vulkan loader visibility | `start_cemu_guest.sh` reads package metadata | Cemu package wrapper | Required correctness | Direct package entry logs Vulkan backend and Nix Mesa driver without old launcher setup. |
 | Promoted binary selection | `start_cemu_guest.sh` / `remote-cemu-promote.sh` | Deployment/profile adapter | Temporary ROCKNIX adapter | Direct package entry works, while profile rollback still functions. |
 | HOME/XDG/display/audio defaults | `start_cemu_guest.sh` and Sway unit | Guest session profile | Required session policy | Cemu launched from guest session inherits correct env without Cemu-specific exports. |
 | `/storage` config/save/BIOS layout | `cemu-storage-adapter.sh` | Guest compatibility adapter or migration | Temporary ROCKNIX adapter | Existing settings/saves/keys survive; fresh state seeds once; no broad bind added. |
-| SM8550 default settings | Cemu package + launcher seed | Guest/device profile | Device policy | Package-owned launch works after settings move; generic package has no SM8550 runtime default. |
+| SM8550 default settings | Cemu package metadata + guest storage seed | Guest/device profile | Device policy | Package-owned launch works while SM8550 settings remain explicit and reviewable. |
 | SDL screensaver workaround | `start_cemu_guest.sh` | Package wrapper or guest session | Required if crash still reproduces | Run without/with hint and keep only if it prevents a real crash. |
 | CPU affinity | `cemu-sm8550-performance.sh` via guest session `CEMU_AFFINITY_MASK` | SM8550 guest/device profile | Measured optimization | Paired in-game run proves pinned guest Cemu improves FPS/frame pacing. |
 | CPU/GPU governors/clocks | `cemu-sm8550-performance.sh` / temporary `host-tune.sh` | SM8550 guest/device profile, host helper only if privileged | Measured optimization | Paired in-game run proves benefit and restore path. |
@@ -117,7 +119,7 @@ This is the Layer 14 Cemu peelback baseline. Do not delete launcher behavior unt
 - U8 adapter thinning follows once package-owned launch is proven and passed a live MangoHud run: `/storage/.guest/runs/20260510-231352-u8-thin-adapter-mangohud`. `start_cemu_guest.sh` no longer owns Vulkan loader setup, launched requested/binary path `/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/cemu`, and recorded avg 47.26 / median 45.00 / p10 44.47 FPS early in-game.
 - U6 performance-policy relocation passed a live MangoHud run: `/storage/.guest/runs/20260510-230455-u6-sm8550-performance-helper-mangohud`. The run uses `cemu-sm8550-performance.sh` for CPU/GPU/affinity policy while keeping the package entry generic; post-pin CSV stats were avg 43.92 / median 44.96 / p10 34.67 FPS with CPU/GPU unrestricted and affinity `0xF8`.
 - U5 storage-adapter peelback passed a live MangoHud run: `/storage/.guest/runs/20260510-225813-u5-storage-adapter-mangohud-unrestricted`. The run used the package-owned entry point through `start_cemu_guest.sh`, logged `cemu_storage_adapter=ok`, preserved existing settings/saves/keys paths before/after, and recorded MangoHud CSV stats around avg 48.50 / median 45.01 / p10 44.55 FPS early in-game with CPU/GPU unrestricted.
-- Promoted Nix Cemu (`/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/Cemu`) runs BOTW 540p-45 through native Nix Mesa/Freedreno at host-like performance: live ~40-45 FPS, MangoHud median ~40 FPS after warmup.
+- Promoted Nix Cemu (`/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/cemu`) runs BOTW 540p-45 through native Nix Mesa/Freedreno at host-like performance: live ~40-45 FPS, MangoHud median ~40 FPS after warmup. Current main-space guests prefer `/run/current-system/sw/bin/cemu` and keep the promoted profile as rollback.
 - Same-session host control (`/usr/bin/cemu`, ROCKNIX Mesa 26.0.6) matches once it is pinned to the same big-core affinity. A false ~25 FPS host result was traced to unpinned lowercase `cemu`, not to graphics-driver passthrough.
 - Product path remains Nix Cemu + Nix Vulkan loader + Nix Mesa/Freedreno. ROCKNIX Mesa passthrough is diagnostic-only.
 - `games-launcher.sh` renders all 7 BOTW profile entries on DSI-1,
@@ -139,17 +141,17 @@ Run from the ROCKNIX host over SSH:
 
 ```sh
 # Compare host ROCKNIX Cemu, current guest Nix Cemu, and optionally a candidate.
-CANDIDATE_CEMU=/nix/store/...-cemu-rocknix-package-2.999.0-rocknix-package/bin/Cemu \
+CANDIDATE_CEMU=/nix/store/...-cemu-rocknix-package-2.999.0-rocknix-package/bin/cemu \
   /storage/.guest/remote-cemu-build-fingerprint.sh
 
 # Run current-vs-candidate through the same guest display path.
-CANDIDATE_CEMU=/nix/store/...-cemu-rocknix-package-2.999.0-rocknix-package/bin/Cemu \
+CANDIDATE_CEMU=/nix/store/...-cemu-rocknix-package-2.999.0-rocknix-package/bin/cemu \
   /storage/.guest/remote-cemu-runtime-ab.sh potato-30 120
 
 # Live in-game checkpoint mode. Start the run, move BOTW to an in-game scene,
 # then signal from another SSH shell. Optional text in the signal file is copied
 # into the report as the user-observed FPS note.
-CANDIDATE_CEMU=/nix/store/...-cemu-rocknix-package-2.999.0-rocknix-package/bin/Cemu \
+CANDIDATE_CEMU=/nix/store/...-cemu-rocknix-package-2.999.0-rocknix-package/bin/cemu \
   /storage/.guest/remote-cemu-runtime-ab.sh live 720p-45 300
 printf 'user-visible MangoHud ~= 14 FPS in-game\n' > /storage/.guest/live-checkpoint
 ```
@@ -171,7 +173,7 @@ For the final parity gate, use typed cases so host controls and guest candidates
 
 ```sh
 CAMPAIGN_CASES="host:host-control:/storage/.guest/launch-host-cemu-through-guest-display.sh:720p-45
-guest:rocknix-package:/nix/store/...-cemu-rocknix-package-2.999.0-rocknix-package/bin/Cemu
+guest:nix-sm8550:/nix/store/...-cemu-rocknix-package-2.999.0-rocknix-package/bin/cemu
 host:host-control-repeat:/storage/.guest/launch-host-cemu-through-guest-display.sh:720p-45" \
   /storage/.guest/remote-cemu-live-campaign.sh
 ```

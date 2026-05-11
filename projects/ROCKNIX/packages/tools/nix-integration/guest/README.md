@@ -1,57 +1,86 @@
-# ROCKNIX Layer 10b bootable guest rootfs
+# rocknix-nix-guest
 
-This directory defines the current bootable guest rootfs used on SM8550/Odin2 Portal. The guest is authored as reusable NixOS modules under `modules/` and profiles under `profiles/`; `rocknix-guest.nix` imports the default SSH-capable profile.
+NixOS guest flake and guest-side launch adapters for ROCKNIX SM8550/Thor main-space experiments.
 
-Layer 10b is only a bootable lifecycle validation layer. The guest rootfs exists to prove that `nixctl guest start` and `nixctl guest stop` work with a real container-style rootfs under `systemd-nspawn --boot --register=no`. Layer 12 enables the guest's locked-down OpenSSH service only when host-side metadata and an operator-provided authorized-keys file are configured. It must not expose guest SSH by default, autostart, graphics, audio, input, ROM/save paths, Steam/FEX state, or host UI sockets.
+This in-tree mirror tracks the public [`rocknix-nix-guest`](https://github.com/simonwjackson/rocknix-nix-guest) repo, which is the guest/runtime counterpart to [`nix-sm8550`](https://github.com/simonwjackson/nix-sm8550):
 
-## Artifact contract
+- `rocknix-nix-guest` owns the NixOS container guest, profiles, session policy, and ROCKNIX `/storage` compatibility adapters;
+- `nix-sm8550` owns package derivations such as Cemu;
+- ROCKNIX remains the base OS, boot/recovery plane, and host-side nspawn importer/launcher.
 
-A hardware-Go artifact must be:
+## Layout
 
-- built for `aarch64-linux`
-- NixOS/container-style, with `boot.isContainer = true`
-- bootable by the compatible `systemd-nspawn` carried in the guest closure
-- self-contained for first validation; do not bind host `/nix` or `/storage/.nix-root` as guest `/nix`
-- headless and non-network-exposed by default
-- free of default passwords, password login, and shipped authorized keys
-- imported only under the configured Layer 10 guest root, normally `/storage/machines/rocknix-guest`
+- `flake.nix` exposes aarch64 NixOS guest configurations and rootfs packages.
+- `rocknix-guest.nix` is the stable default Layer 10b/12 SSH-capable guest import.
+- `modules/` contains reusable NixOS modules for the container baseline, SSH, display, audio, network, tooling, and lid policy.
+- `profiles/` composes modules into `minimal`, `ssh`, `main-space`, and `dev-env` profiles.
+- `launchers/` contains guest/host helper scripts used by the Layer 14 main-space Cemu validation path.
+- ROCKNIX's `nix-integration-static-checks.sh` enforces the in-tree mirror boundary until the host integration consumes the external repo directly.
 
-## Module layout
+## Flake outputs
 
-- `modules/base.nix` contains the headless container baseline.
-- `modules/tools.nix` contains the minimal CLI/tooling set.
-- `modules/ssh.nix` contains the locked-down Layer 12 OpenSSH config on port `2222`; authorized keys are supplied only by the host-side runtime bind mount.
-- `profiles/minimal.nix` imports the base/tooling modules without SSH exposure.
-- `profiles/ssh.nix` imports the default Layer 10b/12 profile used by `rocknix-guest.nix`.
+Configurations:
 
-## Build
+```sh
+nix flake show --all-systems .
+```
 
-From this directory, build the tarball package with Nix:
+Expected NixOS configurations:
+
+- `nixosConfigurations.rocknix-guest`
+- `nixosConfigurations.rocknix-guest-main-space`
+- `nixosConfigurations.rocknix-guest-dev-env`
+
+Rootfs package outputs are exposed for `x86_64-linux` and `aarch64-linux` hosts:
 
 ```sh
 nix build .#rootfs
-```
-
-The resulting symlink points at a tarball produced by the pinned `nixpkgs` input in `flake.lock`.
-
-Record the artifact checksum before transferring it to the device:
-
-```sh
 sha256sum result/tarball/*.tar.*
 ```
 
-The import/staging command records the artifact name, sha256, import timestamp, and rootfs mode under `/storage/.config/nix-integration/layer10`.
+The tarball is imported by ROCKNIX host tooling under the configured Layer 10 guest root, normally `/storage/machines/rocknix-guest`.
 
-## Non-goals
+Layer 12 SSH remains opt-in: the guest listens on the alternate SSH port only for the SSH-capable profile, and authorized keys are supplied by host-side metadata/binds rather than shipped in the artifact.
 
-Do not add these to this Layer 10b guest:
+## Runtime boundaries
 
-- default guest SSH exposure; Layer 12 must provide host-side opt-in metadata and alternate-port forwarding
-- password login, shipped authorized keys, or default credentials
-- graphical sessions, Wayland/Sway integration, or `/dev/dri`
-- PipeWire, PulseAudio, ALSA passthrough, or audio sockets
-- `/dev/input` or controller/touch input passthrough
-- ROM, save, Steam, FEX, or browser-profile mounts
-- autostart or host boot dependencies
+The guest artifact must remain:
 
-Those are separate layers after bootable start/stop has hardware-Go evidence.
+- container-style (`boot.isContainer = true`), built for `aarch64-linux`;
+- free of default passwords, shipped authorized keys, or password login;
+- explicit about host binds and `/storage` compatibility state;
+- independent from ROCKNIX `/usr`, `/flash`, `/boot`, and host `/etc` mutation;
+- free of broad `/storage/.cache` binds;
+- free of package derivations that belong in `nix-sm8550`.
+
+Layer 14 main-space intentionally adds Sway, Mesa/Freedreno, PipeWire, NetworkManager, and Cemu launch adapters. The minimal/SSH profile remains the small lifecycle/SSH validation baseline.
+
+## Cemu boundary
+
+`rocknix-guest-main-space` consumes Cemu from the public package repo:
+
+```nix
+nix-sm8550.url = "github:simonwjackson/nix-sm8550";
+environment.systemPackages = [ nix-sm8550.packages.${targetSystem}.cemu ];
+```
+
+`launchers/start_cemu_guest.sh` defaults to `/run/current-system/sw/bin/cemu` and may fall back to a promoted profile for live rollback. It delegates ROCKNIX `/storage` layout compatibility to `cemu-storage-adapter.sh`; Vulkan loader setup stays in the package wrapper from `nix-sm8550`.
+
+## Validation
+
+Run ROCKNIX structural checks from the repository root:
+
+```sh
+projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-static-checks.sh
+```
+
+Evaluate and dry-run the main-space closure:
+
+```sh
+nix flake show --all-systems --no-write-lock-file .
+nix build --dry-run --no-write-lock-file .#nixosConfigurations.rocknix-guest-main-space.config.system.build.toplevel
+```
+
+## Relationship to ROCKNIX
+
+This directory is a temporary in-tree mirror used by ROCKNIX build/install scripts. The public source of truth is `github:simonwjackson/rocknix-nix-guest`; future cleanup should make ROCKNIX fetch/consume that repo directly instead of carrying the mirror.
