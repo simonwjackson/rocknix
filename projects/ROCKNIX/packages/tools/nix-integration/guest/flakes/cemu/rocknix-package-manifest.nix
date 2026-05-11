@@ -58,7 +58,7 @@
   ];
 
   runtimeData = [
-    "share/Cemu/gameProfiles/default/00050000101c9400.ini"
+    "share/Cemu/gameProfiles/default"
     "share/Cemu/resources/sharedFonts/CafeCn.ttf"
     "share/Cemu/config/SM8550/settings.xml"
   ];

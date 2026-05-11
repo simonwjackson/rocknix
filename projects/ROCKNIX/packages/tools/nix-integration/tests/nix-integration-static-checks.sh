@@ -668,8 +668,10 @@ grep -q 'stdenv.mkDerivation' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
   || fail "direct Cemu package must use an explicit stdenv derivation"
 grep -q 'rocknix-cemu-build' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
   || fail "direct Cemu package must export build evidence"
-grep -q 'gameProfiles/default/00050000101c9400.ini' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
-  || fail "direct Cemu package must assert BOTW game profile runtime data"
+grep -q 'gameProfiles/default' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "direct Cemu package must assert generic default gameProfiles runtime data"
+! grep -q 'gameProfiles/default/00050000101c9400.ini' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "direct Cemu package must not make BOTW a generic build assertion"
 grep -q 'resources/sharedFonts/CafeCn.ttf' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
   || fail "direct Cemu package must assert Cafe shared font runtime data"
 cmp -s "${HOST_CEMU_SA_DIR}/config/SM8550/settings.xml" "${CEMU_FLAKE_DIR}/settings.SM8550.xml" \
@@ -688,8 +690,23 @@ grep -q 'libcubeb' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
   || fail "direct Cemu package must reject dynamic Cubeb linkage"
 grep -q 'vulkan-loader-lib-path' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
   || fail "direct Cemu package must record its Vulkan loader path"
+grep -q 'cat > "\$out/bin/cemu"' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "direct Cemu package must install a package-owned cemu entry point"
+grep -q 'vulkan_loader_lib_path=' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "package-owned cemu entry point must own Vulkan loader visibility"
+grep -F -q 'exec "\$cemu_wrapper_dir/Cemu"' "${CEMU_FLAKE_DIR}/rocknix-package.nix" \
+  || fail "package-owned cemu entry point must exec the real package Cemu binary"
+cemu_entry_block=$(awk '
+  /cat > "\$out\/bin\/cemu"/ { in_entry=1 }
+  in_entry { print }
+  in_entry && /^EOF$/ { exit }
+' "${CEMU_FLAKE_DIR}/rocknix-package.nix")
+printf '%s\n' "${cemu_entry_block}" | grep -q 'vulkan_loader_lib_path=' \
+  || fail "package-owned cemu entry point block missing Vulkan loader setup"
+! printf '%s\n' "${cemu_entry_block}" | grep -Eq '/storage|LD_PRELOAD|BOTW|00050000101c9400|cemu-promoted|CEMU_PROMOTED|SM8550|/host|/usr/lib' \
+  || fail "package-owned cemu entry point must stay free of ROCKNIX/BOTW/host assumptions"
 grep -q 'CEMU_VULKAN_LOADER_LIB_PATH' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
-  || fail "start_cemu_guest.sh must expose the packaged Vulkan loader to dlopen-based Cemu"
+  || fail "start_cemu_guest.sh must preserve legacy Vulkan loader setup until direct package launch is proven"
 grep -q 'Cemu runtime responsibility map' "${PKG_DIR}/guest/launchers/README.md" \
   || fail "launcher README must document Cemu runtime responsibility peelback baseline"
 grep -q 'BOTW profile/settings mutation.*Validation workload only' "${PKG_DIR}/guest/launchers/README.md" \
@@ -702,6 +719,8 @@ grep -q 'vulkan-loader-lib-path' "${PKG_DIR}/guest/launchers/remote-cemu-promote
   || fail "remote-cemu-promote.sh must verify direct-package Vulkan loader evidence before promotion"
 grep -q 'build evidence' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
   || fail "remote-cemu-build-fingerprint.sh must report direct package build evidence"
+grep -q 'package entry point' "${PKG_DIR}/guest/launchers/remote-cemu-build-fingerprint.sh" \
+  || fail "remote-cemu-build-fingerprint.sh must report package-owned Cemu entry point evidence"
 
 # U6: THIN_HOST build flag, gated SM8550-only, wired into the package install.
 grep -q 'THIN_HOST=' "${REPO_ROOT}/projects/ROCKNIX/options" \
