@@ -10,13 +10,19 @@
 # /usr/bin/start_cemu.sh inside the guest.
 set -eu
 
-# Compatibility adapter around the package-owned entry point. The default path
-# is the promoted package wrapper (`bin/cemu`), not the real binary. CEMU_BIN
-# remains a rollback/diagnostic override; if it points at `bin/Cemu` and the
-# same output has `bin/cemu`, normalize back to the package wrapper so Vulkan
-# loader setup stays package-owned.
+# Compatibility adapter around the package-owned entry point. The product path
+# is the main-space NixOS system package from nix-sm8550 (`bin/cemu`), not the
+# real binary. CEMU_BIN remains a rollback/diagnostic override; the promoted
+# profile is now a fallback for older live guests that have not switched yet.
+# If an override points at `bin/Cemu` and the same output has `bin/cemu`,
+# normalize back to the package wrapper so Vulkan loader setup stays
+# package-owned.
+SYSTEM_CEMU=${CEMU_SYSTEM_BIN:-/run/current-system/sw/bin/cemu}
 PROMOTED_CEMU=${CEMU_PROMOTED_BIN:-/nix/var/nix/profiles/per-user/root/cemu-promoted/bin/cemu}
-REQUESTED_CEMU=${CEMU_BIN:-$PROMOTED_CEMU}
+REQUESTED_CEMU=${CEMU_BIN:-$SYSTEM_CEMU}
+if [ -z "${CEMU_BIN:-}" ] && [ ! -x "$REQUESTED_CEMU" ] && [ -x "$PROMOTED_CEMU" ]; then
+  REQUESTED_CEMU=$PROMOTED_CEMU
+fi
 CEMU=$REQUESTED_CEMU
 if [ "$(basename "$CEMU")" != "cemu" ] && [ -x "$(dirname "$CEMU")/cemu" ]; then
   CEMU="$(dirname "$CEMU")/cemu"
@@ -25,9 +31,9 @@ fi
 ROM="${1:-}"
 [ -z "$ROM" ] && { echo "usage: start_cemu_guest.sh <rom> [system]"; exit 2; }
 if [ ! -x "$CEMU" ]; then
-  if [ -z "${CEMU_BIN:-}" ] && [ "$CEMU" = "$PROMOTED_CEMU" ]; then
-    echo "Promoted Cemu profile is missing or not executable: $PROMOTED_CEMU" >&2
-    echo "Promote an imported direct package with remote-cemu-promote.sh, or pass CEMU_BIN=/nix/store/.../bin/Cemu for diagnostics." >&2
+  if [ -z "${CEMU_BIN:-}" ]; then
+    echo "System Cemu package is missing or not executable: $SYSTEM_CEMU" >&2
+    echo "Rebuild/switch the main-space guest with nix-sm8550, promote a fallback with remote-cemu-promote.sh, or pass CEMU_BIN=/nix/store/.../bin/Cemu for diagnostics." >&2
   else
     echo "Cemu binary is not executable: $CEMU" >&2
   fi

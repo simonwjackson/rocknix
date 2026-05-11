@@ -581,10 +581,18 @@ for launcher in \
   start_cemu_guest_rocknixmesa.sh; do
   check_script "${PKG_DIR}/guest/launchers/${launcher}"
 done
+grep -q 'nix-sm8550.url = "git+ssh://git@github.com/simonwjackson/nix-sm8550.git?ref=feat/rocknix-cemu-monorepo"' "${PKG_DIR}/guest/flake.nix" \
+  || fail "guest flake must consume the external private nix-sm8550 package repo over SSH while PR #1 is under review"
+grep -q 'nix.registry.nix-sm8550.flake = nix-sm8550' "${PKG_DIR}/guest/flake.nix" \
+  || fail "main-space guest must expose nix-sm8550 in the Nix registry"
+grep -q 'nix-sm8550.packages.${targetSystem}.cemu' "${PKG_DIR}/guest/flake.nix" \
+  || fail "main-space guest must install Cemu from nix-sm8550"
+grep -q 'SYSTEM_CEMU=' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
+  || fail "start_cemu_guest.sh must default through the main-space system Cemu package"
 grep -q 'PROMOTED_CEMU=' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
-  || fail "start_cemu_guest.sh must default through promoted Cemu profile"
-grep -q 'REQUESTED_CEMU=${CEMU_BIN:-$PROMOTED_CEMU}' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
-  || fail "start_cemu_guest.sh must preserve CEMU_BIN override over promoted profile"
+  || fail "start_cemu_guest.sh must retain promoted Cemu profile fallback for live rollback"
+grep -q 'REQUESTED_CEMU=${CEMU_BIN:-$SYSTEM_CEMU}' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
+  || fail "start_cemu_guest.sh must preserve CEMU_BIN override over system Cemu package"
 grep -q '/cemu"' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
   || fail "start_cemu_guest.sh must normalize real-binary overrides back to the package cemu entry point when available"
 grep -q 'readlink -f "$CEMU"' "${PKG_DIR}/guest/launchers/start_cemu_guest.sh" \
