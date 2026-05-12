@@ -172,10 +172,14 @@ grep -q 'SM8550 minimal host pulled a host UX/emulation payload' "${REPO_ROOT}/p
   || fail "image package must fail closed if minimal host reintroduces UX/emulation payloads"
 grep -q 'Minimal SM8550 host keeps only what the recovery/update substrate needs' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/network/package.mk" \
   || fail "ROCKNIX network meta must document the minimal-host dependency set"
-grep -q 'PKG_DEPENDS_TARGET="toolchain iwd networkmanager netbase ethtool openssh iw wireless-regdb rsync nss-mdns"' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/network/package.mk" \
+grep -q 'PKG_DEPENDS_TARGET="toolchain connman iwd netbase ethtool openssh iw wireless-regdb rsync nss-mdns"' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/network/package.mk" \
   || fail "ROCKNIX network meta must have a minimal-host dependency set"
 ! grep -q 'gallium-nine' "${REPO_ROOT}/projects/ROCKNIX/packages/graphics/mesa/package.mk" \
   || fail "Mesa 26 no longer supports the gallium-nine Meson option"
+! grep -q 'PKG_CONFIGURE_OPTS_TARGET="--disable-glx"' "${REPO_ROOT}/projects/ROCKNIX/packages/graphics/libepoxy/package.mk" \
+  || fail "libepoxy must use Meson glx/x11 options, not the removed autotools --disable-glx flag"
+grep -q 'PKG_MESON_OPTS_TARGET+=" -Dglx=no -Dx11=false"' "${REPO_ROOT}/projects/ROCKNIX/packages/graphics/libepoxy/package.mk" \
+  || fail "libepoxy must disable glx/x11 through Meson options when no display server needs them"
 grep -q 'if \[ "${DEVICE}" != "SM8550" \]' "${SYSTEMD_PKG}" \
   || fail "systemd package must strip nspawn on non-SM8550 devices"
 grep -q 'safe_remove ${INSTALL}/usr/bin/systemd-nspawn' "${SYSTEMD_PKG}" || fail "systemd package missing nspawn binary removal fallback"

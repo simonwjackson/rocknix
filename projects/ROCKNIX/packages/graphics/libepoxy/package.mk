@@ -26,5 +26,5 @@ fi
 
 if [ "${DISPLAYSERVER}" != "x11" ] && \
    [ "${DISPLAYSERVER}" != "wl" ]; then
-  PKG_CONFIGURE_OPTS_TARGET="--disable-glx"
+  PKG_MESON_OPTS_TARGET+=" -Dglx=no -Dx11=false"
 fi
