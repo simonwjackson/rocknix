@@ -140,11 +140,17 @@ log "waiting for guest NetworkManager before Nix build"
 nsenter -t "${inner_pid}" -m -u -i -n -p sh -c '
   set -eu
   export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin
-  for i in $(seq 1 60); do
-    if /run/current-system/sw/bin/systemctl is-active NetworkManager.service >/dev/null 2>&1; then
+  i=0
+  while [ "${i}" -lt 60 ]; do
+    if [ -x /run/current-system/sw/bin/systemctl ] && /run/current-system/sw/bin/systemctl is-active NetworkManager.service >/dev/null 2>&1; then
       exit 0
     fi
-    sleep 2
+    i=$((i + 1))
+    if [ -x /run/current-system/sw/bin/sleep ]; then
+      /run/current-system/sw/bin/sleep 2
+    else
+      sleep 2 2>/dev/null || true
+    fi
   done
   exit 1
 ' || fail "guest NetworkManager did not become active"
