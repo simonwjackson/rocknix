@@ -1,0 +1,119 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# Promote the host-packaged rocknix-nix-guest source into the persistent
+# /storage-backed NixOS guest rootfs.
+#
+# ROCKNIX image updates replace /usr/lib/nix-integration/guest, but they do
+# not overwrite /storage/machines/rocknix-guest. This helper bridges that
+# lifecycle boundary after the old guest has booted and networking is owned by
+# the guest: it builds the packaged main-space NixOS configuration inside the
+# running guest, points /nix/var/nix/profiles/system at the new toplevel, then
+# asks the host to restart the guest once so PID 1 boots the new generation.
+
+set -eu
+
+PATH=/usr/bin:/usr/sbin:/bin:/sbin
+
+GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+GUEST_SOURCE="${ROCKNIX_GUEST_SOURCE:-/usr/lib/nix-integration/guest}"
+GUEST_REV_FILE="${ROCKNIX_GUEST_REV_FILE:-/usr/lib/nix-integration/guest-revision}"
+STAGED_SOURCE="${ROCKNIX_GUEST_STAGED_SOURCE:-/storage/.guest/rocknix-nix-guest-packaged}"
+APPLIED_REV_FILE="${ROCKNIX_GUEST_APPLIED_REV_FILE:-${GUEST_ROOT}/etc/rocknix-guest-revision}"
+APPLIED_SYSTEM_FILE="${ROCKNIX_GUEST_APPLIED_SYSTEM_FILE:-${GUEST_ROOT}/etc/rocknix-guest-system-path}"
+LOG_TAG="rocknix-guest-promote"
+
+log() {
+  printf '%s: %s\n' "${LOG_TAG}" "$*"
+}
+
+fail() {
+  log "FAIL: $*"
+  exit 1
+}
+
+[ -d "${GUEST_ROOT}" ] || fail "guest rootfs missing: ${GUEST_ROOT}"
+[ -d "${GUEST_SOURCE}" ] || fail "packaged guest source missing: ${GUEST_SOURCE}"
+[ -r "${GUEST_REV_FILE}" ] || fail "packaged guest revision missing: ${GUEST_REV_FILE}"
+
+wanted_rev="$(sed -n '1p' "${GUEST_REV_FILE}" | tr -d '[:space:]')"
+[ -n "${wanted_rev}" ] || fail "empty packaged guest revision"
+
+current_rev=""
+if [ -r "${APPLIED_REV_FILE}" ]; then
+  current_rev="$(sed -n '1p' "${APPLIED_REV_FILE}" | tr -d '[:space:]')"
+fi
+
+if [ "${current_rev}" = "${wanted_rev}" ]; then
+  log "guest revision already applied: ${wanted_rev}"
+  exit 0
+fi
+
+log "promoting guest revision ${wanted_rev} (current: ${current_rev:-none})"
+
+mkdir -p "$(dirname "${STAGED_SOURCE}")"
+tmp_source="${STAGED_SOURCE}.tmp.$$"
+rm -rf "${tmp_source}"
+mkdir -p "${tmp_source}"
+cp -PR "${GUEST_SOURCE}/." "${tmp_source}/"
+printf '%s\n' "${wanted_rev}" > "${tmp_source}/.rocknix-guest-revision"
+rm -rf "${STAGED_SOURCE}.previous"
+if [ -d "${STAGED_SOURCE}" ]; then
+  mv "${STAGED_SOURCE}" "${STAGED_SOURCE}.previous"
+fi
+mv "${tmp_source}" "${STAGED_SOURCE}"
+
+if [ -x "${STAGED_SOURCE}/scripts/static-checks.sh" ]; then
+  log "running packaged guest static checks"
+  "${STAGED_SOURCE}/scripts/static-checks.sh"
+fi
+
+outer_pid="$(systemctl show -p MainPID --value rocknix-guest-v2.service 2>/dev/null || true)"
+case "${outer_pid}" in
+  ''|0) fail "rocknix-guest-v2.service is not running" ;;
+esac
+
+inner_pid="$(pgrep -P "${outer_pid}" | head -1 || true)"
+[ -n "${inner_pid}" ] || fail "could not find guest payload PID under ${outer_pid}"
+
+log "waiting for guest NetworkManager before Nix build"
+nsenter -t "${inner_pid}" -m -u -i -n -p sh -c '
+  set -eu
+  export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin
+  for i in $(seq 1 60); do
+    if /run/current-system/sw/bin/systemctl is-active NetworkManager.service >/dev/null 2>&1; then
+      exit 0
+    fi
+    sleep 2
+  done
+  exit 1
+' || fail "guest NetworkManager did not become active"
+
+log "building packaged guest inside running guest namespace"
+nsenter -t "${inner_pid}" -m -u -i -n -p sh -c '
+  set -eu
+  export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin
+  cd /storage/.guest/rocknix-nix-guest-packaged
+  /run/current-system/sw/bin/nix build --extra-experimental-features "nix-command flakes" \
+    .#nixosConfigurations.rocknix-guest-main-space.config.system.build.toplevel \
+    --print-out-paths
+  system_path="$(/run/current-system/sw/bin/readlink -f result)"
+  [ -n "${system_path}" ]
+  /run/current-system/sw/bin/nix-env -p /nix/var/nix/profiles/system --set "${system_path}"
+  printf "%s\n" "${system_path}" > /storage/.guest/rocknix-guest-promote-system-path
+'
+
+system_path=""
+if [ -r "/storage/.guest/rocknix-guest-promote-system-path" ]; then
+  system_path="$(sed -n '1p' "/storage/.guest/rocknix-guest-promote-system-path")"
+  rm -f "/storage/.guest/rocknix-guest-promote-system-path"
+fi
+[ -n "${system_path}" ] || fail "guest build did not report a system path"
+
+printf '%s\n' "${wanted_rev}" > "${APPLIED_REV_FILE}"
+printf '%s\n' "${system_path}" > "${APPLIED_SYSTEM_FILE}"
+
+log "guest profile now points at ${system_path}"
+log "restarting guest to boot promoted generation"
+systemctl restart --no-block rocknix-guest-v2.service

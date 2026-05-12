@@ -49,11 +49,13 @@ done
 
 # Remaining host scripts are the thin-host guest launcher/recovery support.
 check_script "${PKG_DIR}/scripts/rocknix-guest-prep"
+check_script "${PKG_DIR}/scripts/rocknix-guest-promote"
 check_script "${PKG_DIR}/scripts/rocknix-guest-udev-stage"
 check_script "${PKG_DIR}/scripts/rocknix-recovery-toggle"
 check_script "${PKG_DIR}/scripts/rocknix-guest-soak"
 
 grep -q 'rocknix-guest-prep' "${PKG_DIR}/package.mk" || fail "package.mk does not install prep helper"
+grep -q 'rocknix-guest-promote' "${PKG_DIR}/package.mk" || fail "package.mk does not install guest promotion helper"
 grep -q 'rocknix-guest-udev-stage' "${PKG_DIR}/package.mk" || fail "package.mk does not install udev stage helper"
 ! grep -q 'rocknix-host-reclaim' "${PKG_DIR}/package.mk" || fail "package.mk must not install host reclaim helper"
 grep -q 'rocknix-recovery-toggle' "${PKG_DIR}/package.mk" || fail "package.mk does not install recovery toggle"
@@ -71,6 +73,7 @@ grep -q 'rocknix-nix-guest/archive' "${PKG_DIR}/package.mk" || fail "package.mk 
 grep -q 'sha256sum "${guest_tarball}.tmp"' "${PKG_DIR}/package.mk" || fail "package.mk must verify guest tarball sha256"
 grep -q 'tar -xzf "${guest_tarball}"' "${PKG_DIR}/package.mk" || fail "package.mk must extract fetched guest tarball"
 grep -q 'cp -PR "${guest_extract}/."' "${PKG_DIR}/package.mk" || fail "package.mk must stage fetched guest tree"
+grep -q '/usr/lib/nix-integration/guest-revision' "${PKG_DIR}/package.mk" || fail "package.mk must ship packaged guest revision marker"
 grep -q 'docs/contracts/layer14-main-space-contract.md' "${PKG_DIR}/package.mk" || fail "package.mk must ship main-space contract doc from guest"
 grep -q 'docs/contracts/layer14-soak-checklist.md' "${PKG_DIR}/package.mk" || fail "package.mk must ship soak checklist from guest"
 grep -q 'docs/contracts/HOW-TO-FALL-BACK.md' "${PKG_DIR}/package.mk" || fail "package.mk must ship fallback doc from guest"
@@ -80,6 +83,7 @@ check_unit "${PKG_DIR}/system.d/nix-storage-setup.service"
 check_unit "${PKG_DIR}/system.d/nix.mount"
 check_unit "${PKG_DIR}/system.d/rocknix-graphical.target"
 check_unit "${PKG_DIR}/system.d/rocknix-guest-v2.service"
+check_unit "${PKG_DIR}/system.d/rocknix-guest-promote.service"
 check_unit "${PKG_DIR}/system.d/rocknix-recovery-toggle.service"
 
 grep -q 'mkdir -p ${INSTALL}/nix' "${PKG_DIR}/package.mk" || fail "package.mk does not create /nix mountpoint"
@@ -87,6 +91,7 @@ grep -q 'enable_service nix-storage-setup.service' "${PKG_DIR}/package.mk" || fa
 grep -q 'enable_service nix.mount' "${PKG_DIR}/package.mk" || fail "package.mk does not enable nix.mount"
 grep -q 'enable_service rocknix-graphical.target' "${PKG_DIR}/package.mk" || fail "package.mk does not enable rocknix-graphical.target"
 grep -q 'enable_service rocknix-guest-v2.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable rocknix-guest-v2.service"
+grep -q 'enable_service rocknix-guest-promote.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable guest promotion service"
 grep -q 'enable_service rocknix-recovery-toggle.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable recovery toggle"
 
 grep -q 'RequiresMountsFor=/storage' "${PKG_DIR}/system.d/nix-storage-setup.service" || fail "setup service does not require /storage"
@@ -113,6 +118,16 @@ grep -q -- '--bind-ro=/run/.guest-udev:/run/udev' "${guest_unit}" || fail "guest
 ! grep -q 'ExecStopPost=' "${guest_unit}" || fail "guest unit must not run host-side fallback/reclaim hooks"
 grep -q 'Restart=on-failure' "${guest_unit}" || fail "guest unit must restart on failure"
 grep -q 'WantedBy=rocknix-graphical.target' "${guest_unit}" || fail "guest unit must be wanted by rocknix-graphical.target"
+
+promote_unit="${PKG_DIR}/system.d/rocknix-guest-promote.service"
+grep -q 'After=rocknix-guest-v2.service' "${promote_unit}" || fail "guest promotion must run after guest boot"
+grep -q 'ExecStart=/usr/bin/rocknix-guest-promote' "${promote_unit}" || fail "guest promotion unit has wrong ExecStart"
+grep -q 'WantedBy=rocknix-graphical.target' "${promote_unit}" || fail "guest promotion must be wanted by graphical target"
+grep -q 'TimeoutStartSec=60min' "${promote_unit}" || fail "guest promotion needs a long timeout for Nix builds"
+grep -q 'nix build' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must build packaged guest configuration"
+grep -q 'nix-env -p /nix/var/nix/profiles/system --set' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must update guest system profile"
+grep -q 'systemctl restart --no-block rocknix-guest-v2.service' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must restart guest after profile update"
+grep -q 'rocknix-guest-revision' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must track applied guest revision"
 for forbidden in '--bind-ro=/usr' '--bind-ro=/lib' '--bind-ro=/etc/profile' '--bind=/storage '; do
   ! grep -v '^#' "${guest_unit}" | grep -F -q -- "${forbidden}" || fail "guest unit still contains forbidden broad bind: ${forbidden}"
 done

@@ -36,11 +36,13 @@ post_install() {
 
   mkdir -p ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-prep ${INSTALL}/usr/bin
+  cp ${PKG_DIR}/scripts/rocknix-guest-promote ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-recovery-toggle ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-soak ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-udev-stage ${INSTALL}/usr/bin
   chmod 0755 \
     ${INSTALL}/usr/bin/rocknix-guest-prep \
+    ${INSTALL}/usr/bin/rocknix-guest-promote \
     ${INSTALL}/usr/bin/rocknix-recovery-toggle \
     ${INSTALL}/usr/bin/rocknix-guest-soak \
     ${INSTALL}/usr/bin/rocknix-guest-udev-stage
@@ -77,6 +79,8 @@ post_install() {
 
   mkdir -p ${INSTALL}/usr/lib/nix-integration/guest
   cp -PR "${guest_extract}/." ${INSTALL}/usr/lib/nix-integration/guest/
+  printf '%s\n' "${PKG_NIX_GUEST_REV}" > ${INSTALL}/usr/lib/nix-integration/guest-revision
+  printf '%s\n' "${PKG_NIX_GUEST_REV}" > ${INSTALL}/usr/lib/nix-integration/guest/.rocknix-guest-revision
 
   # Contract docs are owned by rocknix-nix-guest under docs/contracts/.
   # Copy the two that the host ships on-image from the fetched tarball.
@@ -91,6 +95,7 @@ post_install() {
   # ROCKNIX remains the recovery plane via rocknix-recovery-toggle.
   enable_service rocknix-graphical.target
   enable_service rocknix-guest-v2.service
+  enable_service rocknix-guest-promote.service
   enable_service rocknix-recovery-toggle.service
 
   # Ship the recovery readme to /flash/. Pulled from the fetched

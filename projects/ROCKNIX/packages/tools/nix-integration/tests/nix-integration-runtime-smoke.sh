@@ -49,6 +49,7 @@ check_grep() {
 }
 
 check_executable "${SCRIPT_ROOT}/rocknix-guest-prep"
+check_executable "${SCRIPT_ROOT}/rocknix-guest-promote"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-udev-stage"
 check_executable "${SCRIPT_ROOT}/rocknix-recovery-toggle"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-soak"
@@ -57,6 +58,7 @@ check_file "${UNIT_ROOT}/nix-storage-setup.service"
 check_file "${UNIT_ROOT}/nix.mount"
 check_file "${UNIT_ROOT}/rocknix-graphical.target"
 check_file "${UNIT_ROOT}/rocknix-guest-v2.service"
+check_file "${UNIT_ROOT}/rocknix-guest-promote.service"
 check_file "${UNIT_ROOT}/rocknix-recovery-toggle.service"
 
 guest_unit="${UNIT_ROOT}/rocknix-guest-v2.service"
@@ -69,6 +71,11 @@ if grep -q 'ExecStopPost=' "${guest_unit}"; then
   fail "guest unit must not run host-side fallback/reclaim hooks"
 fi
 check_grep 'WantedBy=rocknix-graphical.target' "${guest_unit}" "guest unit must install under rocknix-graphical.target"
+
+promote_unit="${UNIT_ROOT}/rocknix-guest-promote.service"
+check_grep 'After=rocknix-guest-v2.service' "${promote_unit}" "promotion unit must run after guest boot"
+check_grep 'ExecStart=/usr/bin/rocknix-guest-promote' "${promote_unit}" "promotion unit has wrong ExecStart"
+check_grep 'WantedBy=rocknix-graphical.target' "${promote_unit}" "promotion unit must install under graphical target"
 
 for forbidden in '--bind-ro=/usr' '--bind-ro=/lib' '--bind-ro=/etc/profile' '--bind=/storage '; do
   if grep -v '^#' "${guest_unit}" | grep -F -q -- "${forbidden}"; then
@@ -88,6 +95,7 @@ if [ "${ROCKNIX_GUEST_LIVE_SMOKE:-0}" = "1" ]; then
   mountpoint -q /nix || fail "/nix is not mounted"
   systemctl list-unit-files rocknix-graphical.target >/dev/null 2>&1 || fail "rocknix-graphical.target not installed"
   systemctl list-unit-files rocknix-guest-v2.service >/dev/null 2>&1 || fail "rocknix-guest-v2.service not installed"
+  systemctl list-unit-files rocknix-guest-promote.service >/dev/null 2>&1 || fail "guest promotion service not installed"
   systemctl list-unit-files rocknix-recovery-toggle.service >/dev/null 2>&1 || fail "recovery toggle service not installed"
 
   default_target=$(systemctl get-default 2>/dev/null || true)
