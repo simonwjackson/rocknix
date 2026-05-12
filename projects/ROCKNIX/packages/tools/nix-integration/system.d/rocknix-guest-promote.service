@@ -1,0 +1,16 @@
+[Unit]
+Description=Promote packaged ROCKNIX Nix guest into persistent rootfs
+Documentation=file:///usr/lib/nix-integration/docs/layer14-main-space-contract.md
+After=rocknix-guest-v2.service
+Wants=rocknix-guest-v2.service
+ConditionPathExists=/storage/machines/rocknix-guest
+ConditionPathExists=/usr/lib/nix-integration/guest-revision
+ConditionPathExists=/usr/bin/nsenter
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rocknix-guest-promote
+TimeoutStartSec=60min
+
+[Install]
+WantedBy=rocknix-graphical.target
