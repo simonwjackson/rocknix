@@ -137,6 +137,8 @@ grep -q 'nsenter .* sh -c' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "g
 ! grep -q 'nsenter .* sh -lc' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not invoke guest login shell"
 grep -q '/storage/.guest/rocknix-guest-promote-system-path' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must return system path through shared guest storage"
 grep -q '/run/current-system/sw/bin/systemctl is-active NetworkManager.service' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must use absolute guest systemctl for readiness"
+! grep -q 'seq 1 60' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not depend on seq during early guest boot"
+grep -q '/run/current-system/sw/bin/sleep 2' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must use absolute guest sleep when available"
 for forbidden in '--bind-ro=/usr' '--bind-ro=/lib' '--bind-ro=/etc/profile' '--bind=/storage '; do
   ! grep -v '^#' "${guest_unit}" | grep -F -q -- "${forbidden}" || fail "guest unit still contains forbidden broad bind: ${forbidden}"
 done
