@@ -169,6 +169,7 @@ SM8550_OPTIONS="${REPO_ROOT}/projects/ROCKNIX/devices/SM8550/options"
 IMAGE_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk"
 NETWORK_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/virtual/network/package.mk"
 OPENSSH_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/network/openssh/package.mk"
+WORKFLOW_DIR="${REPO_ROOT}/.github/workflows"
 [ -f "${SYSTEMD_PKG}" ] || fail "missing ROCKNIX systemd package.mk"
 [ -f "${OPENSSH_PKG}" ] || fail "missing ROCKNIX openssh package.mk"
 grep -q '\[ "\${DEVICE}" = "SM8550" \] && PKG_DEPENDS_TARGET+=" nix-integration"' "${IMAGE_PKG}" \
@@ -202,6 +203,20 @@ grep -q 'SM8550 minimal host is SSH-first recovery' "${OPENSSH_PKG}" \
   || fail "openssh package must document deterministic SM8550 SSH-first recovery"
 grep -q 'sed -e "\\|^Condition.*|d"' "${OPENSSH_PKG}" \
   || fail "openssh package must remove opt-in sshd conditions for SM8550 minimal host"
+grep -q "inputs.DEVICE != 'SM8650' && inputs.DEVICE != 'SM8550'" "${WORKFLOW_DIR}/build-arm.yml" \
+  || fail "SM8550 minimal host must skip 32-bit arm workflow"
+for workflow in build-aarch64-image.yml build-image-only.yml; do
+  grep -q "inputs.DEVICE != 'SM8650' && inputs.DEVICE != 'SM8550'" "${WORKFLOW_DIR}/${workflow}" \
+    || fail "${workflow} must not download arm artifacts for SM8550"
+  grep -q "inputs.DEVICE != 'SM8550'" "${WORKFLOW_DIR}/${workflow}" \
+    || fail "${workflow} must skip emulator artifacts for SM8550"
+done
+grep -q "build-aarch64-mame-lr:" "${WORKFLOW_DIR}/build-device.yml" || fail "build-device workflow missing mame job"
+grep -q "build-aarch64-qt6:" "${WORKFLOW_DIR}/build-device.yml" || fail "build-device workflow missing qt6 job"
+grep -q "build-aarch64-emu-libretro:" "${WORKFLOW_DIR}/build-device.yml" || fail "build-device workflow missing emu-libretro job"
+grep -q "build-aarch64-emu-standalone:" "${WORKFLOW_DIR}/build-device.yml" || fail "build-device workflow missing emu-standalone job"
+[ "$(grep -c "if: \${{ inputs.DEVICE != 'SM8550'" "${WORKFLOW_DIR}/build-device.yml")" -ge 4 ] \
+  || fail "build-device workflow must skip SM8550 host emulator/qt artifact jobs"
 ! grep -q 'gallium-nine' "${REPO_ROOT}/projects/ROCKNIX/packages/graphics/mesa/package.mk" \
   || fail "Mesa 26 no longer supports the gallium-nine Meson option"
 ! grep -q 'PKG_CONFIGURE_OPTS_TARGET="--disable-glx"' "${REPO_ROOT}/projects/ROCKNIX/packages/graphics/libepoxy/package.mk" \
