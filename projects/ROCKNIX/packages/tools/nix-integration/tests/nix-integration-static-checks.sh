@@ -174,6 +174,8 @@ grep -q 'Minimal SM8550 host keeps only what the recovery/update substrate needs
   || fail "ROCKNIX network meta must document the minimal-host dependency set"
 grep -q 'PKG_DEPENDS_TARGET="toolchain iwd networkmanager netbase ethtool openssh iw wireless-regdb rsync nss-mdns"' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/network/package.mk" \
   || fail "ROCKNIX network meta must have a minimal-host dependency set"
+! grep -q 'gallium-nine' "${REPO_ROOT}/projects/ROCKNIX/packages/graphics/mesa/package.mk" \
+  || fail "Mesa 26 no longer supports the gallium-nine Meson option"
 grep -q 'if \[ "${DEVICE}" != "SM8550" \]' "${SYSTEMD_PKG}" \
   || fail "systemd package must strip nspawn on non-SM8550 devices"
 grep -q 'safe_remove ${INSTALL}/usr/bin/systemd-nspawn' "${SYSTEMD_PKG}" || fail "systemd package missing nspawn binary removal fallback"
