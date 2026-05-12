@@ -50,7 +50,6 @@ check_grep() {
 
 check_executable "${SCRIPT_ROOT}/rocknix-guest-prep"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-udev-stage"
-check_executable "${SCRIPT_ROOT}/rocknix-host-reclaim"
 check_executable "${SCRIPT_ROOT}/rocknix-recovery-toggle"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-soak"
 
@@ -66,7 +65,9 @@ check_grep '--directory=/storage/machines/rocknix-guest' "${guest_unit}" "guest 
 check_grep '--register=no' "${guest_unit}" "guest unit must avoid machined registration"
 check_grep 'ExecStartPre=/usr/bin/rocknix-guest-prep' "${guest_unit}" "guest unit missing prep helper"
 check_grep 'ExecStartPre=/usr/bin/rocknix-guest-udev-stage' "${guest_unit}" "guest unit missing udev stage helper"
-check_grep 'ExecStopPost=/usr/bin/rocknix-host-reclaim' "${guest_unit}" "guest unit missing reclaim helper"
+if grep -q 'ExecStopPost=' "${guest_unit}"; then
+  fail "guest unit must not run host-side fallback/reclaim hooks"
+fi
 check_grep 'WantedBy=rocknix-graphical.target' "${guest_unit}" "guest unit must install under rocknix-graphical.target"
 
 for forbidden in '--bind-ro=/usr' '--bind-ro=/lib' '--bind-ro=/etc/profile' '--bind=/storage '; do

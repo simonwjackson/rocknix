@@ -4,8 +4,8 @@
 # Main-space target. This is default.target on SM8550 builds. It Wants
 # the guest unit and does NOT Want the legacy host
 # sway/essway/pipewire/wireplumber/bluetooth/inputplumber stack -- those
-# stay installed but un-Wanted, ready for the recovery path or reclaim
-# contract to bring them up.
+# stay installed but un-Wanted; explicit recovery can bring them up via
+# rocknix.target when requested.
 
 [Unit]
 Description=ROCKNIX Nix main-space (SM8550 guest)

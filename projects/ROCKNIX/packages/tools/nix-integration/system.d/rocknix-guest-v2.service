@@ -30,9 +30,9 @@
 #   ExecStartPre seeds /run/current-system + /run/booted-system from
 #     /nix/var/nix/profiles/system (Tier E3 finding: /run is tmpfs and
 #     does not persist across cold boot)
-#   ExecStopPost runs reclaim contract: if guest exited unexpectedly,
-#     restart host fallback userland so the device stays usable until the
-#     next boot.
+#   Restart=on-failure lets systemd retry the guest. If it remains broken,
+#     explicit recovery uses /flash/rocknix.no-nspawn or rocknix.safe=1;
+#     we do not resurrect the legacy host UI automatically.
 #
 # This unit is enabled on SM8550 via Wants= on rocknix-graphical.target.
 
@@ -107,10 +107,6 @@ ExecStart=/usr/bin/systemd-nspawn \
   --bind=/storage/.config/MangoHud:/storage/.config/MangoHud \
   --bind=/storage/.local:/storage/.local \
   --bind=/storage/.guest
-
-# When systemd-nspawn exits, hand off to reclaim. Reclaim distinguishes
-# graceful from crash exits via $EXIT_CODE / $EXIT_STATUS.
-ExecStopPost=/usr/bin/rocknix-host-reclaim
 
 Restart=on-failure
 RestartSec=2s

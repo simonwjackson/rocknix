@@ -50,13 +50,12 @@ done
 # Remaining host scripts are the thin-host guest launcher/recovery support.
 check_script "${PKG_DIR}/scripts/rocknix-guest-prep"
 check_script "${PKG_DIR}/scripts/rocknix-guest-udev-stage"
-check_script "${PKG_DIR}/scripts/rocknix-host-reclaim"
 check_script "${PKG_DIR}/scripts/rocknix-recovery-toggle"
 check_script "${PKG_DIR}/scripts/rocknix-guest-soak"
 
 grep -q 'rocknix-guest-prep' "${PKG_DIR}/package.mk" || fail "package.mk does not install prep helper"
 grep -q 'rocknix-guest-udev-stage' "${PKG_DIR}/package.mk" || fail "package.mk does not install udev stage helper"
-grep -q 'rocknix-host-reclaim' "${PKG_DIR}/package.mk" || fail "package.mk does not install reclaim helper"
+! grep -q 'rocknix-host-reclaim' "${PKG_DIR}/package.mk" || fail "package.mk must not install host reclaim helper"
 grep -q 'rocknix-recovery-toggle' "${PKG_DIR}/package.mk" || fail "package.mk does not install recovery toggle"
 grep -q 'rocknix-guest-soak' "${PKG_DIR}/package.mk" || fail "package.mk does not install soak helper"
 
@@ -111,7 +110,7 @@ grep -q -- '--register=no' "${guest_unit}" || fail "guest unit must avoid machin
 grep -q -- '--bind=/dev/input' "${guest_unit}" || fail "guest unit must pass through input devices"
 grep -q -- '--bind=/dev/snd' "${guest_unit}" || fail "guest unit must pass through sound devices"
 grep -q -- '--bind-ro=/run/.guest-udev:/run/udev' "${guest_unit}" || fail "guest unit must bind scrubbed udev db"
-grep -q 'ExecStopPost=/usr/bin/rocknix-host-reclaim' "${guest_unit}" || fail "guest unit missing reclaim helper"
+! grep -q 'ExecStopPost=' "${guest_unit}" || fail "guest unit must not run host-side fallback/reclaim hooks"
 grep -q 'Restart=on-failure' "${guest_unit}" || fail "guest unit must restart on failure"
 grep -q 'WantedBy=rocknix-graphical.target' "${guest_unit}" || fail "guest unit must be wanted by rocknix-graphical.target"
 for forbidden in '--bind-ro=/usr' '--bind-ro=/lib' '--bind-ro=/etc/profile' '--bind=/storage '; do
@@ -129,8 +128,6 @@ grep -q 'resolv.conf.guest-owned' "${PKG_DIR}/scripts/rocknix-guest-prep" || fai
 grep -q '/storage/.guest' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing guest writable area"
 grep -q '/nix/var/nix/profiles/system' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing system profile check"
 grep -q 'inputplumber/by-hidden' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" || fail "udev stage must scrub InputPlumber-hidden devices"
-grep -q 'HOST_SERVICES=' "${PKG_DIR}/scripts/rocknix-host-reclaim" || fail "reclaim helper missing host fallback service list"
-grep -q 'SERVICE_RESULT' "${PKG_DIR}/scripts/rocknix-host-reclaim" || fail "reclaim helper missing systemd stop-result handling"
 grep -q 'check_host_ssh_responsive' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing host SSH check"
 grep -q 'check_resolv_owned' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing resolv ownership check"
 
