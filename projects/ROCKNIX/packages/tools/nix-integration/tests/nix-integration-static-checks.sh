@@ -77,6 +77,7 @@ grep -q '/usr/lib/nix-integration/guest-revision' "${PKG_DIR}/package.mk" || fai
 grep -q 'docs/contracts/layer14-main-space-contract.md' "${PKG_DIR}/package.mk" || fail "package.mk must ship main-space contract doc from guest"
 grep -q 'docs/contracts/layer14-soak-checklist.md' "${PKG_DIR}/package.mk" || fail "package.mk must ship soak checklist from guest"
 grep -q 'docs/contracts/HOW-TO-FALL-BACK.md' "${PKG_DIR}/package.mk" || fail "package.mk must ship fallback doc from guest"
+grep -q 'SM8550_MINIMAL_HOST=yes' "${PKG_DIR}/package.mk" || fail "package.mk must document minimal-host fallback mode when enabled"
 
 # Storage + guest service wiring.
 check_unit "${PKG_DIR}/system.d/nix-storage-setup.service"
@@ -147,7 +148,7 @@ done
 grep -q '/flash/rocknix.no-nspawn' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle missing flag-file escape"
 grep -q 'rocknix.safe=1' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle missing cmdline escape"
 grep -q 'rocknix-graphical.target' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle missing normal target"
-grep -q 'rocknix.target' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle missing ROCKNIX recovery target"
+grep -q 'RECOVERY_TARGET="multi-user.target"' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle must route minimal-host recovery to multi-user.target"
 grep -q 'systemctl set-default' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle must switch default target"
 
 grep -q 'resolv.conf.guest-owned' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing resolv.conf ownership marker"
@@ -155,6 +156,7 @@ grep -q '/storage/.guest' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep 
 grep -q '/nix/var/nix/profiles/system' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing system profile check"
 grep -q 'inputplumber/by-hidden' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" || fail "udev stage must scrub InputPlumber-hidden devices"
 grep -q 'check_host_ssh_responsive' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing host SSH check"
+grep -q 'ROCKNIX_REQUIRE_HOST_ESSWAY' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper must allow SSH-first recovery without host essway"
 grep -q 'check_resolv_owned' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing resolv ownership check"
 
 # Device gates: only SM8550 ships the guest substrate.
@@ -162,6 +164,16 @@ SYSTEMD_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/systemd/package.mk"
 [ -f "${SYSTEMD_PKG}" ] || fail "missing ROCKNIX systemd package.mk"
 grep -q '\[ "\${DEVICE}" = "SM8550" \] && PKG_DEPENDS_TARGET+=" nix-integration"' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk" \
   || fail "image package must gate nix-integration on DEVICE=SM8550"
+grep -q 'SM8550_MINIMAL_HOST' "${REPO_ROOT}/projects/ROCKNIX/devices/SM8550/options" \
+  || fail "SM8550 options must expose the minimal-host switch"
+grep -q '\[ "\${BASE_ONLY}" = "true" \] || \[ "\${SM8550_MINIMAL_HOST:-no}" = "yes" \]' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk" \
+  || fail "image package must use minimal-host path to skip product UX metas"
+grep -q 'SM8550 minimal host pulled a host UX/emulation payload' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk" \
+  || fail "image package must fail closed if minimal host reintroduces UX/emulation payloads"
+grep -q 'Minimal SM8550 host keeps only what the recovery/update substrate needs' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/network/package.mk" \
+  || fail "ROCKNIX network meta must document the minimal-host dependency set"
+grep -q 'PKG_DEPENDS_TARGET="toolchain iwd networkmanager netbase ethtool openssh iw wireless-regdb rsync nss-mdns"' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/network/package.mk" \
+  || fail "ROCKNIX network meta must have a minimal-host dependency set"
 grep -q 'if \[ "${DEVICE}" != "SM8550" \]' "${SYSTEMD_PKG}" \
   || fail "systemd package must strip nspawn on non-SM8550 devices"
 grep -q 'safe_remove ${INSTALL}/usr/bin/systemd-nspawn' "${SYSTEMD_PKG}" || fail "systemd package missing nspawn binary removal fallback"

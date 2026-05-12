@@ -104,5 +104,17 @@ post_install() {
   # booting Thor.
   mkdir -p ${INSTALL}/flash
   cp "${guest_extract}/docs/contracts/HOW-TO-FALL-BACK.md" ${INSTALL}/flash/HOW-TO-FALL-BACK.md
+  if [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ]; then
+    cat >> ${INSTALL}/flash/HOW-TO-FALL-BACK.md <<'EOF'
+
+## SM8550 minimal-host recovery note
+
+This image is built with `SM8550_MINIMAL_HOST=yes`. Recovery mode is
+SSH-first: `/flash/rocknix.no-nspawn` or `rocknix.safe=1` routes the next
+boot to `multi-user.target` so host SSH, storage, and `/storage/.update/`
+remain available without starting the legacy ROCKNIX UI stack. Remove the
+flag file and reboot to return to the Nix guest main-space target.
+EOF
+  fi
 
 }
