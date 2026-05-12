@@ -22,6 +22,8 @@ GUEST_REV_FILE="${ROCKNIX_GUEST_REV_FILE:-/usr/lib/nix-integration/guest-revisio
 STAGED_SOURCE="${ROCKNIX_GUEST_STAGED_SOURCE:-/storage/.guest/rocknix-nix-guest-packaged}"
 APPLIED_REV_FILE="${ROCKNIX_GUEST_APPLIED_REV_FILE:-${GUEST_ROOT}/etc/rocknix-guest-revision}"
 APPLIED_SYSTEM_FILE="${ROCKNIX_GUEST_APPLIED_SYSTEM_FILE:-${GUEST_ROOT}/etc/rocknix-guest-system-path}"
+PROFILE_DIR="${GUEST_ROOT}/nix/var/nix/profiles"
+SYSTEM_PROFILE="${PROFILE_DIR}/system"
 LOG_TAG="rocknix-guest-promote"
 
 log() {
@@ -33,6 +35,57 @@ fail() {
   exit 1
 }
 
+read_first_line() {
+  file="$1"
+  if [ -r "${file}" ]; then
+    sed -n '1p' "${file}" | tr -d '[:space:]'
+  fi
+}
+
+resolve_guest_system_profile() {
+  [ -L "${SYSTEM_PROFILE}" ] || return 1
+
+  target="$(readlink "${SYSTEM_PROFILE}" 2>/dev/null || true)"
+  case "${target}" in
+    /nix/*)
+      printf '%s\n' "${target}"
+      return 0
+      ;;
+    '')
+      return 1
+      ;;
+    *)
+      indirect="$(readlink "${PROFILE_DIR}/${target}" 2>/dev/null || true)"
+      case "${indirect}" in
+        /nix/*)
+          printf '%s\n' "${indirect}"
+          return 0
+          ;;
+      esac
+      ;;
+  esac
+
+  return 1
+}
+
+guest_store_path_exists() {
+  guest_path="$1"
+  case "${guest_path}" in
+    /nix/*) [ -e "${GUEST_ROOT}${guest_path}" ] ;;
+    *) return 1 ;;
+  esac
+}
+
+ensure_guest_namespace() {
+  outer_pid="$(systemctl show -p MainPID --value rocknix-guest-v2.service 2>/dev/null || true)"
+  case "${outer_pid}" in
+    ''|0) fail "rocknix-guest-v2.service is not running" ;;
+  esac
+
+  inner_pid="$(pgrep -P "${outer_pid}" | head -1 || true)"
+  [ -n "${inner_pid}" ] || fail "could not find guest payload PID under ${outer_pid}"
+}
+
 [ -d "${GUEST_ROOT}" ] || fail "guest rootfs missing: ${GUEST_ROOT}"
 [ -d "${GUEST_SOURCE}" ] || fail "packaged guest source missing: ${GUEST_SOURCE}"
 [ -r "${GUEST_REV_FILE}" ] || fail "packaged guest revision missing: ${GUEST_REV_FILE}"
@@ -40,14 +93,26 @@ fail() {
 wanted_rev="$(sed -n '1p' "${GUEST_REV_FILE}" | tr -d '[:space:]')"
 [ -n "${wanted_rev}" ] || fail "empty packaged guest revision"
 
-current_rev=""
-if [ -r "${APPLIED_REV_FILE}" ]; then
-  current_rev="$(sed -n '1p' "${APPLIED_REV_FILE}" | tr -d '[:space:]')"
-fi
+current_rev="$(read_first_line "${APPLIED_REV_FILE}")"
+applied_system="$(read_first_line "${APPLIED_SYSTEM_FILE}")"
+current_system="$(resolve_guest_system_profile || true)"
 
 if [ "${current_rev}" = "${wanted_rev}" ]; then
-  log "guest revision already applied: ${wanted_rev}"
-  exit 0
+  if [ -n "${applied_system}" ] && [ "${current_system}" = "${applied_system}" ] && guest_store_path_exists "${applied_system}"; then
+    log "guest revision already applied: ${wanted_rev} (${applied_system})"
+    exit 0
+  fi
+
+  if [ -n "${applied_system}" ] && guest_store_path_exists "${applied_system}"; then
+    log "guest revision marker matches, but system profile drifted: ${current_system:-none} -> ${applied_system}"
+    ensure_guest_namespace
+    nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "/run/current-system/sw/bin/nix-env -p /nix/var/nix/profiles/system --set '${applied_system}'"
+    log "restarting guest to boot repaired generation"
+    systemctl restart --no-block rocknix-guest-v2.service
+    exit 0
+  fi
+
+  log "guest revision marker matches, but applied system path is missing; rebuilding"
 fi
 
 log "promoting guest revision ${wanted_rev} (current: ${current_rev:-none})"
@@ -69,13 +134,7 @@ if [ -x "${STAGED_SOURCE}/scripts/static-checks.sh" ]; then
   "${STAGED_SOURCE}/scripts/static-checks.sh"
 fi
 
-outer_pid="$(systemctl show -p MainPID --value rocknix-guest-v2.service 2>/dev/null || true)"
-case "${outer_pid}" in
-  ''|0) fail "rocknix-guest-v2.service is not running" ;;
-esac
-
-inner_pid="$(pgrep -P "${outer_pid}" | head -1 || true)"
-[ -n "${inner_pid}" ] || fail "could not find guest payload PID under ${outer_pid}"
+ensure_guest_namespace
 
 log "waiting for guest NetworkManager before Nix build"
 nsenter -t "${inner_pid}" -m -u -i -n -p sh -c '
