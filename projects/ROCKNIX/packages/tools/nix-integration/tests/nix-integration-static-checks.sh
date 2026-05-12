@@ -165,19 +165,43 @@ grep -q 'check_resolv_owned' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "so
 
 # Device gates: only SM8550 ships the guest substrate.
 SYSTEMD_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/systemd/package.mk"
+SM8550_OPTIONS="${REPO_ROOT}/projects/ROCKNIX/devices/SM8550/options"
+IMAGE_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk"
+NETWORK_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/virtual/network/package.mk"
+OPENSSH_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/network/openssh/package.mk"
 [ -f "${SYSTEMD_PKG}" ] || fail "missing ROCKNIX systemd package.mk"
-grep -q '\[ "\${DEVICE}" = "SM8550" \] && PKG_DEPENDS_TARGET+=" nix-integration"' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk" \
+[ -f "${OPENSSH_PKG}" ] || fail "missing ROCKNIX openssh package.mk"
+grep -q '\[ "\${DEVICE}" = "SM8550" \] && PKG_DEPENDS_TARGET+=" nix-integration"' "${IMAGE_PKG}" \
   || fail "image package must gate nix-integration on DEVICE=SM8550"
-grep -q 'SM8550_MINIMAL_HOST' "${REPO_ROOT}/projects/ROCKNIX/devices/SM8550/options" \
+grep -q 'SM8550_MINIMAL_HOST' "${SM8550_OPTIONS}" \
   || fail "SM8550 options must expose the minimal-host switch"
-grep -q '\[ "\${BASE_ONLY}" = "true" \] || \[ "\${SM8550_MINIMAL_HOST:-no}" = "yes" \]' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk" \
+grep -q '\[ "\${BASE_ONLY}" = "true" \] || \[ "\${SM8550_MINIMAL_HOST:-no}" = "yes" \]' "${IMAGE_PKG}" \
   || fail "image package must use minimal-host path to skip product UX metas"
-grep -q 'SM8550 minimal host pulled a host UX/emulation payload' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk" \
-  || fail "image package must fail closed if minimal host reintroduces UX/emulation payloads"
-grep -q 'Minimal SM8550 host keeps only what the recovery/update substrate needs' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/network/package.mk" \
+grep -q 'SM8550 minimal host pulled forbidden payload' "${IMAGE_PKG}" \
+  || fail "image package must fail closed if minimal host reintroduces UX/emulation/network payloads"
+grep -q '\[ "\${SM8550_MINIMAL_HOST:-no}" != "yes" \] && PKG_DEPENDS_TARGET+=" mako-osd"' "${IMAGE_PKG}" \
+  || fail "mako-osd must be gated out of the SM8550 minimal host"
+for forbidden in mako-osd sway swaywm-env wlroots xwayland screen-switch gamepadcalibration mesa-demos glmark2 vkmark emulators gamesupport retroarch lib32 tailscale wireguard-tools; do
+  grep -q " ${forbidden}" "${IMAGE_PKG}" || fail "image fail-closed guard must mention forbidden payload: ${forbidden}"
+done
+grep -q 'DISPLAYSERVER="no"' "${SM8550_OPTIONS}" || fail "SM8550 minimal host must disable host display server"
+grep -q 'WINDOWMANAGER="none"' "${SM8550_OPTIONS}" || fail "SM8550 minimal host must disable host window manager"
+grep -q 'EMULATION_DEVICE="no"' "${SM8550_OPTIONS}" || fail "SM8550 minimal host must disable host emulation device roots"
+grep -q 'ENABLE_32BIT=no' "${IMAGE_PKG}" || fail "minimal-host image path must disable 32-bit roots"
+grep -q 'ADDITIONAL_PACKAGES="rocknix-abl inputplumber"' "${SM8550_OPTIONS}" \
+  || fail "SM8550 minimal host must keep only ABL and InputPlumber additional packages"
+grep -q 'Minimal SM8550 host keeps only what the recovery/update substrate needs' "${NETWORK_PKG}" \
   || fail "ROCKNIX network meta must document the minimal-host dependency set"
-grep -q 'PKG_DEPENDS_TARGET="toolchain connman iwd netbase ethtool openssh iw wireless-regdb rsync nss-mdns"' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/network/package.mk" \
+grep -q 'PKG_DEPENDS_TARGET="toolchain connman iwd netbase ethtool openssh iw wireless-regdb rsync nss-mdns"' "${NETWORK_PKG}" \
   || fail "ROCKNIX network meta must have a minimal-host dependency set"
+! sed -n '/if \[ "${SM8550_MINIMAL_HOST:-no}" = "yes" \]/,/else/p' "${NETWORK_PKG}" \
+  | grep '^  PKG_DEPENDS_TARGET=' \
+  | grep -Eq 'tailscale|wireguard-tools|zerotier-one|miniupnpc|speedtest-cli' \
+  || fail "minimal-host network set must not include host VPN/network product extras"
+grep -q 'SM8550 minimal host is SSH-first recovery' "${OPENSSH_PKG}" \
+  || fail "openssh package must document deterministic SM8550 SSH-first recovery"
+grep -q 'sed -e "\\|^Condition.*|d"' "${OPENSSH_PKG}" \
+  || fail "openssh package must remove opt-in sshd conditions for SM8550 minimal host"
 ! grep -q 'gallium-nine' "${REPO_ROOT}/projects/ROCKNIX/packages/graphics/mesa/package.mk" \
   || fail "Mesa 26 no longer supports the gallium-nine Meson option"
 ! grep -q 'PKG_CONFIGURE_OPTS_TARGET="--disable-glx"' "${REPO_ROOT}/projects/ROCKNIX/packages/graphics/libepoxy/package.mk" \

@@ -65,6 +65,10 @@ guest_unit="${UNIT_ROOT}/rocknix-guest-v2.service"
 check_grep 'ExecStart=/usr/bin/systemd-nspawn' "${guest_unit}" "guest unit must use systemd-nspawn"
 check_grep '--directory=/storage/machines/rocknix-guest' "${guest_unit}" "guest unit must target /storage/machines/rocknix-guest"
 check_grep '--register=no' "${guest_unit}" "guest unit must avoid machined registration"
+check_grep 'DeviceAllow=/dev/net/tun rwm' "${guest_unit}" "guest unit must allow tun device access for guest Tailscale"
+check_grep '--capability=CAP_NET_ADMIN' "${guest_unit}" "guest unit must retain CAP_NET_ADMIN for guest Tailscale"
+check_grep '--capability=CAP_NET_RAW' "${guest_unit}" "guest unit must retain CAP_NET_RAW for guest Tailscale"
+check_grep '--bind=/dev/net/tun' "${guest_unit}" "guest unit must pass through tun for guest Tailscale"
 check_grep 'ExecStartPre=/usr/bin/rocknix-guest-prep' "${guest_unit}" "guest unit missing prep helper"
 check_grep 'ExecStartPre=/usr/bin/rocknix-guest-udev-stage' "${guest_unit}" "guest unit missing udev stage helper"
 if grep -q 'ExecStopPost=' "${guest_unit}"; then
@@ -97,6 +101,8 @@ if [ "${ROCKNIX_GUEST_LIVE_SMOKE:-0}" = "1" ]; then
   systemctl list-unit-files rocknix-guest-v2.service >/dev/null 2>&1 || fail "rocknix-guest-v2.service not installed"
   systemctl list-unit-files rocknix-guest-promote.service >/dev/null 2>&1 || fail "guest promotion service not installed"
   systemctl list-unit-files rocknix-recovery-toggle.service >/dev/null 2>&1 || fail "recovery toggle service not installed"
+  systemctl list-unit-files sshd.service >/dev/null 2>&1 || fail "sshd.service not installed"
+  systemctl is-active --quiet sshd.service || fail "sshd.service must be active for SSH-first recovery"
 
   default_target=$(systemctl get-default 2>/dev/null || true)
   case "${default_target}" in

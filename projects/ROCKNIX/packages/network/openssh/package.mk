@@ -54,5 +54,10 @@ post_makeinstall_target() {
 }
 
 post_install() {
+  if [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ]; then
+    # SM8550 minimal host is SSH-first recovery. Do not require the legacy
+    # UI settings file or `ssh` kernel arg before starting sshd.
+    sed -e "\|^Condition.*|d" -i ${INSTALL}/usr/lib/systemd/system/sshd.service
+  fi
   enable_service sshd.service
 }
