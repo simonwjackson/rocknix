@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 #
-# Layer 14 ExecStartPre helper for rocknix-guest-v2.service.
+# SM8550 guest ExecStartPre helper for rocknix-guest-v2.service.
 #
 # Tier E3 surfaced that the guest's /run/current-system is NOT seeded on
 # cold boot -- /run is tmpfs and does not persist. Without this, the
@@ -11,24 +11,24 @@
 #
 # Tier E1 surfaced the DNS-bleed bug under load: the host's resolvconf
 # rewrites the guest's /etc/resolv.conf because the experimental
-# broad-bind unit bound /etc/resolv.conf from the host. The Layer 14
+# broad-bind unit bound /etc/resolv.conf from the host. The SM8550 guest
 # unit deliberately does not bind /etc/resolv.conf; this prep helper
 # also touches an ownership marker file inside the guest rootfs so
-# downstream tooling (soak harness, doctor) can verify the guest is
-# the sole owner.
+# downstream tooling (soak/smoke checks) can verify the guest is the
+# sole owner.
 #
 # This helper is intentionally pure shell: no Nix dependency, no
 # /run/current-system dependency. It runs before the guest boots.
 
 set -eu
 
-GUEST_ROOT="${ROCKNIX_LAYER14_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
 PROFILE_DIR="${GUEST_ROOT}/nix/var/nix/profiles"
 SYSTEM_PROFILE="${PROFILE_DIR}/system"
 GUEST_RUN_DIR="${GUEST_ROOT}/run"
-RESOLV_OWN_MARKER="${GUEST_ROOT}/etc/resolv.conf.layer14-owned"
+RESOLV_OWN_MARKER="${GUEST_ROOT}/etc/resolv.conf.guest-owned"
 GUEST_AREA="/storage/.guest"
-LOG_TAG="rocknix-layer14-prep"
+LOG_TAG="rocknix-guest-prep"
 
 log() {
   printf '%s %s\n' "${LOG_TAG}:" "$*"
@@ -126,7 +126,7 @@ fi
 # mtime/checksum.
 if [ ! -f "${RESOLV_OWN_MARKER}" ]; then
   log "writing resolv.conf ownership marker"
-  printf 'layer14-owned: %s\n' "$(date -u +%FT%TZ)" > "${RESOLV_OWN_MARKER}"
+  printf 'guest-owned: %s\n' "$(date -u +%FT%TZ)" > "${RESOLV_OWN_MARKER}"
 fi
 
 log "prep complete"

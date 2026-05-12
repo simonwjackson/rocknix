@@ -48,11 +48,11 @@ check_grep() {
   grep -q -- "${pattern}" "${file}" || fail "${message}"
 }
 
-check_executable "${SCRIPT_ROOT}/rocknix-layer14-prep"
+check_executable "${SCRIPT_ROOT}/rocknix-guest-prep"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-udev-stage"
 check_executable "${SCRIPT_ROOT}/rocknix-host-reclaim"
 check_executable "${SCRIPT_ROOT}/rocknix-recovery-toggle"
-check_executable "${SCRIPT_ROOT}/rocknix-layer14-soak"
+check_executable "${SCRIPT_ROOT}/rocknix-guest-soak"
 
 check_file "${UNIT_ROOT}/nix-storage-setup.service"
 check_file "${UNIT_ROOT}/nix.mount"
@@ -64,7 +64,7 @@ guest_unit="${UNIT_ROOT}/rocknix-guest-v2.service"
 check_grep 'ExecStart=/usr/bin/systemd-nspawn' "${guest_unit}" "guest unit must use systemd-nspawn"
 check_grep '--directory=/storage/machines/rocknix-guest' "${guest_unit}" "guest unit must target /storage/machines/rocknix-guest"
 check_grep '--register=no' "${guest_unit}" "guest unit must avoid machined registration"
-check_grep 'ExecStartPre=/usr/bin/rocknix-layer14-prep' "${guest_unit}" "guest unit missing prep helper"
+check_grep 'ExecStartPre=/usr/bin/rocknix-guest-prep' "${guest_unit}" "guest unit missing prep helper"
 check_grep 'ExecStartPre=/usr/bin/rocknix-guest-udev-stage' "${guest_unit}" "guest unit missing udev stage helper"
 check_grep 'ExecStopPost=/usr/bin/rocknix-host-reclaim' "${guest_unit}" "guest unit missing reclaim helper"
 check_grep 'WantedBy=rocknix-graphical.target' "${guest_unit}" "guest unit must install under rocknix-graphical.target"
@@ -77,7 +77,7 @@ done
 
 # Live device checks are opt-in because this script is also run from build/CI
 # contexts where systemd and /storage guest roots are absent.
-if [ "${ROCKNIX_LAYER14_LIVE_SMOKE:-0}" = "1" ]; then
+if [ "${ROCKNIX_GUEST_LIVE_SMOKE:-0}" = "1" ]; then
   command -v systemctl >/dev/null 2>&1 || fail "systemctl unavailable for live smoke"
 
   [ -d /storage/machines/rocknix-guest ] || fail "guest root missing: /storage/machines/rocknix-guest"

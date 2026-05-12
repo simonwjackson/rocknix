@@ -1,5 +1,5 @@
 #!/bin/sh
-# rocknix-guest-udev-stage: build a scrubbed /run/udev tree the Layer 14
+# rocknix-guest-udev-stage: build a scrubbed /run/udev tree the SM8550 guest
 # nspawn guest can safely bind as its own /run/udev.
 #
 # Why

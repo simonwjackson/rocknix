@@ -2,27 +2,27 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 #
-# Layer 14 standalone soak harness.
+# SM8550 guest standalone soak harness.
 #
 # Samples the guest/main-space runtime invariants every hour.
 # Pass criteria: zero alarms across N hourly samples (default 24).
 #
 # Usage:
-#   rocknix-layer14-soak [--hours N] [--interval-seconds S] [--guest-pid PID]
+#   rocknix-guest-soak [--hours N] [--interval-seconds S] [--guest-pid PID]
 #
 # Environment overrides:
-#   ROCKNIX_LAYER14_GUEST_ROOT  default /storage/machines/rocknix-guest
-#   ROCKNIX_LAYER14_LOG         default /var/log/layer14-soak.log
-#   ROCKNIX_LAYER14_SUMMARY     default /var/log/layer14-soak-summary.log
+#   ROCKNIX_GUEST_ROOT        default /storage/machines/rocknix-guest
+#   ROCKNIX_GUEST_LOG         default /var/log/rocknix-guest-soak.log
+#   ROCKNIX_GUEST_SUMMARY     default /var/log/rocknix-guest-soak-summary.log
 
 set -u
 
 HOURS=24
 INTERVAL=3600
 GUEST_PID=""
-GUEST_ROOT="${ROCKNIX_LAYER14_GUEST_ROOT:-/storage/machines/rocknix-guest}"
-LOG="${ROCKNIX_LAYER14_LOG:-/var/log/layer14-soak.log}"
-SUMMARY="${ROCKNIX_LAYER14_SUMMARY:-/var/log/layer14-soak-summary.log}"
+GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+LOG="${ROCKNIX_GUEST_LOG:-/var/log/rocknix-guest-soak.log}"
+SUMMARY="${ROCKNIX_GUEST_SUMMARY:-/var/log/rocknix-guest-soak-summary.log}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -76,7 +76,7 @@ guest_inner_pid() {
 
 # 8 hourly checks. Each emits a single line in the summary log.
 check_resolv_owned() {
-  marker="${GUEST_ROOT}/etc/resolv.conf.layer14-owned"
+  marker="${GUEST_ROOT}/etc/resolv.conf.guest-owned"
   if [ ! -f "${marker}" ]; then
     alarm "resolv.conf ownership marker missing at ${marker}"
     return
@@ -207,7 +207,7 @@ trap 'write_summary INTERRUPTED; exit 130' INT TERM HUP
 
 alarms=0
 samples_run=0
-log "rocknix-layer14-soak start hours=${HOURS} interval=${INTERVAL}s log=${LOG}"
+log "rocknix-guest-soak start hours=${HOURS} interval=${INTERVAL}s log=${LOG}"
 
 # Sample at h0 (immediate baseline), then every INTERVAL up to HOURS samples.
 run_one_sample 0

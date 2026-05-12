@@ -48,17 +48,17 @@ for old_name in nixctl nix-doctor nix-layer-activate 'usr/lib/nix-integration/mo
 done
 
 # Remaining host scripts are the thin-host guest launcher/recovery support.
-check_script "${PKG_DIR}/scripts/rocknix-layer14-prep"
+check_script "${PKG_DIR}/scripts/rocknix-guest-prep"
 check_script "${PKG_DIR}/scripts/rocknix-guest-udev-stage"
 check_script "${PKG_DIR}/scripts/rocknix-host-reclaim"
 check_script "${PKG_DIR}/scripts/rocknix-recovery-toggle"
-check_script "${PKG_DIR}/scripts/rocknix-layer14-soak"
+check_script "${PKG_DIR}/scripts/rocknix-guest-soak"
 
-grep -q 'rocknix-layer14-prep' "${PKG_DIR}/package.mk" || fail "package.mk does not install prep helper"
+grep -q 'rocknix-guest-prep' "${PKG_DIR}/package.mk" || fail "package.mk does not install prep helper"
 grep -q 'rocknix-guest-udev-stage' "${PKG_DIR}/package.mk" || fail "package.mk does not install udev stage helper"
 grep -q 'rocknix-host-reclaim' "${PKG_DIR}/package.mk" || fail "package.mk does not install reclaim helper"
 grep -q 'rocknix-recovery-toggle' "${PKG_DIR}/package.mk" || fail "package.mk does not install recovery toggle"
-grep -q 'rocknix-layer14-soak' "${PKG_DIR}/package.mk" || fail "package.mk does not install soak helper"
+grep -q 'rocknix-guest-soak' "${PKG_DIR}/package.mk" || fail "package.mk does not install soak helper"
 
 grep -q '/usr/lib/nix-integration/tests' "${PKG_DIR}/package.mk" || fail "package.mk does not install runtime smoke tests"
 grep -q 'nix-integration-runtime-smoke.sh' "${PKG_DIR}/package.mk" || fail "package.mk does not package runtime smoke helper"
@@ -103,7 +103,7 @@ grep -q 'Before=sysinit.target' "${PKG_DIR}/system.d/rocknix-recovery-toggle.ser
 grep -q 'ExecStart=/usr/bin/rocknix-recovery-toggle' "${PKG_DIR}/system.d/rocknix-recovery-toggle.service" || fail "recovery toggle unit has wrong ExecStart"
 
 guest_unit="${PKG_DIR}/system.d/rocknix-guest-v2.service"
-grep -q 'ExecStartPre=/usr/bin/rocknix-layer14-prep' "${guest_unit}" || fail "guest unit missing prep helper"
+grep -q 'ExecStartPre=/usr/bin/rocknix-guest-prep' "${guest_unit}" || fail "guest unit missing prep helper"
 grep -q 'ExecStartPre=/usr/bin/rocknix-guest-udev-stage' "${guest_unit}" || fail "guest unit missing udev stage helper"
 grep -q 'ExecStart=/usr/bin/systemd-nspawn' "${guest_unit}" || fail "guest unit must launch systemd-nspawn"
 grep -q -- '--directory=/storage/machines/rocknix-guest' "${guest_unit}" || fail "guest unit has wrong guest root"
@@ -125,14 +125,14 @@ grep -q 'rocknix-graphical.target' "${PKG_DIR}/scripts/rocknix-recovery-toggle" 
 grep -q 'rocknix.target' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle missing ROCKNIX recovery target"
 grep -q 'systemctl set-default' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle must switch default target"
 
-grep -q 'resolv.conf.layer14-owned' "${PKG_DIR}/scripts/rocknix-layer14-prep" || fail "prep helper missing resolv.conf ownership marker"
-grep -q '/storage/.guest' "${PKG_DIR}/scripts/rocknix-layer14-prep" || fail "prep helper missing guest writable area"
-grep -q '/nix/var/nix/profiles/system' "${PKG_DIR}/scripts/rocknix-layer14-prep" || fail "prep helper missing system profile check"
+grep -q 'resolv.conf.guest-owned' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing resolv.conf ownership marker"
+grep -q '/storage/.guest' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing guest writable area"
+grep -q '/nix/var/nix/profiles/system' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing system profile check"
 grep -q 'inputplumber/by-hidden' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" || fail "udev stage must scrub InputPlumber-hidden devices"
 grep -q 'HOST_SERVICES=' "${PKG_DIR}/scripts/rocknix-host-reclaim" || fail "reclaim helper missing host fallback service list"
 grep -q 'SERVICE_RESULT' "${PKG_DIR}/scripts/rocknix-host-reclaim" || fail "reclaim helper missing systemd stop-result handling"
-grep -q 'check_host_ssh_responsive' "${PKG_DIR}/scripts/rocknix-layer14-soak" || fail "soak helper missing host SSH check"
-grep -q 'check_resolv_owned' "${PKG_DIR}/scripts/rocknix-layer14-soak" || fail "soak helper missing resolv ownership check"
+grep -q 'check_host_ssh_responsive' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing host SSH check"
+grep -q 'check_resolv_owned' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing resolv ownership check"
 
 # Device gates: only SM8550 ships the guest substrate.
 SYSTEMD_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/systemd/package.mk"

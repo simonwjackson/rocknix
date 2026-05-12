@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 #
-# Layer 14 recovery toggle script. Invoked by
+# SM8550 guest recovery toggle script. Invoked by
 # rocknix-recovery-toggle.service before sysinit.target.
 #
 # Decision (OR semantics):
-#   /flash/rocknix.no-nspawn exists      -> recovery (legacy ROCKNIX UI)
-#   rocknix.safe=1 in /proc/cmdline      -> recovery (legacy ROCKNIX UI)
-#   neither                              -> Layer 14 main-space
+#   /flash/rocknix.no-nspawn exists      -> ROCKNIX recovery plane
+#   rocknix.safe=1 in /proc/cmdline      -> ROCKNIX recovery plane
+#   neither                              -> SM8550 guest main-space
 #
 # Safety:
 #   - Setting default.target to rocknix-graphical.target is the normal
