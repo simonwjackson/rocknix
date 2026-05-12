@@ -6,14 +6,16 @@
 # rocknix-recovery-toggle.service before sysinit.target.
 #
 # Decision (OR semantics):
-#   /flash/rocknix.no-nspawn exists      -> ROCKNIX recovery plane
-#   rocknix.safe=1 in /proc/cmdline      -> ROCKNIX recovery plane
+#   /flash/rocknix.no-nspawn exists      -> SSH-first host recovery plane
+#   rocknix.safe=1 in /proc/cmdline      -> SSH-first host recovery plane
 #   neither                              -> SM8550 guest main-space
 #
 # Safety:
 #   - Setting default.target to rocknix-graphical.target is the normal
 #     SM8550 path.
-#   - Setting default.target to rocknix.target is the recovery-plane path.
+#   - Setting default.target to multi-user.target is the minimal-host
+#     recovery path: host SSH, storage, and update plumbing, but no
+#     legacy ROCKNIX UI.
 #   - This script never reboots; the user (or recovery flow) controls
 #     reboots.
 
@@ -22,15 +24,10 @@ set -u
 FLAG_FILE="/flash/rocknix.no-nspawn"
 CMDLINE_FILE="/proc/cmdline"
 NORMAL_TARGET="rocknix-graphical.target"
-# RECOVERY_TARGET must be the legacy entry point that ROCKNIX userland
-# is wired to. essway/sway/rocknix-autostart/etc are WantedBy=rocknix.target,
-# NOT WantedBy=graphical.target. Setting default to graphical.target leaves
-# the device on a blank/login-only screen with no ROCKNIX UI.
-#
-# Validated on Thor 2026-05-08: with default=graphical.target, neither
-# essway nor sway came up; with default=rocknix.target, both became active
-# and the device reached the legacy UI normally.
-RECOVERY_TARGET="rocknix.target"
+# Minimal-host recovery is deliberately SSH-first. The legacy ROCKNIX UI
+# stack is not part of the substrate once the NixOS guest owns product UX,
+# so recovery lands on multi-user.target instead of rocknix.target.
+RECOVERY_TARGET="multi-user.target"
 LOG_TAG="rocknix-recovery-toggle"
 
 ts() {

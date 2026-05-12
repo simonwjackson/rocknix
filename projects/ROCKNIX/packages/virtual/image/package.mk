@@ -33,11 +33,12 @@ PKG_TOOLS="patchelf i2c-tools evtest"
 
 PKG_DEBUG="debug"
 
-if [ "${BASE_ONLY}" = "true" ]
+if [ "${BASE_ONLY}" = "true" ] || [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ]
 then
   EMULATION_DEVICE=no
   ENABLE_32BIT=no
   PKG_DEPENDS_TARGET+=" ${PKG_TOOLS} ${PKG_FONTS}"
+  [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ] && PKG_DEPENDS_TARGET+=" ${ADDITIONAL_PACKAGES}"
 else
   PKG_DEPENDS_TARGET+=" ${PKG_TOOLS} ${PKG_FONTS} ${PKG_SOUND} ${PKG_SYNC} ${PKG_GRAPHICS} ${PKG_UI} ${PKG_UI_TOOLS} ${PKG_MULTIMEDIA} misc-packages"
 
@@ -109,5 +110,17 @@ PKG_DEPENDS_TARGET+=" entware"
 
 # Nix integration: SM8550-only guest main-space.
 [ "${DEVICE}" = "SM8550" ] && PKG_DEPENDS_TARGET+=" nix-integration"
+
+# SM8550 minimal host intentionally keeps only the ROCKNIX substrate:
+# boot/update/storage/network/recovery/nspawn/InputPlumber plus guest wiring.
+# It must not pull host product-UX payloads back in through image-level metas.
+if [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ]; then
+  case " ${PKG_DEPENDS_TARGET} " in
+    *" emulators "*|*" gamesupport "*|*" emulationstation "*|*" es-themes "*|*" retroarch "*|*" lib32 "*)
+      echo "image: SM8550 minimal host pulled a host UX/emulation payload" >&2
+      exit 1
+      ;;
+  esac
+fi
 
 true

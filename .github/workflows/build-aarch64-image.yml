@@ -49,55 +49,94 @@ jobs:
         with:
           fetch-depth: 0
 
+      # SM8550 minimal-host builds skip the host UX/emulator jobs, so the
+      # image step consumes the base aarch64 artifacts directly instead of
+      # the emu-libretro / emu-standalone aggregate artifacts.
+      - name: Download aarch64 (${{ inputs.DEVICE }})
+        if: ${{ inputs.DEVICE == 'SM8550' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: aarch64 (${{ inputs.DEVICE }})
+
+      - name: Extract artifact aarch64
+        if: ${{ inputs.DEVICE == 'SM8550' }}
+        run: tar -xf build.aarch64.tar
+
+      - name: Clean up compressed aarch64 file
+        if: ${{ inputs.DEVICE == 'SM8550' }}
+        run: rm build.aarch64.tar
+
+      - name: Download aarch64 build (${{ inputs.DEVICE }})
+        if: ${{ inputs.DEVICE == 'SM8550' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: aarch64 build (${{ inputs.DEVICE }})
+
+      - name: Extract artifact aarch64 build
+        if: ${{ inputs.DEVICE == 'SM8550' }}
+        run: tar -xf build.build.aarch64.tar
+
+      - name: Clean up compressed aarch64 build file
+        if: ${{ inputs.DEVICE == 'SM8550' }}
+        run: rm build.build.aarch64.tar
+
       - name: Download arm (${{ inputs.DEVICE }})
-        if: ${{ inputs.DEVICE != 'SM8650' && inputs.DEVICE != 'SM8750' }}
+        if: ${{ inputs.DEVICE != 'SM8650' && inputs.DEVICE != 'SM8750' && inputs.DEVICE != 'SM8550' }}
         uses: actions/download-artifact@v8
         with:
           name: arm (${{ inputs.DEVICE }})
 
       - name: Extract artifact arm
-        if: ${{ inputs.DEVICE != 'SM8650' && inputs.DEVICE != 'SM8750' }}
+        if: ${{ inputs.DEVICE != 'SM8650' && inputs.DEVICE != 'SM8750' && inputs.DEVICE != 'SM8550' }}
         run: |
           tar --zstd -xf build.arm.tar.zst
 
       - name: Clean up compressed arm file
-        if: ${{ inputs.DEVICE != 'SM8650' && inputs.DEVICE != 'SM8750' }}
+        if: ${{ inputs.DEVICE != 'SM8650' && inputs.DEVICE != 'SM8750' && inputs.DEVICE != 'SM8550' }}
         run: rm build.arm.tar.zst
         
       - name: Download emu-libretro (${{ inputs.DEVICE }})
+        if: ${{ inputs.DEVICE != 'SM8550' }}
         uses: actions/download-artifact@v8
         with:
           name: emu-libretro (${{ inputs.DEVICE }})
 
       - name: Extract artifact emu-libretro
+        if: ${{ inputs.DEVICE != 'SM8550' }}
         run: |
           cat build.emu-libretro.tar.part* > build.emu-libretro.tar
           tar -xf build.emu-libretro.tar
 
       - name: Clean up compressed emu-libretro file
+        if: ${{ inputs.DEVICE != 'SM8550' }}
         run: rm build.emu-libretro.tar*
 
       - name: Download emu-standalone (${{ inputs.DEVICE }})
+        if: ${{ inputs.DEVICE != 'SM8550' }}
         uses: actions/download-artifact@v8
         with:
           name: emu-standalone (${{ inputs.DEVICE }})
 
       - name: Extract artifact emu-standalone
+        if: ${{ inputs.DEVICE != 'SM8550' }}
         run: |
           cat build.emu-standalone.tar.part* > build.emu-standalone.tar
           tar --skip-old-files -xf build.emu-standalone.tar
 
       - name: Clean up compressed emu-standalone file
+        if: ${{ inputs.DEVICE != 'SM8550' }}
         run: rm build.emu-standalone.tar*
 
       # clean to rebuild retroarch with 32bit enabled
       - name: Clean retroarch
+        if: ${{ inputs.DEVICE != 'SM8550' }}
         run: |
           ./scripts/get_env > .env
           docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \
             bash -c "./scripts/clean retroarch"
       # clean to rebuild emulationstation with credentials
       - name: Clean emulationstation
+        if: ${{ inputs.DEVICE != 'SM8550' }}
         run: |
           ./scripts/get_env > .env
           docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \

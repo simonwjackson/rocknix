@@ -100,7 +100,7 @@ if [ "${ROCKNIX_GUEST_LIVE_SMOKE:-0}" = "1" ]; then
 
   default_target=$(systemctl get-default 2>/dev/null || true)
   case "${default_target}" in
-    rocknix-graphical.target|rocknix.target) : ;;
+    rocknix-graphical.target|multi-user.target) : ;;
     *) fail "default.target points at unexpected target: ${default_target}" ;;
   esac
 fi

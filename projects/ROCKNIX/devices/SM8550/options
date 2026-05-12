@@ -48,6 +48,13 @@
   # For maximum cross compatbility
     PREFER_GLES="no"
 
+  # Experimental thin-host switch for the SM8550 Nix main-space build.
+  # When enabled, ROCKNIX keeps the boot/update/recovery/container substrate
+  # and lets the NixOS guest own the product UX. The image package uses this
+  # knob to skip host UI, emulators, multimedia, 32-bit runtime, demos, and
+  # other user-facing payloads.
+    SM8550_MINIMAL_HOST="${SM8550_MINIMAL_HOST:-yes}"
+
   # VULKAN_SUPPORT
     VULKAN_SUPPORT="yes"
 
@@ -60,6 +67,30 @@
   # Windowmanager to use (weston / swaywm-env / no)
     WINDOWMANAGER="swaywm-env"
 
+    if [ "${SM8550_MINIMAL_HOST}" = "yes" ]; then
+      VULKAN_SUPPORT="no"
+      VULKAN="no"
+      DISPLAYSERVER="no"
+      WINDOWMANAGER="none"
+      EMULATION_DEVICE="no"
+      PIPEWIRE_SUPPORT="no"
+      BLUETOOTH_SUPPORT="no"
+      AVAHI_DAEMON="no"
+      REMOTE_SUPPORT="no"
+      JOYSTICK_SUPPORT="no"
+      MODULES_PKG="no"
+      DEBUG_PACKAGES="no"
+      NFS_SUPPORT="no"
+      SAMBA_SERVER="no"
+      SFTP_SERVER="no"
+      SIMPLE_HTTP_SERVER="no"
+      ZEROTIER_SUPPORT="no"
+      WIREGUARD_SUPPORT="no"
+      NANO_EDITOR="no"
+      HTOP_TOOL="no"
+      BTOP_TOOL="no"
+    fi
+
   # Additional drivers to install:
   # for a list of additional drivers see packages/linux-drivers
   # Space separated list is supported,
@@ -71,8 +102,14 @@
   # e.g. FIRMWARE=""
     FIRMWARE=""
 
-  # Additional packages to install
-    ADDITIONAL_PACKAGES="gamepadcalibration screen-switch rocknix-abl inputplumber"
+  # Additional packages to install. The minimal host keeps only the bootloader
+  # payload and InputPlumber because the guest compositor consumes the staged
+  # input device view from the host.
+    if [ "${SM8550_MINIMAL_HOST}" = "yes" ]; then
+      ADDITIONAL_PACKAGES="rocknix-abl inputplumber"
+    else
+      ADDITIONAL_PACKAGES="gamepadcalibration screen-switch rocknix-abl inputplumber"
+    fi
 
   # Debug tty path
     DEBUG_TTY="/dev/ttyMSM0"

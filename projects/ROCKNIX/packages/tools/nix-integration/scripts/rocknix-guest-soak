@@ -11,9 +11,10 @@
 #   rocknix-guest-soak [--hours N] [--interval-seconds S] [--guest-pid PID]
 #
 # Environment overrides:
-#   ROCKNIX_GUEST_ROOT        default /storage/machines/rocknix-guest
-#   ROCKNIX_GUEST_LOG         default /var/log/rocknix-guest-soak.log
-#   ROCKNIX_GUEST_SUMMARY     default /var/log/rocknix-guest-soak-summary.log
+#   ROCKNIX_GUEST_ROOT          default /storage/machines/rocknix-guest
+#   ROCKNIX_GUEST_LOG           default /var/log/rocknix-guest-soak.log
+#   ROCKNIX_GUEST_SUMMARY       default /var/log/rocknix-guest-soak-summary.log
+#   ROCKNIX_REQUIRE_HOST_ESSWAY default auto (yes/no/auto)
 
 set -u
 
@@ -23,6 +24,7 @@ GUEST_PID=""
 GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
 LOG="${ROCKNIX_GUEST_LOG:-/var/log/rocknix-guest-soak.log}"
 SUMMARY="${ROCKNIX_GUEST_SUMMARY:-/var/log/rocknix-guest-soak-summary.log}"
+REQUIRE_HOST_ESSWAY="${ROCKNIX_REQUIRE_HOST_ESSWAY:-auto}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -141,8 +143,28 @@ check_guest_pipewire_alive() {
 }
 
 check_host_essway_alive() {
+  case "${REQUIRE_HOST_ESSWAY}" in
+    yes)
+      :
+      ;;
+    no)
+      log "  host essway check skipped (SSH-first recovery contract)"
+      return
+      ;;
+    auto)
+      if ! systemctl list-unit-files essway.service >/dev/null 2>&1; then
+        log "  host essway check skipped (essway.service not installed)"
+        return
+      fi
+      ;;
+    *)
+      alarm "invalid ROCKNIX_REQUIRE_HOST_ESSWAY=${REQUIRE_HOST_ESSWAY} (expected yes/no/auto)"
+      return
+      ;;
+  esac
+
   if ! systemctl is-active --quiet essway.service 2>/dev/null; then
-    alarm "host essway.service not active (legacy UI is the soak fallback)"
+    alarm "host essway.service not active (legacy UI recovery plane expected)"
   fi
 }
 

@@ -117,8 +117,24 @@ jobs:
             exit 1
           fi
 
+      - name: Download aarch64 artifact from base run
+        if: ${{ inputs.DEVICE == 'SM8550' }}
+        run: |
+          set -euo pipefail
+          gh run download "${BASE_RUN_ID}" --name "aarch64 (${DEVICE})" --dir .
+          tar -xf build.aarch64.tar
+          rm build.aarch64.tar
+
+      - name: Download aarch64 build artifact from base run
+        if: ${{ inputs.DEVICE == 'SM8550' }}
+        run: |
+          set -euo pipefail
+          gh run download "${BASE_RUN_ID}" --name "aarch64 build (${DEVICE})" --dir .
+          tar -xf build.build.aarch64.tar
+          rm build.build.aarch64.tar
+
       - name: Download arm artifact from base run
-        if: ${{ inputs.DEVICE != 'SM8650' }}
+        if: ${{ inputs.DEVICE != 'SM8650' && inputs.DEVICE != 'SM8550' }}
         run: |
           set -euo pipefail
           gh run download "${BASE_RUN_ID}" --name "arm (${DEVICE})" --dir .
@@ -126,6 +142,7 @@ jobs:
           rm build.arm.tar.zst
 
       - name: Download emu-libretro artifact from base run
+        if: ${{ inputs.DEVICE != 'SM8550' }}
         run: |
           set -euo pipefail
           gh run download "${BASE_RUN_ID}" --name "emu-libretro (${DEVICE})" --dir .
@@ -134,6 +151,7 @@ jobs:
           rm build.emu-libretro.tar*
 
       - name: Download emu-standalone artifact from base run
+        if: ${{ inputs.DEVICE != 'SM8550' }}
         run: |
           set -euo pipefail
           gh run download "${BASE_RUN_ID}" --name "emu-standalone (${DEVICE})" --dir .
