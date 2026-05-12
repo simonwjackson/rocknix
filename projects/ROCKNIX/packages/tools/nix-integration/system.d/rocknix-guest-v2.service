@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 #
-# Layer 14: Nix main-space guest unit (v2).
+# SM8550 guest: Nix main-space guest unit (v2).
 #
 # This unit replaces the experimental broad-bind unit that lived at
 # /storage/.config/system.d/rocknix-guest.service during the Tier A-E
@@ -17,12 +17,12 @@
 #                                 (host resolvconf was clobbering guest DNS)
 #   - NO /run/0-runtime-dir bind -> guest runs its own wayland compositor
 #   - NO /tmp/.X11-unix bind     -> guest does not need host X11
-#   - NO /etc/ssh/authorized_keys.d bind -> Layer 12 guest SSH lives on a
-#                                           non-22 port with its own keys
+#   - NO /etc/ssh/authorized_keys.d bind -> guest SSH, when enabled in
+#                                           the guest, owns its own keys
 #   - NO blanket /storage bind   -> only narrow subdirs (roms RO, guest area RW)
 #
 # Network:
-#   --register=no  -> avoid machinectl coupling, per Layer 10 contract
+#   --register=no  -> avoid host machinectl coupling
 #   no --private-network -> shared host netns; guest's NetworkManager owns
 #                           wlan0 directly (Tier C finding)
 #
@@ -37,7 +37,7 @@
 # This unit is enabled on SM8550 via Wants= on rocknix-graphical.target.
 
 [Unit]
-Description=ROCKNIX Layer 14 guest (Nix main-space, v2)
+Description=ROCKNIX SM8550 guest (Nix main-space, v2)
 Documentation=file:///usr/lib/nix-integration/docs/layer14-main-space-contract.md
 RequiresMountsFor=/storage /nix
 After=local-fs.target nix.mount network-pre.target rocknix-automount.service
@@ -63,8 +63,7 @@ TasksMax=4096
 # at PID 1; with it, the guest reaches Multi-User System target.
 Environment=SYSTEMD_NSPAWN_UNIFIED_HIERARCHY=1
 
-# Resource policy mirrors the experimental unit and Layer 10
-# CPUWeight/MemoryMax conventions.
+# Bound the guest so host recovery remains responsive.
 CPUWeight=100
 IOWeight=100
 MemoryMax=6G
@@ -72,8 +71,8 @@ MemoryMax=6G
 WorkingDirectory=/storage/machines/rocknix-guest
 
 # Seed /run/current-system + /run/booted-system; touch the resolv.conf
-# ownership marker; verify the rootfs is shaped for Layer 14.
-ExecStartPre=/usr/bin/rocknix-layer14-prep
+# ownership marker; verify the rootfs is shaped for SM8550 guest.
+ExecStartPre=/usr/bin/rocknix-guest-prep
 
 # Stage a scrubbed copy of /run/udev under /run/.guest-udev. libseat
 # walks the kernel udev DB during DRM session bring-up; if it finds an

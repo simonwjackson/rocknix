@@ -8,7 +8,7 @@
 # contract to bring them up.
 
 [Unit]
-Description=ROCKNIX Nix main-space (Layer 14)
+Description=ROCKNIX Nix main-space (SM8550 guest)
 Documentation=file:///usr/lib/nix-integration/docs/layer14-main-space-contract.md
 Requires=multi-user.target rocknix-automount.service nix.mount
 After=multi-user.target rocknix-automount.service nix.mount network-online.target

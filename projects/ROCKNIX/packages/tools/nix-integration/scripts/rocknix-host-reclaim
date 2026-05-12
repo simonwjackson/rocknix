@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 #
-# Layer 14 ExecStopPost helper for rocknix-guest-v2.service.
+# SM8550 guest ExecStopPost helper for rocknix-guest-v2.service.
 #
 # Reclaim contract: when the guest exits unexpectedly, bring up the
 # host's installed-but-not-running fallback userland so the device stays
