@@ -3,9 +3,9 @@
 #
 # SM8550 guest: NixOS main-space guest unit.
 #
-# This unit replaces both the experimental broad-bind unit from the Tier A-E
-# spike series and the transitional rocknix-guest-v2.service name. The
-# shopping list applied here is the direct lesson of those spikes:
+# This unit replaces the experimental broad-bind unit from the Tier A-E
+# spike series. The shopping list applied here is the direct lesson
+# of those spikes:
 #
 #   - NO host /usr leak  -> drop --bind-ro=/usr (Vulkan/EGL ICD pollution,
 #                           Mesa store-path mismatch)
@@ -164,4 +164,3 @@ StandardError=journal
 # Intentionally NOT WantedBy=multi-user.target; this unit is owned by the
 # SM8550 main-space target instead.
 WantedBy=rocknix-main-space.target
-Alias=rocknix-guest-v2.service

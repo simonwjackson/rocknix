@@ -16,4 +16,4 @@ Wants=rocknix-guest.service
 AllowIsolate=yes
 
 [Install]
-Alias=default.target rocknix-graphical.target
+Alias=default.target

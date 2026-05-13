@@ -43,7 +43,7 @@ for gone in \
   [ ! -e "${gone}" ] || fail "removed backward-compat surface still exists: ${gone}"
 done
 
-for old_name in nixctl nix-doctor nix-layer-activate 'usr/lib/nix-integration/modules' 'nix-daemon'; do
+for old_name in nixctl nix-doctor nix-layer-activate 'usr/lib/nix-integration' 'usr/lib/rocknix-guest-substrate/modules' 'nix-daemon'; do
   ! grep -q "${old_name}" "${PKG_DIR}/package.mk" || fail "package.mk still references removed surface: ${old_name}"
 done
 
@@ -67,7 +67,6 @@ grep -q 'rocknix-guest-soak' "${PKG_DIR}/package.mk" || fail "package.mk does no
 
 grep -q 'substrate_lib="${INSTALL}/usr/lib/rocknix-guest-substrate"' "${PKG_DIR}/package.mk" || fail "package.mk does not define substrate lib path"
 grep -q 'mkdir -p "${substrate_lib}/tests"' "${PKG_DIR}/package.mk" || fail "package.mk does not install runtime smoke tests"
-grep -q '/usr/lib/nix-integration' "${PKG_DIR}/package.mk" || fail "package.mk must keep transitional lib-path alias"
 grep -q 'guest-substrate-runtime-smoke.sh' "${PKG_DIR}/package.mk" || fail "package.mk does not package runtime smoke helper"
 [ -f "${SCRIPT_DIR}/guest-substrate-runtime-smoke.sh" ] || fail "missing runtime smoke test"
 sh -n "${SCRIPT_DIR}/guest-substrate-runtime-smoke.sh" || fail "runtime smoke syntax failed"
@@ -109,7 +108,7 @@ grep -q 'Where=/nix' "${PKG_DIR}/system.d/nix.mount" || fail "nix.mount has wron
 grep -q 'Options=bind' "${PKG_DIR}/system.d/nix.mount" || fail "nix.mount is not a bind mount"
 
 grep -q 'Alias=default.target' "${PKG_DIR}/system.d/rocknix-main-space.target" || fail "rocknix-main-space.target must alias default.target"
-grep -q 'rocknix-graphical.target' "${PKG_DIR}/system.d/rocknix-main-space.target" || fail "rocknix-main-space.target must keep transitional graphical-target alias"
+! grep -q 'rocknix-graphical.target' "${PKG_DIR}/system.d/rocknix-main-space.target" || fail "rocknix-main-space.target must not keep old graphical-target alias"
 grep -q 'Wants=rocknix-guest.service' "${PKG_DIR}/system.d/rocknix-main-space.target" || fail "rocknix-main-space.target must start guest unit"
 grep -q 'Before=sysinit.target' "${PKG_DIR}/system.d/rocknix-recovery-toggle.service" || fail "recovery toggle must run before sysinit"
 grep -q 'ExecStart=/usr/bin/rocknix-recovery-toggle' "${PKG_DIR}/system.d/rocknix-recovery-toggle.service" || fail "recovery toggle unit has wrong ExecStart"
@@ -152,7 +151,7 @@ grep -q -- '--bind-ro=/run/.guest-udev:/run/udev' "${guest_unit}" || fail "guest
 ! grep -q 'ExecStopPost=' "${guest_unit}" || fail "guest unit must not run host-side fallback/reclaim hooks"
 grep -q 'Restart=on-failure' "${guest_unit}" || fail "guest unit must restart on failure"
 grep -q 'WantedBy=rocknix-main-space.target' "${guest_unit}" || fail "guest unit must be wanted by rocknix-main-space.target"
-grep -q 'Alias=rocknix-guest-v2.service' "${guest_unit}" || fail "guest unit must keep transitional v2 alias"
+! grep -q 'Alias=rocknix-guest-v2.service' "${guest_unit}" || fail "guest unit must not keep old v2 alias"
 
 promote_unit="${PKG_DIR}/system.d/rocknix-guest-promote.service"
 grep -q 'After=rocknix-guest.service' "${promote_unit}" || fail "guest promotion must run after guest boot"
