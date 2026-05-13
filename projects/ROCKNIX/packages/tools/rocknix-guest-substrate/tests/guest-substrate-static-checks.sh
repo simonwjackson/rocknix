@@ -157,6 +157,7 @@ grep -q -- '--bind=/storage/.guest' "${PKG_DIR}/scripts/rocknix-guest-start" || 
 ! grep -q -- '--bind=/storage/.config/Cemu' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must not bind host Cemu config"
 ! grep -q -- '--bind=/storage/.config/MangoHud' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must not bind host MangoHud config"
 ! grep -q -- '--bind=/storage/.local' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must not bind host .local"
+grep -q 'PATH=/usr/sbin:/usr/bin:/sbin:/bin' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must include sbin PATH for blkid"
 grep -q 'is_host_mounted_root' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must guard against host-mounted block roots"
 grep -q 'systemctl set-property' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must apply exact runtime DeviceAllow entries"
 grep -q 'emit_device_allow "DeviceAllow=/dev/${member} rw"' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must allow discovered block nodes exactly"
