@@ -72,6 +72,7 @@ for device_allow in \
   'DeviceAllow=/dev/snd/pcmC0D1p rwm' \
   'DeviceAllow=/dev/snd/pcmC0D2c rwm' \
   'DeviceAllow=/dev/snd/timer rwm' \
+  'DeviceAllow=char-alsa rwm' \
   'DeviceAllow=/dev/dri/card0 rwm' \
   'DeviceAllow=/dev/dri/renderD128 rwm' \
   'DeviceAllow=/dev/input/event0 rwm' \

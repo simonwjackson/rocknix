@@ -63,6 +63,9 @@ DeviceAllow=/dev/snd/pcmC0D0p rwm
 DeviceAllow=/dev/snd/pcmC0D1p rwm
 DeviceAllow=/dev/snd/pcmC0D2c rwm
 DeviceAllow=/dev/snd/timer rwm
+# The guest owns ALSA/PipeWire policy; allow the ALSA character class so the
+# guest can keep owning audio if the kernel exposes additional sound nodes.
+DeviceAllow=char-alsa rwm
 DeviceAllow=/dev/dri/card0 rwm
 DeviceAllow=/dev/dri/renderD128 rwm
 DeviceAllow=/dev/input/event0 rwm
