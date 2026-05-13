@@ -3,7 +3,7 @@ Description=Persistent Nix store bind mount
 DefaultDependencies=no
 Requires=nix-storage-setup.service
 After=nix-storage-setup.service
-Before=nix-daemon.service
+Before=rocknix-guest.service rocknix-guest-promote.service
 
 [Mount]
 What=/storage/.nix-root

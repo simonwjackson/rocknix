@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 #
-# SM8550 guest ExecStartPre helper for rocknix-guest-v2.service.
+# SM8550 guest ExecStartPre helper for rocknix-guest.service.
 #
 # Tier E3 surfaced that the guest's /run/current-system is NOT seeded on
 # cold boot -- /run is tmpfs and does not persist. Without this, the

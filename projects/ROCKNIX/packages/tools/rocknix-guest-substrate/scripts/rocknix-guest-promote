@@ -5,7 +5,7 @@
 # Promote the host-packaged rocknix-nix-guest source into the persistent
 # /storage-backed NixOS guest rootfs.
 #
-# ROCKNIX image updates replace /usr/lib/nix-integration/guest, but they do
+# ROCKNIX image updates replace /usr/lib/rocknix-guest-substrate/guest, but they do
 # not overwrite /storage/machines/rocknix-guest. This helper bridges that
 # lifecycle boundary after the old guest has booted and networking is owned by
 # the guest: it builds the packaged main-space NixOS configuration inside the
@@ -17,8 +17,9 @@ set -eu
 PATH=/usr/bin:/usr/sbin:/bin:/sbin
 
 GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
-GUEST_SOURCE="${ROCKNIX_GUEST_SOURCE:-/usr/lib/nix-integration/guest}"
-GUEST_REV_FILE="${ROCKNIX_GUEST_REV_FILE:-/usr/lib/nix-integration/guest-revision}"
+GUEST_SOURCE="${ROCKNIX_GUEST_SOURCE:-/usr/lib/rocknix-guest-substrate/guest}"
+GUEST_REV_FILE="${ROCKNIX_GUEST_REV_FILE:-/usr/lib/rocknix-guest-substrate/guest-revision}"
+GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
 STAGED_SOURCE="${ROCKNIX_GUEST_STAGED_SOURCE:-/storage/.guest/rocknix-nix-guest-packaged}"
 APPLIED_REV_FILE="${ROCKNIX_GUEST_APPLIED_REV_FILE:-${GUEST_ROOT}/etc/rocknix-guest-revision}"
 APPLIED_SYSTEM_FILE="${ROCKNIX_GUEST_APPLIED_SYSTEM_FILE:-${GUEST_ROOT}/etc/rocknix-guest-system-path}"
@@ -77,9 +78,9 @@ guest_store_path_exists() {
 }
 
 ensure_guest_namespace() {
-  outer_pid="$(systemctl show -p MainPID --value rocknix-guest-v2.service 2>/dev/null || true)"
+  outer_pid="$(systemctl show -p MainPID --value "${GUEST_SERVICE}" 2>/dev/null || true)"
   case "${outer_pid}" in
-    ''|0) fail "rocknix-guest-v2.service is not running" ;;
+    ''|0) fail "${GUEST_SERVICE} is not running" ;;
   esac
 
   inner_pid="$(pgrep -P "${outer_pid}" | head -1 || true)"
@@ -108,7 +109,7 @@ if [ "${current_rev}" = "${wanted_rev}" ]; then
     ensure_guest_namespace
     nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "/run/current-system/sw/bin/nix-env -p /nix/var/nix/profiles/system --set '${applied_system}'"
     log "restarting guest to boot repaired generation"
-    systemctl restart --no-block rocknix-guest-v2.service
+    systemctl restart --no-block "${GUEST_SERVICE}"
     exit 0
   fi
 
@@ -181,4 +182,4 @@ printf '%s\n' "${system_path}" > "${APPLIED_SYSTEM_FILE}"
 
 log "guest profile now points at ${system_path}"
 log "restarting guest to boot promoted generation"
-systemctl restart --no-block rocknix-guest-v2.service
+systemctl restart --no-block "${GUEST_SERVICE}"

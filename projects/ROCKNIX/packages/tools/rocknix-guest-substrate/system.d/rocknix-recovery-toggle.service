@@ -11,9 +11,9 @@
 #   2) rocknix.safe=1 on the kernel cmdline (per-boot only; clearable
 #      by a normal reboot without touching /flash)
 #
-# Either toggle present -> boot to rocknix.target (ROCKNIX recovery
-# plane). Both absent -> boot to rocknix-graphical.target (Nix guest
-# main-space).
+# Either toggle present -> boot to multi-user.target (SSH-first host
+# recovery plane). Both absent -> boot to rocknix-main-space.target
+# (NixOS guest main-space).
 
 [Unit]
 Description=ROCKNIX recovery override (selects default.target per boot)
@@ -24,7 +24,7 @@ Conflicts=shutdown.target
 
 # Run on every boot. The conditions inside the script decide the action;
 # we cannot use ConditionPathExists here because we want to run when the
-# flag is ABSENT too (to flip back to rocknix-graphical.target after a
+# flag is ABSENT too (to flip back to rocknix-main-space.target after a
 # user rm'd the flag).
 
 [Service]
