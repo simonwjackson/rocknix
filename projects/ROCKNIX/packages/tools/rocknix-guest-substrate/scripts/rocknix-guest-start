@@ -12,6 +12,9 @@
 
 set -eu
 
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
 LOG_TAG="rocknix-guest-start"
 RUN_DIR="${ROCKNIX_GUEST_START_RUN_DIR:-/run/rocknix-guest-substrate}"
 ARGS_FILE="${RUN_DIR}/nspawn.args"
