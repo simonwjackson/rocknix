@@ -6,7 +6,7 @@
 # exercises historical Layer 4-12 CLIs (nixctl, nix-doctor, nix-layer-activate):
 # those were scaffolding for the path to the current design. The remaining
 # runtime contract is small:
-#   - host has a storage-backed /nix mountpoint for the guest rootfs/store
+#   - guest rootfs has its own /nix store/profile tree
 #   - host ships the nspawn guest unit and recovery toggle
 #   - the guest unit points at the pinned main-space root and avoids host leaks
 #   - optional live mode can verify systemd's current view on device
@@ -55,8 +55,8 @@ check_executable "${SCRIPT_ROOT}/rocknix-guest-udev-stage"
 check_executable "${SCRIPT_ROOT}/rocknix-recovery-toggle"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-soak"
 
-check_file "${UNIT_ROOT}/nix-storage-setup.service"
-check_file "${UNIT_ROOT}/nix.mount"
+[ ! -e "${UNIT_ROOT}/nix-storage-setup.service" ] || fail "host nix-storage-setup.service must be retired"
+[ ! -e "${UNIT_ROOT}/nix.mount" ] || fail "host nix.mount must be retired"
 check_file "${UNIT_ROOT}/rocknix-main-space.target"
 check_file "${UNIT_ROOT}/rocknix-guest.service"
 check_file "${UNIT_ROOT}/rocknix-guest-promote.service"
@@ -68,6 +68,16 @@ for retired_unit in nix-daemon.service nix-daemon.socket; do
 done
 
 guest_unit="${UNIT_ROOT}/rocknix-guest.service"
+check_grep 'RequiresMountsFor=/storage' "${guest_unit}" "guest unit must require storage"
+if grep -q 'nix.mount' "${guest_unit}" "${UNIT_ROOT}/rocknix-main-space.target" 2>/dev/null; then
+  fail "guest units must not require retired host nix.mount"
+fi
+if grep -q 'RequiresMountsFor=/storage /nix' "${guest_unit}" 2>/dev/null; then
+  fail "guest unit must not require host /nix"
+fi
+check_grep 'StartLimitIntervalSec=5min' "${guest_unit}" "guest unit must bound bad-generation restart loops"
+check_grep 'StartLimitBurst=3' "${guest_unit}" "guest unit must cap restart bursts"
+check_grep 'StartLimitAction=none' "${guest_unit}" "guest unit must not auto-reboot or auto-recover"
 check_grep 'ExecStart=/usr/bin/rocknix-guest-start' "${guest_unit}" "guest unit must use guest start helper"
 check_grep '/usr/bin/systemd-nspawn' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must exec systemd-nspawn"
 check_grep '--directory=/storage/machines/rocknix-guest' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must target /storage/machines/rocknix-guest"
@@ -131,15 +141,78 @@ done
 if [ "${ROCKNIX_GUEST_LIVE_SMOKE:-0}" = "1" ]; then
   command -v systemctl >/dev/null 2>&1 || fail "systemctl unavailable for live smoke"
 
-  [ -d /storage/machines/rocknix-guest ] || fail "guest root missing: /storage/machines/rocknix-guest"
-  [ -d /storage/.nix-root ] || fail "storage-backed Nix root missing: /storage/.nix-root"
-  [ -d /nix ] || fail "/nix mountpoint missing"
+  GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+  SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
+  LEGACY_PROFILE_GUEST="/nix/var/nix/profiles/system"
+  APPLIED_REV_FILE="${GUEST_ROOT}/etc/rocknix-guest-revision"
+  APPLIED_SYSTEM_FILE="${GUEST_ROOT}/etc/rocknix-guest-system-path"
 
-  mountpoint -q /nix || fail "/nix is not mounted"
+  [ -d "${GUEST_ROOT}" ] || fail "guest root missing: ${GUEST_ROOT}"
+  [ -d "${GUEST_ROOT}/nix" ] || fail "guest rootfs /nix missing: ${GUEST_ROOT}/nix"
+  if systemctl list-unit-files nix.mount >/dev/null 2>&1; then
+    fail "retired host nix.mount is still installed"
+  fi
+  if mountpoint -q /nix 2>/dev/null; then
+    fail "retired host /nix mount is still active"
+  fi
+
+  resolve_profile() {
+    profile_guest_path="$1"
+    profile_path="${GUEST_ROOT}${profile_guest_path}"
+    [ -L "${profile_path}" ] || return 1
+    target="$(readlink "${profile_path}" 2>/dev/null || true)"
+    case "${target}" in
+      /nix/*) resolved="${target}" ;;
+      '') return 1 ;;
+      *) resolved="$(readlink "$(dirname "${profile_path}")/${target}" 2>/dev/null || true)" ;;
+    esac
+    case "${resolved}" in /nix/*) : ;; *) return 1 ;; esac
+    [ -x "${GUEST_ROOT}${resolved}/init" ] || return 1
+    printf '%s\n' "${resolved}"
+  }
+
+  selected_system="$(resolve_profile "${SELECTED_PROFILE_GUEST}" || true)"
+  legacy_system="$(resolve_profile "${LEGACY_PROFILE_GUEST}" || true)"
+  promotion_markers=0
+  if [ -e "${APPLIED_REV_FILE}" ] || [ -e "${APPLIED_SYSTEM_FILE}" ]; then
+    promotion_markers=1
+  fi
+
+  if [ -n "${selected_system}" ]; then
+    if [ "${promotion_markers}" = "1" ] && [ -z "${legacy_system}" ]; then
+      fail "legacy guest profile missing after selected profile and promotion markers exist: selected=${selected_system}"
+    fi
+    if [ -n "${legacy_system}" ] && [ "${selected_system}" != "${legacy_system}" ]; then
+      fail "selected and legacy guest profiles drifted: selected=${selected_system} legacy=${legacy_system}"
+    fi
+  elif [ -n "${legacy_system}" ]; then
+    if [ "${promotion_markers}" = "1" ]; then
+      fail "selected guest profile missing after guest promotion markers exist; legacy=${legacy_system}"
+    fi
+    echo "WARNING: selected guest profile missing before first promotion; live smoke using legacy fallback ${legacy_system}" >&2
+  else
+    fail "no valid selected or legacy guest system profile"
+  fi
+
   systemctl list-unit-files rocknix-main-space.target >/dev/null 2>&1 || fail "rocknix-main-space.target not installed"
   systemctl list-unit-files rocknix-guest.service >/dev/null 2>&1 || fail "rocknix-guest.service not installed"
   systemctl list-unit-files rocknix-guest-promote.service >/dev/null 2>&1 || fail "guest promotion service not installed"
   systemctl list-unit-files rocknix-recovery-toggle.service >/dev/null 2>&1 || fail "recovery toggle service not installed"
+
+  outer_pid="$(systemctl show -p MainPID --value rocknix-guest.service 2>/dev/null || true)"
+  if [ -n "${outer_pid}" ] && [ "${outer_pid}" != "0" ]; then
+    inner_pid="$(pgrep -P "${outer_pid}" | head -1 || true)"
+    if [ -n "${inner_pid}" ]; then
+      running_system="$(readlink "/proc/${inner_pid}/root/run/current-system" 2>/dev/null || true)"
+      expected_system="${selected_system:-${legacy_system:-}}"
+      if [ -n "${expected_system}" ] && [ -z "${running_system}" ]; then
+        fail "running guest /run/current-system missing while expected generation is ${expected_system}"
+      fi
+      if [ -n "${expected_system}" ] && [ -n "${running_system}" ] && [ "${running_system}" != "${expected_system}" ]; then
+        fail "running guest generation drifted: running=${running_system} expected=${expected_system}"
+      fi
+    fi
+  fi
   systemctl list-unit-files sshd.service >/dev/null 2>&1 || fail "sshd.service not installed"
   systemctl is-active --quiet sshd.service || fail "sshd.service must be active for SSH-first recovery"
 

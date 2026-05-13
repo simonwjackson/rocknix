@@ -86,28 +86,24 @@ grep -q 'docs/contracts/layer14-soak-checklist.md' "${PKG_DIR}/package.mk" || fa
 grep -q 'docs/contracts/HOW-TO-FALL-BACK.md' "${PKG_DIR}/package.mk" || fail "package.mk must ship fallback doc from guest"
 grep -q 'SM8550_MINIMAL_HOST=yes' "${PKG_DIR}/package.mk" || fail "package.mk must document minimal-host fallback mode when enabled"
 
-# Storage + guest service wiring.
-check_unit "${PKG_DIR}/system.d/nix-storage-setup.service"
-check_unit "${PKG_DIR}/system.d/nix.mount"
+# Storage + guest service wiring. Host root /nix was retired: the guest
+# system store lives under /storage/machines/rocknix-guest/nix and is resolved
+# through GUEST_ROOT by the substrate scripts.
+[ ! -e "${PKG_DIR}/system.d/nix-storage-setup.service" ] || fail "host nix-storage-setup.service must be retired"
+[ ! -e "${PKG_DIR}/system.d/nix.mount" ] || fail "host nix.mount must be retired"
 check_unit "${PKG_DIR}/system.d/rocknix-main-space.target"
 check_unit "${PKG_DIR}/system.d/rocknix-guest.service"
 check_unit "${PKG_DIR}/system.d/rocknix-guest-promote.service"
 check_unit "${PKG_DIR}/system.d/rocknix-recovery-toggle.service"
 
-grep -q 'mkdir -p ${INSTALL}/nix' "${PKG_DIR}/package.mk" || fail "package.mk does not create /nix mountpoint"
-grep -q 'enable_service nix-storage-setup.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable nix-storage-setup.service"
-grep -q 'enable_service nix.mount' "${PKG_DIR}/package.mk" || fail "package.mk does not enable nix.mount"
+! grep -q 'mkdir -p ${INSTALL}/nix' "${PKG_DIR}/package.mk" || fail "package.mk must not create host /nix mountpoint"
+! grep -q 'enable_service nix-storage-setup.service' "${PKG_DIR}/package.mk" || fail "package.mk must not enable nix-storage-setup.service"
+! grep -q 'enable_service nix.mount' "${PKG_DIR}/package.mk" || fail "package.mk must not enable nix.mount"
+! grep -R -q 'nix.mount' "${PKG_DIR}/system.d" "${PKG_DIR}/package.mk" || fail "host units/package must not require host nix.mount"
 grep -q 'enable_service rocknix-main-space.target' "${PKG_DIR}/package.mk" || fail "package.mk does not enable rocknix-main-space.target"
 grep -q 'enable_service rocknix-guest.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable rocknix-guest.service"
 grep -q 'enable_service rocknix-guest-promote.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable guest promotion service"
 grep -q 'enable_service rocknix-recovery-toggle.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable recovery toggle"
-
-grep -q 'RequiresMountsFor=/storage' "${PKG_DIR}/system.d/nix-storage-setup.service" || fail "setup service does not require /storage"
-grep -q '/storage/.nix-root' "${PKG_DIR}/system.d/nix-storage-setup.service" || fail "setup service does not prepare storage-backed Nix root"
-grep -q 'DefaultDependencies=no' "${PKG_DIR}/system.d/nix.mount" || fail "nix.mount should avoid early local-fs ordering"
-grep -q 'What=/storage/.nix-root' "${PKG_DIR}/system.d/nix.mount" || fail "nix.mount has wrong source"
-grep -q 'Where=/nix' "${PKG_DIR}/system.d/nix.mount" || fail "nix.mount has wrong target"
-grep -q 'Options=bind' "${PKG_DIR}/system.d/nix.mount" || fail "nix.mount is not a bind mount"
 
 grep -q 'Alias=default.target' "${PKG_DIR}/system.d/rocknix-main-space.target" || fail "rocknix-main-space.target must alias default.target"
 ! grep -q 'rocknix-graphical.target' "${PKG_DIR}/system.d/rocknix-main-space.target" || fail "rocknix-main-space.target must not keep old graphical-target alias"
@@ -117,6 +113,12 @@ grep -q 'Before=sysinit.target' "${PKG_DIR}/system.d/rocknix-recovery-toggle.ser
 grep -q 'ExecStart=/usr/bin/rocknix-recovery-toggle' "${PKG_DIR}/system.d/rocknix-recovery-toggle.service" || fail "recovery toggle unit has wrong ExecStart"
 
 guest_unit="${PKG_DIR}/system.d/rocknix-guest.service"
+grep -q 'RequiresMountsFor=/storage' "${guest_unit}" || fail "guest unit must require storage only"
+! grep -q 'RequiresMountsFor=/storage /nix' "${guest_unit}" || fail "guest unit must not require host /nix"
+! grep -q 'Requires=nix.mount' "${guest_unit}" || fail "guest unit must not require host nix.mount"
+grep -q 'StartLimitIntervalSec=5min' "${guest_unit}" || fail "guest unit must bound bad-generation restart loops"
+grep -q 'StartLimitBurst=3' "${guest_unit}" || fail "guest unit must cap restart bursts"
+grep -q 'StartLimitAction=none' "${guest_unit}" || fail "guest unit must not auto-reboot or auto-recover"
 grep -q 'ExecStartPre=/usr/bin/rocknix-guest-prep' "${guest_unit}" || fail "guest unit missing prep helper"
 grep -q 'ExecStartPre=/usr/bin/rocknix-guest-udev-stage' "${guest_unit}" || fail "guest unit missing udev stage helper"
 grep -q 'ExecStart=/usr/bin/rocknix-guest-start' "${guest_unit}" || fail "guest unit must launch through guest start helper"
@@ -177,20 +179,147 @@ grep -q 'ExecStart=/usr/bin/rocknix-guest-promote' "${promote_unit}" || fail "gu
 grep -q 'WantedBy=rocknix-main-space.target' "${promote_unit}" || fail "guest promotion must be wanted by main-space target"
 grep -q 'TimeoutStartSec=60min' "${promote_unit}" || fail "guest promotion needs a long timeout for Nix builds"
 grep -q 'nix build' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must build packaged guest configuration"
-grep -q 'nix-env -p /nix/var/nix/profiles/system --set' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must update guest system profile"
+grep -q 'ROCKNIX_GUEST_SYSTEM_PROFILE' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must honor selected profile override"
+grep -q "nix-env -p '\${SELECTED_PROFILE_GUEST}' --set" "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must update selected guest system profile"
+grep -q "nix-env -p '\${LEGACY_PROFILE_GUEST}' --set" "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must mirror legacy guest system profile"
 grep -q 'systemctl restart --no-block "${GUEST_SERVICE}"' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must restart guest after profile update"
 grep -q 'rocknix-guest-revision' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must track applied guest revision"
 grep -q 'rocknix-guest-system-path' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must track applied guest system path"
 grep -q 'resolve_guest_system_profile' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must inspect persistent guest system profile"
-grep -q 'guest_store_path_exists' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must verify applied system path still exists"
+grep -q 'guest_system_path_valid' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must verify applied system path has an executable init"
 grep -q 'system profile drifted' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must repair profile drift when revision marker matches"
 grep -q 'applied system path is missing; rebuilding' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must rebuild if revision marker matches but system path is gone"
 grep -q 'nsenter .* sh -c' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must avoid login shell nsenter invocations"
 ! grep -q 'nsenter .* sh -lc' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not invoke guest login shell"
+grep -q 'ROCKNIX_GUEST_PROMOTE_SYSTEM_PATH' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must allow promote result file override for tests"
 grep -q '/storage/.guest/rocknix-guest-promote-system-path' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must return system path through shared guest storage"
 grep -q '/run/current-system/sw/bin/systemctl is-active NetworkManager.service' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must use absolute guest systemctl for readiness"
 ! grep -q 'seq 1 60' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not depend on seq during early guest boot"
 grep -q '/run/current-system/sw/bin/sleep 2' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must use absolute guest sleep when available"
+grep -q 'ROCKNIX_GUEST_HOST_PATH' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must allow host command stubs for fixture tests"
+
+run_promote_profile_fixture() {
+  tmp_dir=$(mktemp -d)
+  guest_root="${tmp_dir}/guest-root"
+  guest_source="${tmp_dir}/guest-source"
+  guest_rev="${tmp_dir}/guest-revision"
+  staged_source="${tmp_dir}/staged-source"
+  bin_dir="${tmp_dir}/bin"
+  nsenter_log="${tmp_dir}/nsenter.log"
+  systemctl_log="${tmp_dir}/systemctl.log"
+  mkdir -p \
+    "${guest_root}/nix/var/nix/profiles/per-user/root" \
+    "${guest_root}/nix/var/nix/profiles" \
+    "${guest_root}/nix/store/applied-system" \
+    "${guest_root}/nix/store/old-system" \
+    "${guest_root}/etc" \
+    "${guest_source}" \
+    "${bin_dir}"
+  : > "${guest_root}/nix/store/applied-system/init"
+  : > "${guest_root}/nix/store/old-system/init"
+  chmod 0755 "${guest_root}/nix/store/applied-system/init" "${guest_root}/nix/store/old-system/init"
+  printf 'rev-a\n' > "${guest_rev}"
+  printf 'rev-a\n' > "${guest_root}/etc/rocknix-guest-revision"
+  printf '/nix/store/applied-system\n' > "${guest_root}/etc/rocknix-guest-system-path"
+
+  cat > "${bin_dir}/systemctl" <<'EOF'
+#!/bin/sh
+case "$1" in
+  show) printf '100\n' ;;
+  restart) printf '%s\n' "$*" >> "${ROCKNIX_TEST_SYSTEMCTL_LOG}" ;;
+  *) exit 0 ;;
+esac
+EOF
+  cat > "${bin_dir}/pgrep" <<'EOF'
+#!/bin/sh
+printf '200\n'
+EOF
+  cat > "${bin_dir}/nsenter" <<'EOF'
+#!/bin/sh
+last=
+for arg in "$@"; do last="$arg"; done
+printf '%s\n' "${last}" >> "${ROCKNIX_TEST_NSENTER_LOG}"
+case "${last}" in
+  *'nix build'*) printf '/nix/store/rebuilt-system\n' > "${ROCKNIX_GUEST_PROMOTE_SYSTEM_PATH}" ;;
+esac
+exit 0
+EOF
+  chmod 0755 "${bin_dir}/systemctl" "${bin_dir}/pgrep" "${bin_dir}/nsenter"
+
+  set_profile() {
+    profile_path="$1"
+    link_name="$2"
+    target="$3"
+    profile_dir=$(dirname "${profile_path}")
+    rm -f "${profile_path}" "${profile_dir}/${link_name}"
+    ln -s "${target}" "${profile_dir}/${link_name}"
+    ln -s "${link_name}" "${profile_path}"
+  }
+
+  selected_profile="${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system"
+  legacy_profile="${guest_root}/nix/var/nix/profiles/system"
+  set_profile "${selected_profile}" "rocknix-guest-system-1-link" "/nix/store/applied-system"
+  set_profile "${legacy_profile}" "system-1-link" "/nix/store/applied-system"
+
+  ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_TEST_NSENTER_LOG="${nsenter_log}" \
+    ROCKNIX_TEST_SYSTEMCTL_LOG="${systemctl_log}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_SOURCE="${guest_source}" \
+    ROCKNIX_GUEST_REV_FILE="${guest_rev}" \
+    ROCKNIX_GUEST_STAGED_SOURCE="${staged_source}" \
+    "${PKG_DIR}/scripts/rocknix-guest-promote" >/dev/null
+  [ ! -s "${nsenter_log}" ] || fail "promote fixture: already-applied path should not enter guest"
+  [ ! -s "${systemctl_log}" ] || fail "promote fixture: already-applied path should not restart guest"
+
+  set_profile "${selected_profile}" "rocknix-guest-system-1-link" "/nix/store/old-system"
+  set_profile "${legacy_profile}" "system-1-link" "/nix/store/old-system"
+  ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_TEST_NSENTER_LOG="${nsenter_log}" \
+    ROCKNIX_TEST_SYSTEMCTL_LOG="${systemctl_log}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_SOURCE="${guest_source}" \
+    ROCKNIX_GUEST_REV_FILE="${guest_rev}" \
+    ROCKNIX_GUEST_STAGED_SOURCE="${staged_source}" \
+    "${PKG_DIR}/scripts/rocknix-guest-promote" >/dev/null
+  grep -q "nix-env -p '/nix/var/nix/profiles/per-user/root/rocknix-guest-system' --set '/nix/store/applied-system'" "${nsenter_log}" \
+    || fail "promote fixture: drift repair did not write selected profile"
+  grep -q "nix-env -p '/nix/var/nix/profiles/system' --set '/nix/store/applied-system'" "${nsenter_log}" \
+    || fail "promote fixture: drift repair did not mirror legacy profile"
+  grep -q 'restart --no-block rocknix-guest.service' "${systemctl_log}" \
+    || fail "promote fixture: drift repair did not restart guest"
+
+  mkdir -p "${guest_root}/nix/store/rebuilt-system"
+  : > "${guest_root}/nix/store/rebuilt-system/init"
+  chmod 0755 "${guest_root}/nix/store/rebuilt-system/init"
+  printf 'rev-b\n' > "${guest_rev}"
+  : > "${nsenter_log}"
+  : > "${systemctl_log}"
+  promote_result="${tmp_dir}/promote-result"
+  ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_TEST_NSENTER_LOG="${nsenter_log}" \
+    ROCKNIX_TEST_SYSTEMCTL_LOG="${systemctl_log}" \
+    ROCKNIX_GUEST_PROMOTE_SYSTEM_PATH="${promote_result}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_SOURCE="${guest_source}" \
+    ROCKNIX_GUEST_REV_FILE="${guest_rev}" \
+    ROCKNIX_GUEST_STAGED_SOURCE="${staged_source}" \
+    "${PKG_DIR}/scripts/rocknix-guest-promote" >/dev/null
+  grep -q "nix-env -p '/nix/var/nix/profiles/per-user/root/rocknix-guest-system' --set \"\${system_path}\"" "${nsenter_log}" \
+    || fail "promote fixture: rebuild path did not write selected profile"
+  grep -q "nix-env -p '/nix/var/nix/profiles/system' --set \"\${system_path}\"" "${nsenter_log}" \
+    || fail "promote fixture: rebuild path did not mirror legacy profile"
+  [ "$(sed -n '1p' "${guest_root}/etc/rocknix-guest-revision")" = "rev-b" ] \
+    || fail "promote fixture: rebuild path did not update revision marker"
+  [ "$(sed -n '1p' "${guest_root}/etc/rocknix-guest-system-path")" = "/nix/store/rebuilt-system" ] \
+    || fail "promote fixture: rebuild path did not update system marker"
+  grep -q 'restart --no-block rocknix-guest.service' "${systemctl_log}" \
+    || fail "promote fixture: rebuild path did not restart guest"
+
+  rm -rf "${tmp_dir}"
+}
+run_promote_profile_fixture
+
 for forbidden in '--bind-ro=/usr' '--bind-ro=/lib' '--bind-ro=/etc/profile' '--bind=/storage ' '--bind-ro=/storage/roms' '--bind=/storage/.config/Cemu' '--bind=/storage/.config/MangoHud' '--bind=/storage/.local'; do
   ! grep -v '^#' "${guest_unit}" | grep -F -q -- "${forbidden}" || fail "guest unit still contains forbidden broad bind: ${forbidden}"
 done
@@ -205,11 +334,59 @@ grep -q 'systemctl set-default' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || 
 grep -q 'resolv.conf.guest-owned' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing resolv.conf ownership marker"
 grep -q '/storage/.guest' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing guest writable area"
 grep -q 'GUEST_STORAGE_ROOT=' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper must create guest-owned storage namespace"
-grep -q '/nix/var/nix/profiles/system' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing system profile check"
+grep -q '/nix/var/nix/profiles/per-user/root/rocknix-guest-system' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing selected guest system profile check"
+grep -q '/nix/var/nix/profiles/system' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing legacy system profile fallback"
+grep -q 'selected guest system profile missing or invalid; falling back to legacy profile' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper must log selected-profile fallback"
+grep -q 'expected .*init to be executable' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper must validate selected/legacy init"
+
+run_prep_profile_fixture() {
+  tmp_dir=$(mktemp -d)
+  guest_root="${tmp_dir}/guest-root"
+  guest_area="${tmp_dir}/guest-area"
+  mkdir -p \
+    "${guest_root}/nix/var/nix/profiles/per-user/root" \
+    "${guest_root}/nix/var/nix/profiles" \
+    "${guest_root}/nix/store/selected-system" \
+    "${guest_root}/nix/store/legacy-system" \
+    "${guest_root}/etc" \
+    "${guest_root}/sbin" \
+    "${guest_area}"
+  : > "${guest_root}/nix/store/selected-system/init"
+  : > "${guest_root}/nix/store/legacy-system/init"
+  chmod 0755 "${guest_root}/nix/store/selected-system/init" "${guest_root}/nix/store/legacy-system/init"
+  ln -s /nix/store/selected-system "${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system-1-link"
+  ln -s rocknix-guest-system-1-link "${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system"
+  ln -s /nix/store/legacy-system "${guest_root}/nix/var/nix/profiles/system-1-link"
+  ln -s system-1-link "${guest_root}/nix/var/nix/profiles/system"
+
+  ROCKNIX_GUEST_ROOT="${guest_root}" ROCKNIX_GUEST_AREA="${guest_area}" "${PKG_DIR}/scripts/rocknix-guest-prep" >/dev/null 2>&1
+  [ "$(readlink "${guest_root}/init")" = "/nix/store/selected-system/init" ] || fail "prep fixture: selected profile did not win"
+  [ "$(readlink "${guest_root}/sbin/init")" = "/nix/store/selected-system/init" ] || fail "prep fixture: selected profile did not relink sbin/init"
+
+  rm -f "${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system"
+  ROCKNIX_GUEST_ROOT="${guest_root}" ROCKNIX_GUEST_AREA="${guest_area}" "${PKG_DIR}/scripts/rocknix-guest-prep" >/dev/null 2>&1
+  [ "$(readlink "${guest_root}/init")" = "/nix/store/legacy-system/init" ] || fail "prep fixture: missing selected profile did not fall back to legacy"
+
+  ln -s rocknix-guest-system-1-link "${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system"
+  rm -f "${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system-1-link"
+  ln -s /nix/store/missing-system "${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system-1-link"
+  ROCKNIX_GUEST_ROOT="${guest_root}" ROCKNIX_GUEST_AREA="${guest_area}" "${PKG_DIR}/scripts/rocknix-guest-prep" >/dev/null 2>&1
+  [ "$(readlink "${guest_root}/init")" = "/nix/store/legacy-system/init" ] || fail "prep fixture: invalid selected profile did not fall back to legacy"
+
+  rm -f "${guest_root}/nix/var/nix/profiles/system"
+  if ROCKNIX_GUEST_ROOT="${guest_root}" ROCKNIX_GUEST_AREA="${guest_area}" "${PKG_DIR}/scripts/rocknix-guest-prep" >/dev/null 2>&1; then
+    fail "prep fixture: both profiles invalid should fail"
+  fi
+
+  rm -rf "${tmp_dir}"
+}
+run_prep_profile_fixture
+
 grep -q 'inputplumber/by-hidden' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" || fail "udev stage must scrub InputPlumber-hidden devices"
 grep -q 'check_host_ssh_responsive' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing host SSH check"
 grep -q 'ROCKNIX_REQUIRE_HOST_ESSWAY' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper must allow SSH-first recovery without host essway"
 grep -q 'check_resolv_owned' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing resolv ownership check"
+grep -q 'check_selected_system_profile' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing selected system profile check"
 
 # Device gates: only SM8550 ships the guest substrate.
 SYSTEMD_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/systemd/package.mk"

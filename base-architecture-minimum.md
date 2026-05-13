@@ -5,7 +5,7 @@
 here is gated by `[ "${DEVICE}" = "SM8550" ]` everywhere it is wired
 (`projects/ROCKNIX/packages/virtual/image/package.mk`,
 `projects/ROCKNIX/packages/sysutils/systemd/package.mk`,
-`projects/ROCKNIX/packages/tools/nix-integration/package.mk`).
+`projects/ROCKNIX/packages/tools/rocknix-guest-substrate/package.mk`).
 
 **Constraint:** Host SSH (`packages/network/openssh`) stays on the image
 indefinitely. SSH is the only out-of-band lifeline the host owns once the
@@ -23,41 +23,43 @@ two-plane runtime:
 
 | Plane | Owner | Entry point | Status |
 |-------|-------|-------------|--------|
-| Main-space (UI, emulators, sway, pipewire, NetworkManager) | NixOS guest fetched from `simonwjackson/rocknix-nix-guest` (pinned SHA: `5f1a19c3…`) | `rocknix-graphical.target` → `rocknix-guest-v2.service` → `systemd-nspawn` rooted at `/storage/machines/rocknix-guest` | Default on every SM8550 boot |
+| Main-space (UI, emulators, sway, pipewire, NetworkManager) | NixOS guest fetched from `simonwjackson/rocknix-nix-guest` | `rocknix-main-space.target` → `rocknix-guest.service` → `systemd-nspawn` rooted at `/storage/machines/rocknix-guest` | Default on every SM8550 boot |
 | Recovery plane (legacy ROCKNIX UI: essway/sway/EmulationStation/inputplumber/pipewire/etc.) | ROCKNIX host packages | `rocknix.target` (default.target if `/flash/rocknix.no-nspawn` exists or `rocknix.safe=1` is on the kernel cmdline) | Opt-in fallback only |
 
 The `rocknix-recovery-toggle` oneshot
-(`projects/ROCKNIX/packages/tools/nix-integration/scripts/rocknix-recovery-toggle`)
+(`projects/ROCKNIX/packages/tools/rocknix-guest-substrate/scripts/rocknix-recovery-toggle`)
 runs `Before=sysinit.target` on every boot and writes `default.target` via
 `systemctl set-default` based on two OR'd escape hatches: a `/flash` flag file
 (sticky, readable from an SD-card reader without booting the device) and a
 kernel cmdline token (per-boot only).
 
-### 1.2 Storage & Nix substrate
+### 1.2 Storage & guest Nix substrate
 
-`nix-integration` ships the minimum plumbing to host a Nix store on a
-LibreELEC-derived read-only image:
+`rocknix-guest-substrate` ships the minimum plumbing to run the persistent
+NixOS guest rootfs on a LibreELEC-derived read-only host image:
 
-- `nix-storage-setup.service` creates `/storage/.nix-root/{store,var/nix}` on a
-  writable partition.
-- `nix.mount` bind-mounts `/storage/.nix-root` over `/nix` (`DefaultDependencies=no`,
-  required before any guest unit).
 - `/storage/machines/rocknix-guest/` holds the persistent NixOS rootfs; the
   host never re-writes it from an image update.
-- `/usr/lib/nix-integration/guest/` ships the pinned `rocknix-nix-guest` source
-  tree (SHA256-verified tarball fetched at package build time) plus its
-  revision marker.
+- Guest Nix state lives inside that rootfs at
+  `/storage/machines/rocknix-guest/nix`. The host root `/nix` bind mount from
+  earlier Nix-integration layers is retired; the host resolves guest profiles
+  through `${GUEST_ROOT}/nix/...` instead of maintaining its own Nix store.
+- `/usr/lib/rocknix-guest-substrate/guest/` ships the pinned
+  `rocknix-nix-guest` source tree (SHA256-verified tarball fetched at package
+  build time) plus its revision marker.
 - `rocknix-guest-promote.service` runs after the guest is up, compares the
   packaged revision against the applied one
   (`/storage/machines/rocknix-guest/etc/rocknix-guest-revision`), runs
   `nix build` *inside the running guest namespace* via `nsenter`, updates the
-  guest's system profile via `nix-env -p /nix/var/nix/profiles/system --set`,
-  then restarts the guest one time. This is the on-device update mechanism for
-  the main-space.
+  selected guest profile via
+  `nix-env -p /nix/var/nix/profiles/per-user/root/rocknix-guest-system --set`,
+  mirrors `/nix/var/nix/profiles/system` during the transition, then restarts
+  the guest one time. This is the on-device update mechanism for the
+  main-space.
 
 ### 1.3 What's already excised vs. what still ships
 
-`projects/ROCKNIX/packages/tools/nix-integration/tests/nix-integration-static-checks.sh`
+`projects/ROCKNIX/packages/tools/rocknix-guest-substrate/tests/guest-substrate-static-checks.sh`
 enforces that the host no longer carries:
 
 - Old host CLIs `nixctl`, `nix-doctor`, `nix-layer-activate`
@@ -126,8 +128,8 @@ own them.
 - `rocknix-recovery-toggle.service` -- the per-boot `default.target` decision
   is host-only by design; the guest cannot select between itself and the
   recovery plane.
-- `rocknix-graphical.target` (aliased to `default.target` on normal boot,
-  `Requires=multi-user.target`, `Wants=rocknix-guest-v2.service`).
+- `rocknix-main-space.target` (aliased to `default.target` on normal boot,
+  `Requires=multi-user.target`, `Wants=rocknix-guest.service`).
 - `rocknix.target` (legacy recovery plane entry, kept indefinitely as
   fallback).
 
@@ -137,8 +139,8 @@ own them.
   `projects/ROCKNIX/packages/rocknix/system.d/`).
 - `/flash` mount (read-only image partition; carries `HOW-TO-FALL-BACK.md`
   and the `rocknix.no-nspawn` flag file).
-- `/nix` bind chain: `nix-storage-setup.service` → `nix.mount`
-  (`/storage/.nix-root` → `/nix`).
+- Guest rootfs Nix state under `/storage/machines/rocknix-guest/nix`; the host
+  no longer maintains a root `/nix` bind mount for itself.
 - Filesystem tools needed to repair the guest from the host: `e2fsprogs`,
   `dosfstools`, `parted`/`gptfdisk`, `util-linux`, `coreutils`, `bash`,
   `busybox` (already declared by the `image` virtual package).
@@ -176,7 +178,7 @@ image. The package config already supports this cleanly:
 The host SSH is **not** a redundancy of guest SSH; it is the lifeline of
 last resort that lets a human reach the device when:
 
-- The guest fails to boot (no `rocknix-graphical.target` activation).
+- The guest fails to boot (no `rocknix-main-space.target` activation).
 - `rocknix-guest-promote.service` failed mid-build, leaving the system
   profile pointed at a missing store path (the script's
   `applied system path is missing; rebuilding` branch is the auto-repair,
@@ -194,7 +196,7 @@ should stay green forever.
   reboot to apply") -- handled by `packages/virtual/image` +
   `projects/ROCKNIX/devices/SM8550/bootloader/update.sh` +
   `packages/rocknix/sources/post-update`.
-- The `nix-integration` package itself ships pinned guest revisions:
+- The `rocknix-guest-substrate` package itself ships pinned guest revisions:
   `PKG_NIX_GUEST_REV` + `PKG_NIX_GUEST_SHA256` in `package.mk`. Image updates
   therefore deliver a new guest pin; `rocknix-guest-promote.service` does the
   on-device application.
@@ -215,7 +217,7 @@ keep it are the whole subject of §4 below.
 
 These are the contracts the static checks already encode plus the ones the
 design implies but doesn't yet enforce. They should be promoted to invariants
-checked by `nix-integration-static-checks.sh` (and the runtime smoke) before
+checked by `guest-substrate-static-checks.sh` (and the runtime smoke) before
 each reduction step lands.
 
 ### 3.1 Host → Guest leakage (negative space; already enforced)
@@ -245,7 +247,7 @@ itself by name in the unit's leading comment and not match the forbidden set.
   explicitly fails on `ExecStopPost=` to prevent regressing this. The reason:
   a half-broken guest must not automatically resurrect the legacy host UI; it
   must fall through to a clean recovery decision the user can see. (The
-  `refactor(nix-integration): remove automatic legacy host reclaim` commit
+  `refactor(rocknix-guest-substrate): remove automatic legacy host reclaim` commit
   `8e6b67f076` enforces this.)
 - `rocknix-guest-v2.service` must `--register=no` so the guest doesn't
   couple to `machined` on the host. Static-check enforced.
@@ -260,10 +262,10 @@ The reduction is SM8550-only. Three independent gates already exist; all
 three should stay:
 
 1. `packages/virtual/image/package.mk`:
-   `[ "${DEVICE}" = "SM8550" ] && PKG_DEPENDS_TARGET+=" nix-integration"`
+   `[ "${DEVICE}" = "SM8550" ] && PKG_DEPENDS_TARGET+=" rocknix-guest-substrate"`
 2. `packages/sysutils/systemd/package.mk`:
    `if [ "${DEVICE}" != "SM8550" ]; then safe_remove …systemd-nspawn… fi`
-3. `packages/tools/nix-integration/package.mk`'s `post_install` aborts
+3. `packages/tools/rocknix-guest-substrate/package.mk`'s `post_install` aborts
    with a clear error if `DEVICE != SM8550`.
 
 Defense-in-depth on a single decision. Keep the redundancy.
@@ -271,7 +273,7 @@ Defense-in-depth on a single decision. Keep the redundancy.
 ### 3.4 Ownership of the source of truth
 
 - The host repo owns: SM8550 device tree, kernel patches, bootloader,
-  `nix-integration` bootstrap, recovery plane.
+  `rocknix-guest-substrate` bootstrap, recovery plane.
 - The guest repo (`simonwjackson/rocknix-nix-guest`) owns: NixOS config,
   contract docs (`docs/contracts/layer14-main-space-contract.md`,
   `…/layer14-soak-checklist.md`, `…/HOW-TO-FALL-BACK.md`). The host **copies
@@ -285,7 +287,7 @@ Defense-in-depth on a single decision. Keep the redundancy.
 the guest's system profile. Its contract is in
 `scripts/rocknix-guest-promote`:
 
-1. Compare `/usr/lib/nix-integration/guest-revision` (host-shipped) to
+1. Compare `/usr/lib/rocknix-guest-substrate/guest-revision` (host-shipped) to
    `${GUEST_ROOT}/etc/rocknix-guest-revision` (applied marker).
 2. If equal AND `${GUEST_ROOT}/etc/rocknix-guest-system-path` still exists
    inside the guest's `/nix/store` → no-op.
@@ -325,10 +327,10 @@ each step's "done" condition is a smoke/soak the repo can already run.
 **Why first:** before any subtractive change, freeze the contract so
 regressions are detectable.
 
-- Add `nix-integration-static-checks.sh` to a CI gate (it's already
+- Add `guest-substrate-static-checks.sh` to a CI gate (it's already
   the canonical static check; just make it required).
-- Run `nix-integration-runtime-smoke.sh` with `ROCKNIX_GUEST_LIVE_SMOKE=1`
-  on a Thor and capture baseline: `default.target`, mounted `/nix`,
+- Run `guest-substrate-runtime-smoke.sh` with `ROCKNIX_GUEST_LIVE_SMOKE=1`
+  on a Thor and capture baseline: `default.target`, guest rootfs `/nix`,
   guest unit active, recovery toggle service installed.
 - Run `rocknix-guest-soak --hours 24` and bank a green run as the
   "everything's still wired correctly" baseline.
@@ -359,7 +361,7 @@ without changing any runtime path that's currently active.
 
 **Validate-able exit:**
 - Image build succeeds with the same `DEVICE=SM8550` invocation.
-- `nix-integration-static-checks.sh` passes (no surface touched).
+- `guest-substrate-static-checks.sh` passes (no surface touched).
 - A Thor boot: recovery plane reachable via flag-file, but EmulationStation
   inside the recovery plane will be missing — this is acceptable **if and
   only if** the recovery plane's job is redefined to "shell + SSH + ability
@@ -388,8 +390,8 @@ nothing UI-shaped left. SSH becomes literally the only way to reach the
 host out-of-band. This is consistent with the brief.
 
 **Validate-able exit:**
-- `nix-integration-runtime-smoke.sh` live mode: `systemctl get-default`
-  is `rocknix-graphical.target` (or `rocknix.target` if flagged), both
+- `guest-substrate-runtime-smoke.sh` live mode: `systemctl get-default`
+  is `rocknix-main-space.target` (or `multi-user.target` if flagged), both
   unit files exist.
 - `rocknix-guest-soak --hours 24`: zero alarms, including
   `check_host_ssh_responsive` and `check_resolv_owned`.
@@ -397,7 +399,7 @@ host out-of-band. This is consistent with the brief.
   the host comes up with sshd listening and `/storage` mounted, but no
   graphical session. (This will require a new test asserting "boot to
   recovery plane → SSH works → can edit/remove the flag file."
-  Add it as `nix-integration-recovery-smoke.sh`.)
+  Add it as `guest-substrate-recovery-smoke.sh`.)
 
 ### Step 3 — Excise duplicate userland packages
 
@@ -476,7 +478,7 @@ container engine, SSH, and an updater." Nothing more.
 **Validate-able exit:**
 - Image size delta vs. Step 3 baseline.
 - Manifest denylist now includes the UI packages.
-- A new test: `nix-integration-recovery-smoke.sh` boots into recovery,
+- A new test: `guest-substrate-recovery-smoke.sh` boots into recovery,
   confirms `systemctl list-units --type=service --state=running`
   contains *only* the minimal recovery set (sshd, automount, journald,
   systemd-resolved, systemd-timesyncd, the recovery toggle, the guest
@@ -489,7 +491,7 @@ gaming OS that happens to host a container. This is mostly documentation,
 naming, and CI gates — but it's the step that lets the architecture
 stabilize.
 
-- Rename `nix-integration` to something neutral if `nix-integration` is
+- Rename `rocknix-guest-substrate` to something neutral if `rocknix-guest-substrate` is
   still misleading (it's the host-side bootstrap for *any* nspawn-rooted
   guest, not just Nix). Keep the package surface byte-stable as the
   static check enforces.
@@ -497,18 +499,19 @@ stabilize.
   `layer14-main-space-contract.md`: any nspawn guest the host hosts
   must declare its bind set, its resource budget, and its recovery
   story. Today there's exactly one guest; the contract is implicit.
-- Codify the inverse contract: the host promises (a) `/nix` is mounted
-  before guest start, (b) kernel cmdline carries
-  `systemd.unified_cgroup_hierarchy=1` on SM8550, (c) `systemd-nspawn`
-  binary + service template available, (d) `nsenter` available for
-  promote.
+- Codify the inverse contract: the host promises (a) the guest rootfs at
+  `/storage/machines/rocknix-guest` contains its own `/nix` store/profile tree,
+  (b) kernel cmdline carries `systemd.unified_cgroup_hierarchy=1` on SM8550,
+  (c) `systemd-nspawn` binary + service template are available, and (d)
+  `nsenter` is available for promote. The host no longer promises a root
+  `/nix` mount for itself.
 - Add a runtime invariant: a single "host services to keep alive" unit
   list, validated by a smoke. Today the soak checks essway, but that's
   a Step-2 casualty. The replacement is "sshd, journald, recovery
   toggle, guest promote, guest v2, automount, the system mounts."
 
 **Validate-able exit:**
-- `nix-integration-static-checks.sh` extended with a positive allowlist
+- `guest-substrate-static-checks.sh` extended with a positive allowlist
   of host services for SM8550.
 - The 24h soak is updated to drop `check_host_essway_alive` (now
   obsolete) and gain `check_host_minimal_set_alive`.
@@ -519,9 +522,9 @@ stabilize.
 
 | Principle | Status today | Notes |
 |-----------|--------------|-------|
-| Single Responsibility (per package) | Strong | `nix-integration` is purely the bootstrap; the guest tree is fetched, not duplicated. |
-| Open/Closed (extension via guest, not host churn) | Strong | New main-space behavior lands as guest revision bumps (commits like `5af42b75e4 feat(nix-integration): auto-promote packaged guest revisions`), not host code edits. |
-| Liskov-style substitutability of planes | Adequate | `rocknix.target` and `rocknix-graphical.target` are interchangeable defaults; the toggle is purely declarative. |
+| Single Responsibility (per package) | Strong | `rocknix-guest-substrate` is purely the bootstrap; the guest tree is fetched, not duplicated. |
+| Open/Closed (extension via guest, not host churn) | Strong | New main-space behavior lands as guest revision bumps (commits like `5af42b75e4 feat(rocknix-guest-substrate): auto-promote packaged guest revisions`), not host code edits. |
+| Liskov-style substitutability of planes | Adequate | `multi-user.target` recovery and `rocknix-main-space.target` are interchangeable defaults; the toggle is purely declarative. |
 | Interface Segregation (host ↔ guest) | Improving | The static checker enforces the negative interface (no leaks). The positive interface (what *is* exposed) is implicit in the bind list and the netns sharing; should be promoted to a typed contract doc. |
 | Dependency Inversion (high-level OS depends on abstractions) | Weak today, strong after Step 6 | Today the host ships the same UI twice. After Step 5 the host depends only on systemd-nspawn + a guest revision pin, never on the guest's contents. |
 | No circular dependencies | OK | Host fetches guest tarball at build time; guest never imports from host except at runtime via narrow binds. |
@@ -577,13 +580,13 @@ stabilize.
 
 ## 7. Recommendations (in order)
 
-1. **Now:** lock the contract. Make `nix-integration-static-checks.sh` a
+1. **Now:** lock the contract. Make `guest-substrate-static-checks.sh` a
    required CI gate (it's a single self-contained script with no
    external deps). Bank a 24h soak baseline. Tag the commit.
 2. **Step-1 first because it's cheapest and safest:** flip
    `EMULATION_DEVICE=no` for SM8550 only. Image size drops dramatically;
    no runtime path changes for users (the guest already had them).
-3. **Before Step 2, write `nix-integration-recovery-smoke.sh`.** It must
+3. **Before Step 2, write `guest-substrate-recovery-smoke.sh`.** It must
    assert (a) booting with `/flash/rocknix.no-nspawn` reaches a state
    where sshd is listening, (b) `/storage` is mounted, (c) the flag
    file can be removed, (d) a subsequent reboot returns to the
@@ -594,7 +597,7 @@ stabilize.
    guest is up, what does host-side `iwd`/`wpa_supplicant` do once the
    guest's NM is active, who writes `/etc/resolv.conf`, what's the
    handoff order.
-5. **Promote `nix-integration` from "package" to "subsystem" in the
+5. **Promote `rocknix-guest-substrate` from "package" to "subsystem" in the
    documentation hierarchy.** It is the SM8550 host's identity. A
    `documentation/ARCHITECTURE.md` at repo root, calling out the
    two-plane model and the SSH-indefinite contract, would prevent
@@ -626,8 +629,8 @@ stabilize.
   Tolerable.
 - **Leaky abstraction** (medium): shared netns. Documented above.
 - **Inconsistent pattern** (low): the legacy ROCKNIX userland's
-  service graph is `WantedBy=rocknix.target` while the guest unit
-  is `WantedBy=rocknix-graphical.target`. Two parallel target trees
+  service graph is recovery-only while the guest unit
+  is `WantedBy=rocknix-main-space.target`. Two parallel target trees
   with overlapping membership. Fine for now but auditing the wants
   graph as Step 5 lands will be necessary.
 - **Missing boundary documentation** (medium): the host↔guest network
@@ -637,17 +640,17 @@ stabilize.
 
 ## Appendix A — Files of Interest
 
-- `projects/ROCKNIX/packages/tools/nix-integration/package.mk` — pinned
+- `projects/ROCKNIX/packages/tools/rocknix-guest-substrate/package.mk` — pinned
   guest fetch, install plan, service enablement, SM8550 gate.
-- `projects/ROCKNIX/packages/tools/nix-integration/system.d/` — every
+- `projects/ROCKNIX/packages/tools/rocknix-guest-substrate/system.d/` — every
   host-owned unit involved in the two-plane runtime.
-- `projects/ROCKNIX/packages/tools/nix-integration/scripts/` —
+- `projects/ROCKNIX/packages/tools/rocknix-guest-substrate/scripts/` —
   `rocknix-guest-prep` (per-boot guest rootfs sanity + system-profile
   relink), `rocknix-guest-promote` (revision-driven on-device update),
   `rocknix-guest-udev-stage` (InputPlumber/seatd scrub),
   `rocknix-recovery-toggle` (per-boot default.target picker),
   `rocknix-guest-soak` (24h invariant sampler).
-- `projects/ROCKNIX/packages/tools/nix-integration/tests/` — static
+- `projects/ROCKNIX/packages/tools/rocknix-guest-substrate/tests/` — static
   checks + runtime smoke; both are the architectural contract in
   executable form.
 - `projects/ROCKNIX/packages/virtual/image/package.mk` — the

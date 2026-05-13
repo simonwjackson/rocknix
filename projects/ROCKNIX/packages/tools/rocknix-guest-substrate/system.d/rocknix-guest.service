@@ -36,23 +36,26 @@
 #   nspawn/devtmpfs can still expose host block nodes inside the guest.
 #
 # Lifecycle:
-#   ExecStartPre seeds /run/current-system + /run/booted-system from
-#     /nix/var/nix/profiles/system (Tier E3 finding: /run is tmpfs and
-#     does not persist across cold boot)
-#   Restart=on-failure lets systemd retry the guest. If it remains broken,
-#     explicit recovery uses /flash/rocknix.no-nspawn or rocknix.safe=1;
-#     we do not resurrect the legacy host UI automatically.
+#   ExecStartPre resolves the selected guest generation from the guest rootfs
+#     profile /nix/var/nix/profiles/per-user/root/rocknix-guest-system,
+#     falling back to /nix/var/nix/profiles/system during the transition.
+#   Restart=on-failure lets systemd retry the guest, but StartLimit* bounds
+#     bad-generation crash loops. If it remains broken, explicit recovery uses
+#     /flash/rocknix.no-nspawn or rocknix.safe=1; we do not resurrect the
+#     legacy host UI automatically.
 #
 # This unit is enabled on SM8550 via Wants= on rocknix-main-space.target.
 
 [Unit]
 Description=ROCKNIX SM8550 guest (NixOS main-space)
 Documentation=file:///usr/lib/rocknix-guest-substrate/docs/layer14-main-space-contract.md
-RequiresMountsFor=/storage /nix
-After=local-fs.target nix.mount network-pre.target
-Requires=nix.mount
+RequiresMountsFor=/storage
+After=local-fs.target network-pre.target
 ConditionPathExists=/storage/machines/rocknix-guest
 ConditionPathExists=/usr/bin/systemd-nspawn
+StartLimitIntervalSec=5min
+StartLimitBurst=3
+StartLimitAction=none
 
 [Service]
 Type=notify

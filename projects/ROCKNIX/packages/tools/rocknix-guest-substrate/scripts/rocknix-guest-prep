@@ -4,40 +4,105 @@
 #
 # SM8550 guest ExecStartPre helper for rocknix-guest.service.
 #
-# Tier E3 surfaced that the guest's /run/current-system is NOT seeded on
-# cold boot -- /run is tmpfs and does not persist. Without this, the
-# guest's `nixos-rebuild`-equivalent path is broken on a fresh boot
-# until something runs `nix-env -p ... --set ...` for the first time.
-#
-# Tier E1 surfaced the DNS-bleed bug under load: the host's resolvconf
-# rewrites the guest's /etc/resolv.conf because the experimental
-# broad-bind unit bound /etc/resolv.conf from the host. The SM8550 guest
-# unit deliberately does not bind /etc/resolv.conf; this prep helper
-# also touches an ownership marker file inside the guest rootfs so
-# downstream tooling (soak/smoke checks) can verify the guest is the
-# sole owner.
-#
-# This helper is intentionally pure shell: no Nix dependency, no
+# This helper is intentionally pure shell: no host Nix dependency, no
 # /run/current-system dependency. It runs before the guest boots.
+#
+# Stage 10 selector spike:
+#   The host does not own a root /nix store. It resolves guest generations
+#   through the persistent guest rootfs. The selected guest generation is the
+#   guest-absolute profile below, read by the host as ${GUEST_ROOT}${path}.
+#   /nix/var/nix/profiles/system remains a compatibility fallback/mirror while
+#   the selector contract is proven.
 
 set -eu
 
 GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
-PROFILE_DIR="${GUEST_ROOT}/nix/var/nix/profiles"
-SYSTEM_PROFILE="${PROFILE_DIR}/system"
+SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
+LEGACY_PROFILE_GUEST="/nix/var/nix/profiles/system"
 GUEST_RUN_DIR="${GUEST_ROOT}/run"
 GUEST_STORAGE_ROOT="${GUEST_ROOT}/storage"
 RESOLV_OWN_MARKER="${GUEST_ROOT}/etc/resolv.conf.guest-owned"
-GUEST_AREA="/storage/.guest"
+GUEST_AREA="${ROCKNIX_GUEST_AREA:-/storage/.guest}"
 LOG_TAG="rocknix-guest-prep"
 
 log() {
   printf '%s %s\n' "${LOG_TAG}:" "$*"
 }
 
+warn() {
+  printf '%s %s\n' "${LOG_TAG}:" "$*" >&2
+}
+
 fail() {
   log "FAIL: $*"
   exit 1
+}
+
+profile_host_path() {
+  case "$1" in
+    /nix/*) printf '%s%s\n' "${GUEST_ROOT}" "$1" ;;
+    *) fail "profile path must be guest-absolute under /nix: $1" ;;
+  esac
+}
+
+resolve_system_profile() {
+  profile_guest_path="$1"
+  label="$2"
+  profile_path="$(profile_host_path "${profile_guest_path}")"
+
+  [ -L "${profile_path}" ] || return 1
+
+  # Read the symlink target without -f resolution so we get the absolute
+  # /nix/store/... path as written for the guest, not as the host would
+  # resolve it.
+  link_target="$(readlink "${profile_path}" 2>/dev/null || true)"
+  case "${link_target}" in
+    /nix/*)
+      desired_system="${link_target}"
+      ;;
+    '')
+      return 1
+      ;;
+    *)
+      # Indirect symlink (profile -> profile-N-link -> /nix/store/...).
+      profile_dir="$(dirname "${profile_path}")"
+      desired_system="$(readlink "${profile_dir}/${link_target}" 2>/dev/null || true)"
+      ;;
+  esac
+
+  case "${desired_system}" in
+    /nix/*) : ;;
+    *)
+      warn "WARNING: ${label} profile resolves outside /nix: ${desired_system:-unresolved}"
+      return 1
+      ;;
+  esac
+
+  if [ -d "${GUEST_ROOT}${desired_system}" ] && [ -x "${GUEST_ROOT}${desired_system}/init" ]; then
+    printf '%s\n' "${desired_system}"
+    return 0
+  fi
+
+  warn "WARNING: ${label} profile resolves to unusable system: ${desired_system}"
+  warn "  expected ${GUEST_ROOT}${desired_system}/init to be executable"
+  return 1
+}
+
+relink_guest_init() {
+  desired_system="$1"
+  desired="${desired_system}/init"
+
+  for init_path in "${GUEST_ROOT}/init" "${GUEST_ROOT}/sbin/init"; do
+    if [ -e "${init_path}" ] && [ ! -L "${init_path}" ]; then
+      fail "guest init path is not a symlink: ${init_path}"
+    fi
+
+    cur="$(readlink "${init_path}" 2>/dev/null || true)"
+    if [ "${cur}" != "${desired}" ]; then
+      log "relinking ${init_path}: ${cur:-missing} -> ${desired}"
+      ln -sfn "${desired}" "${init_path}"
+    fi
+  done
 }
 
 # Guest rootfs sanity. ConditionPathExists in the unit also covers this,
@@ -46,57 +111,24 @@ fail() {
 [ -d "${GUEST_ROOT}/nix" ] || fail "guest /nix missing under ${GUEST_ROOT}"
 [ -d "${GUEST_ROOT}/etc" ] || fail "guest /etc missing under ${GUEST_ROOT}"
 
-# Repair stale /init and /sbin/init symlinks. The Layer 10b staging path
-# wrote these once, then any subsequent `nixos-rebuild switch` inside the
-# guest (or a host-side rebuild that re-staged the system profile) updated
-# /nix/var/nix/profiles/system to a NEW store path while leaving /init
-# symlinked at the OLD store path. systemd-nspawn --boot then aborts with
-# `execv(...) failed: No such file or directory` because the old path no
-# longer exists in the guest /nix/store.
-#
-# Validated on Thor 2026-05-08: prior boot's /init pointed at
-# izcw1v5...nixos-system... (host-only), guest /nix/store had
-# dlsz2rf...nixos-system... only. Relinking /init to the current
-# system profile fixed the boot.
-#
-# Bug 6 fix (also surfaced 2026-05-08): the early version of this script
-# tested `[ -x "${current_system}/init" ]` against the HOST filesystem.
-# But the system profile path is absolute under /nix/store -- valid
-# inside the guest's /nix/store, not the host's. The check would always
-# fail on a clean install and the relink would silently skip. Test
-# against `${GUEST_ROOT}${path}` instead.
-if [ -L "${SYSTEM_PROFILE}" ]; then
-  # Read the symlink target without -f resolution so we get the absolute
-  # /nix/store/... path as written, not as the host would resolve it.
-  link_target="$(readlink "${SYSTEM_PROFILE}")"
-  case "${link_target}" in
-    /nix/*)
-      desired_system="${link_target}"
-      ;;
-    *)
-      # Indirect symlink (system -> system-N-link -> /nix/store/...).
-      # Resolve one level via the profile dir.
-      profile_dir="$(dirname "${SYSTEM_PROFILE}")"
-      indirect="$(readlink "${profile_dir}/${link_target}" 2>/dev/null || true)"
-      desired_system="${indirect}"
-      ;;
-  esac
+# Ensure the selected profile namespace exists in the guest rootfs view. This
+# does not create or rely on a host root /nix mount.
+selected_profile_path="$(profile_host_path "${SELECTED_PROFILE_GUEST}")"
+mkdir -p "$(dirname "${selected_profile_path}")"
+chmod 0755 "$(dirname "${selected_profile_path}")"
 
-  if [ -n "${desired_system}" ] && [ -d "${GUEST_ROOT}${desired_system}" ]; then
-    desired="${desired_system}/init"
-    for init_path in "${GUEST_ROOT}/init" "${GUEST_ROOT}/sbin/init"; do
-      if [ -L "${init_path}" ]; then
-        cur="$(readlink "${init_path}")"
-        if [ "${cur}" != "${desired}" ]; then
-          log "relinking ${init_path}: ${cur} -> ${desired}"
-          ln -sfn "${desired}" "${init_path}"
-        fi
-      fi
-    done
-  else
-    log "WARNING: guest system profile resolves to: ${desired_system:-unresolved}"
-    log "  (expected GUEST_ROOT${desired_system} to exist)"
-  fi
+selected_system="$(resolve_system_profile "${SELECTED_PROFILE_GUEST}" "selected guest system" || true)"
+legacy_system="$(resolve_system_profile "${LEGACY_PROFILE_GUEST}" "legacy guest system" || true)"
+
+if [ -n "${selected_system}" ]; then
+  log "selected guest system profile: ${selected_system}"
+  relink_guest_init "${selected_system}"
+elif [ -n "${legacy_system}" ]; then
+  log "WARNING: selected guest system profile missing or invalid; falling back to legacy profile"
+  log "legacy guest system profile: ${legacy_system}"
+  relink_guest_init "${legacy_system}"
+else
+  fail "no valid guest system profile found at ${SELECTED_PROFILE_GUEST} or ${LEGACY_PROFILE_GUEST}"
 fi
 
 # Guest writable area on host /storage. This is the only host storage seam we
@@ -125,18 +157,13 @@ for dir in \
   fi
 done
 
-# Seed /run/current-system + /run/booted-system. The guest's /run is
-# tmpfs (created when systemd-nspawn boots into the guest), so we
-# can't write directly into a non-existent path. Instead, we stage the
-# expected symlinks into the guest rootfs at /run inside the rootfs --
-# systemd's tmpfiles will pick them up at boot if the guest has a
-# matching tmpfiles.d entry. As a first-cut, we ensure
-# /nix/var/nix/profiles/system is a real path the guest can resolve.
-if [ -L "${SYSTEM_PROFILE}" ] || [ -e "${SYSTEM_PROFILE}" ]; then
-  log "guest system profile present: $(readlink -f "${SYSTEM_PROFILE}" 2>/dev/null || echo unresolved)"
-else
-  log "WARNING: guest system profile missing: ${SYSTEM_PROFILE}"
-  log "  guest will boot without /run/current-system seeded; nixos-rebuild equivalent will fail until first switch"
+# The guest's /run is tmpfs at runtime. The live guest must seed
+# /run/current-system from its selected generation; the host only verifies that
+# the selected/legacy profile chain is coherent before nspawn starts.
+if [ -n "${selected_system}" ]; then
+  log "guest selected profile present: ${selected_system}"
+elif [ -n "${legacy_system}" ]; then
+  log "guest legacy profile present: ${legacy_system}"
 fi
 
 # Ownership marker for /etc/resolv.conf. The guest config sets this

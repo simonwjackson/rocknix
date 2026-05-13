@@ -9,12 +9,13 @@
 # not overwrite /storage/machines/rocknix-guest. This helper bridges that
 # lifecycle boundary after the old guest has booted and networking is owned by
 # the guest: it builds the packaged main-space NixOS configuration inside the
-# running guest, points /nix/var/nix/profiles/system at the new toplevel, then
-# asks the host to restart the guest once so PID 1 boots the new generation.
+# running guest, points the selected guest-system profile at the new toplevel,
+# mirrors /nix/var/nix/profiles/system for NixOS compatibility, then asks the
+# host to restart the guest once so PID 1 boots the selected generation.
 
 set -eu
 
-PATH=/usr/bin:/usr/sbin:/bin:/sbin
+PATH="${ROCKNIX_GUEST_HOST_PATH:-/usr/bin:/usr/sbin:/bin:/sbin}"
 
 GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
 GUEST_SOURCE="${ROCKNIX_GUEST_SOURCE:-/usr/lib/rocknix-guest-substrate/guest}"
@@ -23,8 +24,9 @@ GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
 STAGED_SOURCE="${ROCKNIX_GUEST_STAGED_SOURCE:-/storage/.guest/rocknix-nix-guest-packaged}"
 APPLIED_REV_FILE="${ROCKNIX_GUEST_APPLIED_REV_FILE:-${GUEST_ROOT}/etc/rocknix-guest-revision}"
 APPLIED_SYSTEM_FILE="${ROCKNIX_GUEST_APPLIED_SYSTEM_FILE:-${GUEST_ROOT}/etc/rocknix-guest-system-path}"
-PROFILE_DIR="${GUEST_ROOT}/nix/var/nix/profiles"
-SYSTEM_PROFILE="${PROFILE_DIR}/system"
+PROMOTE_SYSTEM_PATH_FILE="${ROCKNIX_GUEST_PROMOTE_SYSTEM_PATH:-/storage/.guest/rocknix-guest-promote-system-path}"
+SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
+LEGACY_PROFILE_GUEST="/nix/var/nix/profiles/system"
 LOG_TAG="rocknix-guest-promote"
 
 log() {
@@ -43,10 +45,19 @@ read_first_line() {
   fi
 }
 
-resolve_guest_system_profile() {
-  [ -L "${SYSTEM_PROFILE}" ] || return 1
+profile_host_path() {
+  case "$1" in
+    /nix/*) printf '%s%s\n' "${GUEST_ROOT}" "$1" ;;
+    *) fail "profile path must be guest-absolute under /nix: $1" ;;
+  esac
+}
 
-  target="$(readlink "${SYSTEM_PROFILE}" 2>/dev/null || true)"
+resolve_guest_system_profile() {
+  profile_guest_path="$1"
+  profile_path="$(profile_host_path "${profile_guest_path}")"
+  [ -L "${profile_path}" ] || return 1
+
+  target="$(readlink "${profile_path}" 2>/dev/null || true)"
   case "${target}" in
     /nix/*)
       printf '%s\n' "${target}"
@@ -56,7 +67,8 @@ resolve_guest_system_profile() {
       return 1
       ;;
     *)
-      indirect="$(readlink "${PROFILE_DIR}/${target}" 2>/dev/null || true)"
+      profile_dir="$(dirname "${profile_path}")"
+      indirect="$(readlink "${profile_dir}/${target}" 2>/dev/null || true)"
       case "${indirect}" in
         /nix/*)
           printf '%s\n' "${indirect}"
@@ -69,10 +81,10 @@ resolve_guest_system_profile() {
   return 1
 }
 
-guest_store_path_exists() {
+guest_system_path_valid() {
   guest_path="$1"
   case "${guest_path}" in
-    /nix/*) [ -e "${GUEST_ROOT}${guest_path}" ] ;;
+    /nix/*) [ -x "${GUEST_ROOT}${guest_path}/init" ] ;;
     *) return 1 ;;
   esac
 }
@@ -91,23 +103,32 @@ ensure_guest_namespace() {
 [ -d "${GUEST_SOURCE}" ] || fail "packaged guest source missing: ${GUEST_SOURCE}"
 [ -r "${GUEST_REV_FILE}" ] || fail "packaged guest revision missing: ${GUEST_REV_FILE}"
 
+case "${SELECTED_PROFILE_GUEST}" in
+  /nix/*) : ;;
+  *) fail "selected profile must live under guest /nix: ${SELECTED_PROFILE_GUEST}" ;;
+esac
+
 wanted_rev="$(sed -n '1p' "${GUEST_REV_FILE}" | tr -d '[:space:]')"
 [ -n "${wanted_rev}" ] || fail "empty packaged guest revision"
 
 current_rev="$(read_first_line "${APPLIED_REV_FILE}")"
 applied_system="$(read_first_line "${APPLIED_SYSTEM_FILE}")"
-current_system="$(resolve_guest_system_profile || true)"
+current_system="$(resolve_guest_system_profile "${SELECTED_PROFILE_GUEST}" || true)"
+legacy_system="$(resolve_guest_system_profile "${LEGACY_PROFILE_GUEST}" || true)"
 
 if [ "${current_rev}" = "${wanted_rev}" ]; then
-  if [ -n "${applied_system}" ] && [ "${current_system}" = "${applied_system}" ] && guest_store_path_exists "${applied_system}"; then
+  if [ -n "${applied_system}" ] \
+    && [ "${current_system}" = "${applied_system}" ] \
+    && [ "${legacy_system}" = "${applied_system}" ] \
+    && guest_system_path_valid "${applied_system}"; then
     log "guest revision already applied: ${wanted_rev} (${applied_system})"
     exit 0
   fi
 
-  if [ -n "${applied_system}" ] && guest_store_path_exists "${applied_system}"; then
-    log "guest revision marker matches, but system profile drifted: ${current_system:-none} -> ${applied_system}"
+  if [ -n "${applied_system}" ] && guest_system_path_valid "${applied_system}"; then
+    log "guest revision marker matches, but system profile drifted: selected=${current_system:-none} legacy=${legacy_system:-none} -> ${applied_system}"
     ensure_guest_namespace
-    nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "/run/current-system/sw/bin/nix-env -p /nix/var/nix/profiles/system --set '${applied_system}'"
+    nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "set -eu; export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin; /run/current-system/sw/bin/mkdir -p /nix/var/nix/profiles/per-user/root; /run/current-system/sw/bin/nix-env -p '${SELECTED_PROFILE_GUEST}' --set '${applied_system}'; /run/current-system/sw/bin/nix-env -p '${LEGACY_PROFILE_GUEST}' --set '${applied_system}'"
     log "restarting guest to boot repaired generation"
     systemctl restart --no-block "${GUEST_SERVICE}"
     exit 0
@@ -157,29 +178,32 @@ nsenter -t "${inner_pid}" -m -u -i -n -p sh -c '
 ' || fail "guest NetworkManager did not become active"
 
 log "building packaged guest inside running guest namespace"
-nsenter -t "${inner_pid}" -m -u -i -n -p sh -c '
+nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "
   set -eu
   export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin
   cd /storage/.guest/rocknix-nix-guest-packaged
-  /run/current-system/sw/bin/nix build --extra-experimental-features "nix-command flakes" \
+  /run/current-system/sw/bin/nix build --extra-experimental-features \"nix-command flakes\" \
     .#nixosConfigurations.rocknix-guest-main-space.config.system.build.toplevel \
     --print-out-paths
-  system_path="$(/run/current-system/sw/bin/readlink -f result)"
-  [ -n "${system_path}" ]
-  /run/current-system/sw/bin/nix-env -p /nix/var/nix/profiles/system --set "${system_path}"
-  printf "%s\n" "${system_path}" > /storage/.guest/rocknix-guest-promote-system-path
-'
+  system_path=\"\$(/run/current-system/sw/bin/readlink -f result)\"
+  [ -n \"\${system_path}\" ]
+  /run/current-system/sw/bin/mkdir -p /nix/var/nix/profiles/per-user/root
+  /run/current-system/sw/bin/nix-env -p '${SELECTED_PROFILE_GUEST}' --set \"\${system_path}\"
+  /run/current-system/sw/bin/nix-env -p '${LEGACY_PROFILE_GUEST}' --set \"\${system_path}\"
+  printf \"%s\\n\" \"\${system_path}\" > '${PROMOTE_SYSTEM_PATH_FILE}'
+"
 
 system_path=""
-if [ -r "/storage/.guest/rocknix-guest-promote-system-path" ]; then
-  system_path="$(sed -n '1p' "/storage/.guest/rocknix-guest-promote-system-path")"
-  rm -f "/storage/.guest/rocknix-guest-promote-system-path"
+if [ -r "${PROMOTE_SYSTEM_PATH_FILE}" ]; then
+  system_path="$(sed -n '1p' "${PROMOTE_SYSTEM_PATH_FILE}")"
+  rm -f "${PROMOTE_SYSTEM_PATH_FILE}"
 fi
 [ -n "${system_path}" ] || fail "guest build did not report a system path"
 
 printf '%s\n' "${wanted_rev}" > "${APPLIED_REV_FILE}"
 printf '%s\n' "${system_path}" > "${APPLIED_SYSTEM_FILE}"
 
-log "guest profile now points at ${system_path}"
+log "selected guest profile now points at ${system_path}"
+log "legacy guest profile mirrored to ${system_path}"
 log "restarting guest to boot promoted generation"
 systemctl restart --no-block "${GUEST_SERVICE}"
