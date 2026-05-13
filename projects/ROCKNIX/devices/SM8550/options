@@ -105,10 +105,9 @@
     FIRMWARE=""
 
   # Additional packages to install. The minimal host keeps only the bootloader
-  # payload and InputPlumber because the guest compositor consumes the staged
-  # input device view from the host.
+  # payload; the NixOS guest owns InputPlumber and the product input stack.
     if [ "${SM8550_MINIMAL_HOST}" = "yes" ]; then
-      ADDITIONAL_PACKAGES="rocknix-abl inputplumber"
+      ADDITIONAL_PACKAGES="rocknix-abl"
     else
       ADDITIONAL_PACKAGES="gamepadcalibration screen-switch rocknix-abl inputplumber"
     fi

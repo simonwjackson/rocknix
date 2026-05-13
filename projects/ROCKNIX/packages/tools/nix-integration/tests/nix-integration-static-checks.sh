@@ -124,6 +124,7 @@ for device_allow in \
   'DeviceAllow=/dev/dri/renderD128 rwm' \
   'DeviceAllow=/dev/input/event0 rwm' \
   'DeviceAllow=/dev/input/event11 rwm' \
+  'DeviceAllow=/dev/uinput rwm' \
   'DeviceAllow=/dev/tty0 rwm' \
   'DeviceAllow=/dev/tty1 rwm' \
   'DeviceAllow=/dev/rfkill rwm'; do
@@ -133,6 +134,7 @@ grep -q -- '--capability=CAP_NET_ADMIN' "${guest_unit}" || fail "guest unit must
 grep -q -- '--capability=CAP_NET_RAW' "${guest_unit}" || fail "guest unit must retain CAP_NET_RAW for guest Tailscale"
 grep -q -- '--bind=/dev/net/tun' "${guest_unit}" || fail "guest unit must pass through tun device for guest Tailscale"
 grep -q -- '--bind=/dev/input' "${guest_unit}" || fail "guest unit must pass through input devices"
+grep -q -- '--bind=/dev/uinput' "${guest_unit}" || fail "guest unit must pass through uinput for guest InputPlumber"
 grep -q -- '--bind=/dev/snd' "${guest_unit}" || fail "guest unit must pass through sound devices"
 grep -q -- '--bind-ro=/run/.guest-udev:/run/udev' "${guest_unit}" || fail "guest unit must bind scrubbed udev db"
 ! grep -q 'ExecStopPost=' "${guest_unit}" || fail "guest unit must not run host-side fallback/reclaim hooks"
@@ -217,8 +219,8 @@ grep -q 'if \[ "\${SM8550_MINIMAL_HOST:-no}" != "yes" \]; then' "${IMAGE_PKG}" \
   || fail "SM8550 minimal host must gate entware out"
 grep -q 'NTFS3G="no"' "${SM8550_OPTIONS}" || fail "SM8550 minimal host must disable NTFS3G"
 grep -q 'EXFAT="no"' "${SM8550_OPTIONS}" || fail "SM8550 minimal host must disable exFAT"
-grep -q 'ADDITIONAL_PACKAGES="rocknix-abl inputplumber"' "${SM8550_OPTIONS}" \
-  || fail "SM8550 minimal host must keep only ABL and InputPlumber additional packages"
+grep -q 'ADDITIONAL_PACKAGES="rocknix-abl"' "${SM8550_OPTIONS}" \
+  || fail "SM8550 minimal host must keep only ABL additional package; guest owns InputPlumber"
 grep -q '075-mangohud-supported' "${QUIRKS_PKG}" \
   || fail "SM8550 minimal host must remove host MangoHud quirk"
 grep -q '090-ui_service' "${QUIRKS_PKG}" \
