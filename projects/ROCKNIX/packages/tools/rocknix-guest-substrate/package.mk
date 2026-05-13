@@ -32,7 +32,6 @@ post_install() {
   fi
 
   substrate_lib="${INSTALL}/usr/lib/rocknix-guest-substrate"
-  compat_lib="${INSTALL}/usr/lib/nix-integration"
 
   mkdir -p ${INSTALL}/nix
   chmod 0755 ${INSTALL}/nix
@@ -90,14 +89,6 @@ post_install() {
   mkdir -p "${substrate_lib}/docs"
   cp "${guest_extract}/docs/contracts/layer14-main-space-contract.md" "${substrate_lib}/docs/"
   cp "${guest_extract}/docs/contracts/layer14-soak-checklist.md" "${substrate_lib}/docs/"
-
-  # Transitional compatibility for live runbooks and old drop-ins that still
-  # point at /usr/lib/nix-integration. The active package identity is
-  # rocknix-guest-substrate; this alias can be removed after devices have
-  # validated the new substrate naming.
-  mkdir -p "${INSTALL}/usr/lib"
-  rm -rf "${compat_lib}"
-  ln -s rocknix-guest-substrate "${compat_lib}"
 
   enable_service nix-storage-setup.service
   enable_service nix.mount

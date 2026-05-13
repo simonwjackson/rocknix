@@ -176,7 +176,7 @@ jobs:
           docker run --init --env-file .env --rm --user $(id -u):$(id -g) \
             -v ${PWD}:${PWD} -w ${PWD} \
             "ghcr.io/${{ steps.owner.outputs.OWNER_LC }}/rocknix-build:latest" \
-            bash -c "./scripts/clean nix-integration || true; ./scripts/clean rocknix-guest-substrate || true"
+            bash -c "./scripts/clean rocknix-guest-substrate || true"
 
       - name: build
         run: |
