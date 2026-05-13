@@ -95,13 +95,64 @@ check_resolv_owned() {
   fi
 }
 
+resolve_guest_profile() {
+  profile_guest_path=$1
+  profile_path="${GUEST_ROOT}${profile_guest_path}"
+  [ -L "${profile_path}" ] || return 1
+  target=$(readlink "${profile_path}" 2>/dev/null || true)
+  case "${target}" in
+    /nix/*) resolved="${target}" ;;
+    '') return 1 ;;
+    *) resolved=$(readlink "$(dirname "${profile_path}")/${target}" 2>/dev/null || true) ;;
+  esac
+  case "${resolved}" in /nix/*) : ;; *) return 1 ;; esac
+  [ -x "${GUEST_ROOT}${resolved}/init" ] || return 1
+  printf '%s\n' "${resolved}"
+}
+
+check_selected_system_profile() {
+  inner=$1
+  selected_profile="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
+  legacy_profile="/nix/var/nix/profiles/system"
+
+  selected=$(resolve_guest_profile "${selected_profile}" || true)
+  legacy=$(resolve_guest_profile "${legacy_profile}" || true)
+
+  promotion_markers=0
+  if [ -e "${GUEST_ROOT}/etc/rocknix-guest-revision" ] || [ -e "${GUEST_ROOT}/etc/rocknix-guest-system-path" ]; then
+    promotion_markers=1
+  fi
+
+  if [ -n "${selected}" ]; then
+    if [ "${promotion_markers}" = "1" ] && [ -z "${legacy}" ]; then
+      alarm "legacy guest profile missing after selected profile and promotion markers exist: selected=${selected}"
+    fi
+    if [ -n "${legacy}" ] && [ "${selected}" != "${legacy}" ]; then
+      alarm "selected guest profile drifted from legacy profile: selected=${selected} legacy=${legacy}"
+    fi
+  elif [ -n "${legacy}" ]; then
+    if [ "${promotion_markers}" = "1" ]; then
+      alarm "selected guest profile missing after guest promotion markers exist; legacy=${legacy}"
+    else
+      log "  selected guest profile missing before first promotion; legacy fallback=${legacy}"
+    fi
+  else
+    alarm "no valid selected or legacy guest system profile"
+  fi
+
+  [ -n "${inner}" ] || return 0
+  running=$(readlink "/proc/${inner}/root/run/current-system" 2>/dev/null || true)
+  expected="${selected:-${legacy:-}}"
+  if [ -z "${running}" ]; then
+    alarm "guest /run/current-system not seeded (inner pid=${inner})"
+  elif [ -n "${expected}" ] && [ "${running}" != "${expected}" ]; then
+    alarm "guest /run/current-system drifted from selected profile: running=${running} expected=${expected}"
+  fi
+}
+
 check_run_current_system() {
   inner=$1
-  [ -n "${inner}" ] || return 0
-  target=$(readlink "/proc/${inner}/root/run/current-system" 2>/dev/null)
-  if [ -z "${target}" ]; then
-    alarm "guest /run/current-system not seeded (inner pid=${inner})"
-  fi
+  check_selected_system_profile "${inner}"
 }
 
 check_no_host_usr_in_guest_path() {

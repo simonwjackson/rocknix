@@ -33,9 +33,6 @@ post_install() {
 
   substrate_lib="${INSTALL}/usr/lib/rocknix-guest-substrate"
 
-  mkdir -p ${INSTALL}/nix
-  chmod 0755 ${INSTALL}/nix
-
   mkdir -p ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-prep ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-promote ${INSTALL}/usr/bin
@@ -91,9 +88,6 @@ post_install() {
   mkdir -p "${substrate_lib}/docs"
   cp "${guest_extract}/docs/contracts/layer14-main-space-contract.md" "${substrate_lib}/docs/"
   cp "${guest_extract}/docs/contracts/layer14-soak-checklist.md" "${substrate_lib}/docs/"
-
-  enable_service nix-storage-setup.service
-  enable_service nix.mount
 
   # Main-space wiring. SM8550 always boots the NixOS guest by default;
   # ROCKNIX remains the recovery plane via rocknix-recovery-toggle.
