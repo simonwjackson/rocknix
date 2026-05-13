@@ -99,6 +99,25 @@ ensure_guest_namespace() {
   [ -n "${inner_pid}" ] || fail "could not find guest payload PID under ${outer_pid}"
 }
 
+wait_for_guest_current_system() {
+  nsenter -t "${inner_pid}" -m -u -i -n -p sh -c '
+    set -eu
+    i=0
+    while [ "${i}" -lt 60 ]; do
+      if [ -x /run/current-system/sw/bin/mkdir ] && [ -x /run/current-system/sw/bin/nix-env ]; then
+        exit 0
+      fi
+      i=$((i + 1))
+      if [ -x /run/current-system/sw/bin/sleep ]; then
+        /run/current-system/sw/bin/sleep 1
+      else
+        sleep 1 2>/dev/null || true
+      fi
+    done
+    exit 1
+  ' || fail "guest current system did not become available"
+}
+
 [ -d "${GUEST_ROOT}" ] || fail "guest rootfs missing: ${GUEST_ROOT}"
 [ -d "${GUEST_SOURCE}" ] || fail "packaged guest source missing: ${GUEST_SOURCE}"
 [ -r "${GUEST_REV_FILE}" ] || fail "packaged guest revision missing: ${GUEST_REV_FILE}"
@@ -128,6 +147,7 @@ if [ "${current_rev}" = "${wanted_rev}" ]; then
   if [ -n "${applied_system}" ] && guest_system_path_valid "${applied_system}"; then
     log "guest revision marker matches, but system profile drifted: selected=${current_system:-none} legacy=${legacy_system:-none} -> ${applied_system}"
     ensure_guest_namespace
+    wait_for_guest_current_system
     nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "set -eu; export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin; /run/current-system/sw/bin/mkdir -p /nix/var/nix/profiles/per-user/root; /run/current-system/sw/bin/nix-env -p '${SELECTED_PROFILE_GUEST}' --set '${applied_system}'; /run/current-system/sw/bin/nix-env -p '${LEGACY_PROFILE_GUEST}' --set '${applied_system}'"
     log "restarting guest to boot repaired generation"
     systemctl restart --no-block "${GUEST_SERVICE}"
