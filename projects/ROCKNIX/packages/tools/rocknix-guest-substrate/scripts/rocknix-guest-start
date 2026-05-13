@@ -76,10 +76,12 @@ is_large_enough_root() {
 
 has_supported_fs_member() {
   root=$1
-  for sysdev in /sys/class/block/${root} /sys/class/block/${root}/*; do
+  for sysdev in /sys/class/block/*; do
     [ -e "${sysdev}" ] || continue
     node=$(basename "${sysdev}")
     [ -b "/dev/${node}" ] || continue
+    member_root=$(block_root_for "${node}" 2>/dev/null || true)
+    [ "${member_root}" = "${root}" ] || continue
     type=$(blkid -o value -s TYPE "/dev/${node}" 2>/dev/null || true)
     case "${type}" in
       ext2|ext3|ext4|btrfs|vfat|exfat|ntfs) return 0 ;;
@@ -119,10 +121,12 @@ emit_safe_block_binds() {
       continue
     fi
 
-    for sysmember in /sys/class/block/${root} /sys/class/block/${root}/*; do
+    for sysmember in /sys/class/block/*; do
       [ -e "${sysmember}" ] || continue
       member=$(basename "${sysmember}")
       [ -b "/dev/${member}" ] || continue
+      member_root=$(block_root_for "${member}" 2>/dev/null || true)
+      [ "${member_root}" = "${root}" ] || continue
       emit_arg "--bind=/dev/${member}"
       emit_device_allow "DeviceAllow=/dev/${member} rw"
       log "pass safe game/media block node /dev/${member}"
