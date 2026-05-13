@@ -190,6 +190,7 @@ IMAGE_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk"
 NETWORK_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/virtual/network/package.mk"
 IWD_PKG="${REPO_ROOT}/packages/network/iwd/package.mk"
 OPENSSH_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/network/openssh/package.mk"
+CONNMAN_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/network/connman/package.mk"
 QUIRKS_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/hardware/quirks/package.mk"
 WORKFLOW_DIR="${REPO_ROOT}/.github/workflows"
 [ -f "${SYSTEMD_PKG}" ] || fail "missing ROCKNIX systemd package.mk"
@@ -239,6 +240,8 @@ grep -q 'Wi-Fi authentication/control moves to the NixOS guest' "${NETWORK_PKG}"
   || fail "ROCKNIX network meta must document guest-owned Wi-Fi"
 grep -q '\[ "${DEVICE:-}" = "SM8550" \] && \[ "${SM8550_MINIMAL_HOST:-no}" = "yes" \]' "${IWD_PKG}" \
   || fail "host iwd service must be disabled in SM8550 minimal-host mode"
+grep -q 'wlan,wlan0,wl' "${CONNMAN_PKG}" \
+  || fail "host ConnMan must blacklist Wi-Fi interfaces so the guest owns wlan0"
 ! sed -n '/if \[ "${SM8550_MINIMAL_HOST:-no}" = "yes" \]/,/else/p' "${NETWORK_PKG}" \
   | grep '^  PKG_DEPENDS_TARGET=' \
   | grep -Eq 'tailscale|wireguard-tools|zerotier-one|miniupnpc|speedtest-cli' \
