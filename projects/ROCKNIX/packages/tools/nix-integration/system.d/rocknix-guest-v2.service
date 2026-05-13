@@ -58,6 +58,9 @@ TasksMax=4096
 # nodes here: systemd-255 does not apply the wildcard forms reliably enough
 # for wlroots/libseat's DRM open path on Thor.
 DeviceAllow=/dev/net/tun rwm
+# BLE HID-over-GATT devices need uhid so guest bluetoothd can create kernel
+# input devices for paired mice/keyboards.
+DeviceAllow=/dev/uhid rwm
 DeviceAllow=/dev/snd/controlC0 rwm
 DeviceAllow=/dev/snd/pcmC0D0p rwm
 DeviceAllow=/dev/snd/pcmC0D1p rwm
@@ -128,6 +131,7 @@ ExecStart=/usr/bin/systemd-nspawn \
   --capability=CAP_NET_ADMIN \
   --capability=CAP_NET_RAW \
   --bind=/dev/net/tun \
+  --bind=/dev/uhid \
   --bind=/dev/snd \
   --bind=/dev/rfkill \
   --bind=/dev/dri/card0 \

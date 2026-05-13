@@ -67,6 +67,7 @@ check_grep '--directory=/storage/machines/rocknix-guest' "${guest_unit}" "guest 
 check_grep '--register=no' "${guest_unit}" "guest unit must avoid machined registration"
 check_grep 'DeviceAllow=/dev/net/tun rwm' "${guest_unit}" "guest unit must allow tun device access for guest Tailscale"
 for device_allow in \
+  'DeviceAllow=/dev/uhid rwm' \
   'DeviceAllow=/dev/snd/controlC0 rwm' \
   'DeviceAllow=/dev/snd/pcmC0D0p rwm' \
   'DeviceAllow=/dev/snd/pcmC0D1p rwm' \
@@ -88,6 +89,7 @@ done
 check_grep '--capability=CAP_NET_ADMIN' "${guest_unit}" "guest unit must retain CAP_NET_ADMIN for guest Tailscale"
 check_grep '--capability=CAP_NET_RAW' "${guest_unit}" "guest unit must retain CAP_NET_RAW for guest Tailscale"
 check_grep '--bind=/dev/net/tun' "${guest_unit}" "guest unit must pass through tun for guest Tailscale"
+check_grep '--bind=/dev/uhid' "${guest_unit}" "guest unit must pass through uhid for guest Bluetooth HID devices"
 check_grep '--bind=/dev/uinput' "${guest_unit}" "guest unit must pass through uinput for guest InputPlumber"
 check_grep 'ExecStartPre=/usr/bin/rocknix-guest-prep' "${guest_unit}" "guest unit missing prep helper"
 check_grep 'ExecStartPre=/usr/bin/rocknix-guest-udev-stage' "${guest_unit}" "guest unit missing udev stage helper"
