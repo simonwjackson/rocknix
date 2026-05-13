@@ -99,7 +99,10 @@ check_grep '--bind=/dev/net/tun' "${SCRIPT_ROOT}/rocknix-guest-start" "guest sta
 check_grep '--bind=/dev/uhid' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must pass through uhid for guest Bluetooth HID devices"
 check_grep '--bind=/dev/uinput' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must pass through uinput for guest InputPlumber"
 check_grep '--bind=/storage/.guest' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must keep the single host/guest storage seam"
-check_grep 'PATH=/usr/sbin:/usr/bin:/sbin:/bin' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must include sbin PATH for blkid"
+check_grep 'has_candidate_media_member' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must classify media without probing blocked devices"
+if grep -q 'blkid' "${SCRIPT_ROOT}/rocknix-guest-start"; then
+  fail "guest start helper must not depend on blkid before runtime DeviceAllow is applied"
+fi
 check_grep 'is_host_mounted_root' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must guard host-mounted block roots"
 check_grep 'systemctl set-property' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must apply exact runtime DeviceAllow entries"
 if grep -q 'DeviceAllow=block-sd' "${guest_unit}"; then

@@ -77,18 +77,22 @@ is_large_enough_root() {
   [ "${sectors}" -gt 16777216 ] 2>/dev/null
 }
 
-has_supported_fs_member() {
+has_candidate_media_member() {
   root=$1
+
+  # Do not probe filesystem signatures here. rocknix-guest-start runs inside
+  # rocknix-guest.service's device cgroup before the runtime block
+  # DeviceAllow list has been widened, so filesystem probes may be denied for the
+  # very devices we are trying to classify. Safety comes from excluding host-
+  # mounted roots and Android/eMMC boot-shaped roots; the guest then owns mount
+  # policy for the exact nodes we pass.
   for sysdev in /sys/class/block/*; do
     [ -e "${sysdev}" ] || continue
     node=$(basename "${sysdev}")
     [ -b "/dev/${node}" ] || continue
     member_root=$(block_root_for "${node}" 2>/dev/null || true)
     [ "${member_root}" = "${root}" ] || continue
-    type=$(blkid -o value -s TYPE "/dev/${node}" 2>/dev/null || true)
-    case "${type}" in
-      ext2|ext3|ext4|btrfs|vfat|exfat|ntfs) return 0 ;;
-    esac
+    return 0
   done
 
   return 1
@@ -119,8 +123,8 @@ emit_safe_block_binds() {
       log "skip block root ${root}: smaller than game-media floor"
       continue
     fi
-    if ! has_supported_fs_member "${root}"; then
-      log "skip block root ${root}: no supported filesystem member"
+    if ! has_candidate_media_member "${root}"; then
+      log "skip block root ${root}: no candidate media member"
       continue
     fi
 
