@@ -52,6 +52,7 @@ jobs:
 
   build-aarch64-mame-lr:
     needs: build-aarch64-toolchain
+    if: ${{ inputs.DEVICE != 'SM8550' }}
     uses: ./.github/workflows/build-aarch64-mame-lr.yml
     secrets: inherit
     with:
@@ -61,6 +62,7 @@ jobs:
 
   build-aarch64-qt6:
     needs: build-aarch64
+    if: ${{ inputs.DEVICE != 'SM8550' }}
     uses: ./.github/workflows/build-aarch64-qt6.yml
     secrets: inherit
     with:
@@ -73,7 +75,7 @@ jobs:
       - build-aarch64
       - build-aarch64-mame-lr
       - build-aarch64-qt6
-    if: ${{ always() && !cancelled() && !contains(needs.*.result, 'failure')  }}
+    if: ${{ inputs.DEVICE != 'SM8550' && always() && !cancelled() && !contains(needs.*.result, 'failure')  }}
     uses: ./.github/workflows/build-aarch64-emu-libretro.yml
     secrets: inherit
     with:
@@ -85,7 +87,7 @@ jobs:
     needs:
       - build-aarch64
       - build-aarch64-qt6
-    if: ${{ always() && !cancelled() && !contains(needs.*.result, 'failure')  }}
+    if: ${{ inputs.DEVICE != 'SM8550' && always() && !cancelled() && !contains(needs.*.result, 'failure')  }}
     uses: ./.github/workflows/build-aarch64-emu-standalone.yml
     secrets: inherit
     with:

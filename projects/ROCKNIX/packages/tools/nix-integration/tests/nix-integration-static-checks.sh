@@ -77,6 +77,7 @@ grep -q '/usr/lib/nix-integration/guest-revision' "${PKG_DIR}/package.mk" || fai
 grep -q 'docs/contracts/layer14-main-space-contract.md' "${PKG_DIR}/package.mk" || fail "package.mk must ship main-space contract doc from guest"
 grep -q 'docs/contracts/layer14-soak-checklist.md' "${PKG_DIR}/package.mk" || fail "package.mk must ship soak checklist from guest"
 grep -q 'docs/contracts/HOW-TO-FALL-BACK.md' "${PKG_DIR}/package.mk" || fail "package.mk must ship fallback doc from guest"
+grep -q 'SM8550_MINIMAL_HOST=yes' "${PKG_DIR}/package.mk" || fail "package.mk must document minimal-host fallback mode when enabled"
 
 # Storage + guest service wiring.
 check_unit "${PKG_DIR}/system.d/nix-storage-setup.service"
@@ -112,6 +113,25 @@ grep -q 'ExecStartPre=/usr/bin/rocknix-guest-udev-stage' "${guest_unit}" || fail
 grep -q 'ExecStart=/usr/bin/systemd-nspawn' "${guest_unit}" || fail "guest unit must launch systemd-nspawn"
 grep -q -- '--directory=/storage/machines/rocknix-guest' "${guest_unit}" || fail "guest unit has wrong guest root"
 grep -q -- '--register=no' "${guest_unit}" || fail "guest unit must avoid machined registration"
+grep -q 'DeviceAllow=/dev/net/tun rwm' "${guest_unit}" || fail "guest unit must allow tun device access for guest Tailscale"
+for device_allow in \
+  'DeviceAllow=/dev/snd/controlC0 rwm' \
+  'DeviceAllow=/dev/snd/pcmC0D0p rwm' \
+  'DeviceAllow=/dev/snd/pcmC0D1p rwm' \
+  'DeviceAllow=/dev/snd/pcmC0D2c rwm' \
+  'DeviceAllow=/dev/snd/timer rwm' \
+  'DeviceAllow=/dev/dri/card0 rwm' \
+  'DeviceAllow=/dev/dri/renderD128 rwm' \
+  'DeviceAllow=/dev/input/event0 rwm' \
+  'DeviceAllow=/dev/input/event11 rwm' \
+  'DeviceAllow=/dev/tty0 rwm' \
+  'DeviceAllow=/dev/tty1 rwm' \
+  'DeviceAllow=/dev/rfkill rwm'; do
+  grep -q "${device_allow}" "${guest_unit}" || fail "guest unit must not let tun DeviceAllow block main-space devices: ${device_allow}"
+done
+grep -q -- '--capability=CAP_NET_ADMIN' "${guest_unit}" || fail "guest unit must retain CAP_NET_ADMIN for guest Tailscale"
+grep -q -- '--capability=CAP_NET_RAW' "${guest_unit}" || fail "guest unit must retain CAP_NET_RAW for guest Tailscale"
+grep -q -- '--bind=/dev/net/tun' "${guest_unit}" || fail "guest unit must pass through tun device for guest Tailscale"
 grep -q -- '--bind=/dev/input' "${guest_unit}" || fail "guest unit must pass through input devices"
 grep -q -- '--bind=/dev/snd' "${guest_unit}" || fail "guest unit must pass through sound devices"
 grep -q -- '--bind-ro=/run/.guest-udev:/run/udev' "${guest_unit}" || fail "guest unit must bind scrubbed udev db"
@@ -147,7 +167,7 @@ done
 grep -q '/flash/rocknix.no-nspawn' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle missing flag-file escape"
 grep -q 'rocknix.safe=1' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle missing cmdline escape"
 grep -q 'rocknix-graphical.target' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle missing normal target"
-grep -q 'rocknix.target' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle missing ROCKNIX recovery target"
+grep -q 'RECOVERY_TARGET="multi-user.target"' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle must route minimal-host recovery to multi-user.target"
 grep -q 'systemctl set-default' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle must switch default target"
 
 grep -q 'resolv.conf.guest-owned' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing resolv.conf ownership marker"
@@ -155,13 +175,69 @@ grep -q '/storage/.guest' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep 
 grep -q '/nix/var/nix/profiles/system' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing system profile check"
 grep -q 'inputplumber/by-hidden' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" || fail "udev stage must scrub InputPlumber-hidden devices"
 grep -q 'check_host_ssh_responsive' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing host SSH check"
+grep -q 'ROCKNIX_REQUIRE_HOST_ESSWAY' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper must allow SSH-first recovery without host essway"
 grep -q 'check_resolv_owned' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing resolv ownership check"
 
 # Device gates: only SM8550 ships the guest substrate.
 SYSTEMD_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/systemd/package.mk"
+SM8550_OPTIONS="${REPO_ROOT}/projects/ROCKNIX/devices/SM8550/options"
+IMAGE_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk"
+NETWORK_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/virtual/network/package.mk"
+OPENSSH_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/network/openssh/package.mk"
+WORKFLOW_DIR="${REPO_ROOT}/.github/workflows"
 [ -f "${SYSTEMD_PKG}" ] || fail "missing ROCKNIX systemd package.mk"
-grep -q '\[ "\${DEVICE}" = "SM8550" \] && PKG_DEPENDS_TARGET+=" nix-integration"' "${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk" \
+[ -f "${OPENSSH_PKG}" ] || fail "missing ROCKNIX openssh package.mk"
+grep -q '\[ "\${DEVICE}" = "SM8550" \] && PKG_DEPENDS_TARGET+=" nix-integration"' "${IMAGE_PKG}" \
   || fail "image package must gate nix-integration on DEVICE=SM8550"
+grep -q 'SM8550_MINIMAL_HOST' "${SM8550_OPTIONS}" \
+  || fail "SM8550 options must expose the minimal-host switch"
+grep -q '\[ "\${BASE_ONLY}" = "true" \] || \[ "\${SM8550_MINIMAL_HOST:-no}" = "yes" \]' "${IMAGE_PKG}" \
+  || fail "image package must use minimal-host path to skip product UX metas"
+grep -q 'SM8550 minimal host pulled forbidden payload' "${IMAGE_PKG}" \
+  || fail "image package must fail closed if minimal host reintroduces UX/emulation/network payloads"
+grep -q '\[ "\${SM8550_MINIMAL_HOST:-no}" != "yes" \] && PKG_DEPENDS_TARGET+=" mako-osd"' "${IMAGE_PKG}" \
+  || fail "mako-osd must be gated out of the SM8550 minimal host"
+for forbidden in mako-osd sway swaywm-env wlroots xwayland screen-switch gamepadcalibration mesa-demos glmark2 vkmark emulators gamesupport retroarch lib32 tailscale wireguard-tools; do
+  grep -q " ${forbidden}" "${IMAGE_PKG}" || fail "image fail-closed guard must mention forbidden payload: ${forbidden}"
+done
+grep -q 'DISPLAYSERVER="no"' "${SM8550_OPTIONS}" || fail "SM8550 minimal host must disable host display server"
+grep -q 'WINDOWMANAGER="none"' "${SM8550_OPTIONS}" || fail "SM8550 minimal host must disable host window manager"
+grep -q 'EMULATION_DEVICE="no"' "${SM8550_OPTIONS}" || fail "SM8550 minimal host must disable host emulation device roots"
+grep -q 'ENABLE_32BIT=no' "${IMAGE_PKG}" || fail "minimal-host image path must disable 32-bit roots"
+grep -q 'ADDITIONAL_PACKAGES="rocknix-abl inputplumber"' "${SM8550_OPTIONS}" \
+  || fail "SM8550 minimal host must keep only ABL and InputPlumber additional packages"
+grep -q 'Minimal SM8550 host keeps only what the recovery/update substrate needs' "${NETWORK_PKG}" \
+  || fail "ROCKNIX network meta must document the minimal-host dependency set"
+grep -q 'PKG_DEPENDS_TARGET="toolchain connman iwd netbase ethtool openssh iw wireless-regdb rsync nss-mdns"' "${NETWORK_PKG}" \
+  || fail "ROCKNIX network meta must have a minimal-host dependency set"
+! sed -n '/if \[ "${SM8550_MINIMAL_HOST:-no}" = "yes" \]/,/else/p' "${NETWORK_PKG}" \
+  | grep '^  PKG_DEPENDS_TARGET=' \
+  | grep -Eq 'tailscale|wireguard-tools|zerotier-one|miniupnpc|speedtest-cli' \
+  || fail "minimal-host network set must not include host VPN/network product extras"
+grep -q 'SM8550 minimal host is SSH-first recovery' "${OPENSSH_PKG}" \
+  || fail "openssh package must document deterministic SM8550 SSH-first recovery"
+grep -q 'sed -e "\\|^Condition.*|d"' "${OPENSSH_PKG}" \
+  || fail "openssh package must remove opt-in sshd conditions for SM8550 minimal host"
+grep -q "inputs.DEVICE != 'SM8650' && inputs.DEVICE != 'SM8550'" "${WORKFLOW_DIR}/build-arm.yml" \
+  || fail "SM8550 minimal host must skip 32-bit arm workflow"
+for workflow in build-aarch64-image.yml build-image-only.yml; do
+  grep -q "inputs.DEVICE != 'SM8650' && inputs.DEVICE != 'SM8550'" "${WORKFLOW_DIR}/${workflow}" \
+    || fail "${workflow} must not download arm artifacts for SM8550"
+  grep -q "inputs.DEVICE != 'SM8550'" "${WORKFLOW_DIR}/${workflow}" \
+    || fail "${workflow} must skip emulator artifacts for SM8550"
+done
+grep -q "build-aarch64-mame-lr:" "${WORKFLOW_DIR}/build-device.yml" || fail "build-device workflow missing mame job"
+grep -q "build-aarch64-qt6:" "${WORKFLOW_DIR}/build-device.yml" || fail "build-device workflow missing qt6 job"
+grep -q "build-aarch64-emu-libretro:" "${WORKFLOW_DIR}/build-device.yml" || fail "build-device workflow missing emu-libretro job"
+grep -q "build-aarch64-emu-standalone:" "${WORKFLOW_DIR}/build-device.yml" || fail "build-device workflow missing emu-standalone job"
+[ "$(grep -c "if: \${{ inputs.DEVICE != 'SM8550'" "${WORKFLOW_DIR}/build-device.yml")" -ge 4 ] \
+  || fail "build-device workflow must skip SM8550 host emulator/qt artifact jobs"
+! grep -q 'gallium-nine' "${REPO_ROOT}/projects/ROCKNIX/packages/graphics/mesa/package.mk" \
+  || fail "Mesa 26 no longer supports the gallium-nine Meson option"
+! grep -q 'PKG_CONFIGURE_OPTS_TARGET="--disable-glx"' "${REPO_ROOT}/projects/ROCKNIX/packages/graphics/libepoxy/package.mk" \
+  || fail "libepoxy must use Meson glx/x11 options, not the removed autotools --disable-glx flag"
+grep -q 'PKG_MESON_OPTS_TARGET+=" -Dglx=no -Dx11=false"' "${REPO_ROOT}/projects/ROCKNIX/packages/graphics/libepoxy/package.mk" \
+  || fail "libepoxy must disable glx/x11 through Meson options when no display server needs them"
 grep -q 'if \[ "${DEVICE}" != "SM8550" \]' "${SYSTEMD_PKG}" \
   || fail "systemd package must strip nspawn on non-SM8550 devices"
 grep -q 'safe_remove ${INSTALL}/usr/bin/systemd-nspawn' "${SYSTEMD_PKG}" || fail "systemd package missing nspawn binary removal fallback"

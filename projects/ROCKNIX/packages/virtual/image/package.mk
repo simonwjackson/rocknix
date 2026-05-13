@@ -13,7 +13,12 @@ PKG_DEPENDS_TARGET="toolchain squashfs-tools:host dosfstools:host fakeroot:host 
                     ${BOOTLOADER} busybox lsof umtprd util-linux usb-modeswitch poppler jq socat \
                     p7zip file initramfs grep util-linux btrfs-progs zstd lz4 empty lzo libzip \
                     bash coreutils system-utils autostart quirks powerstate \
-                    gzip six xmlstarlet pyudev dialog network mako-osd rocknix"
+                    gzip six xmlstarlet pyudev dialog network rocknix"
+
+# Host OSD/UI belongs to the monolithic ROCKNIX UX. Keep it out of the
+# SM8550 minimal host so it cannot pull Sway/wlroots/Mesa back into the
+# recovery/container substrate.
+[ "${SM8550_MINIMAL_HOST:-no}" != "yes" ] && PKG_DEPENDS_TARGET+=" mako-osd"
 
 PKG_UI="emulationstation es-themes textviewer"
 
@@ -33,11 +38,12 @@ PKG_TOOLS="patchelf i2c-tools evtest"
 
 PKG_DEBUG="debug"
 
-if [ "${BASE_ONLY}" = "true" ]
+if [ "${BASE_ONLY}" = "true" ] || [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ]
 then
   EMULATION_DEVICE=no
   ENABLE_32BIT=no
   PKG_DEPENDS_TARGET+=" ${PKG_TOOLS} ${PKG_FONTS}"
+  [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ] && PKG_DEPENDS_TARGET+=" ${ADDITIONAL_PACKAGES}"
 else
   PKG_DEPENDS_TARGET+=" ${PKG_TOOLS} ${PKG_FONTS} ${PKG_SOUND} ${PKG_SYNC} ${PKG_GRAPHICS} ${PKG_UI} ${PKG_UI_TOOLS} ${PKG_MULTIMEDIA} misc-packages"
 
@@ -109,5 +115,23 @@ PKG_DEPENDS_TARGET+=" entware"
 
 # Nix integration: SM8550-only guest main-space.
 [ "${DEVICE}" = "SM8550" ] && PKG_DEPENDS_TARGET+=" nix-integration"
+
+# SM8550 minimal host intentionally keeps only the ROCKNIX substrate:
+# boot/update/storage/network/recovery/nspawn/InputPlumber plus guest wiring.
+# It must not pull host product-UX payloads back in through image-level metas.
+if [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ]; then
+  for forbidden in \
+    emulators gamesupport emulationstation es-themes retroarch lib32 \
+    mako-osd sway swaywm-env wlroots xwayland \
+    screen-switch gamepadcalibration mesa-demos glmark2 vkmark \
+    tailscale wireguard-tools; do
+    case " ${PKG_DEPENDS_TARGET} " in
+      *" ${forbidden} "*)
+        echo "image: SM8550 minimal host pulled forbidden payload: ${forbidden}" >&2
+        exit 1
+        ;;
+    esac
+  done
+fi
 
 true

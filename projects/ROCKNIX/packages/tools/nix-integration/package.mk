@@ -18,8 +18,8 @@ PKG_TOOLCHAIN="manual"
 # to a newer guest release. The closure layout dropped into
 # /usr/lib/nix-integration/guest/ remains byte-identical to the old
 # in-tree guest/ subtree -- only the source of truth moved.
-PKG_NIX_GUEST_REV="5f1a19c3ae25abe67a277cd1acaf8d308899d026"
-PKG_NIX_GUEST_SHA256="209db7727be63549672d469d073b0fff6c15d5feaf2f53b44b524d3e95113484"
+PKG_NIX_GUEST_REV="ce6c0fdab8fc4abb21cf3de959d646d487e76bea"
+PKG_NIX_GUEST_SHA256="a2a13783d37414784ef4183f51f87f67f9b46d0f0f7a1b0fbe2377c4d960c2bd"
 PKG_NIX_GUEST_URL="https://github.com/simonwjackson/rocknix-nix-guest/archive/${PKG_NIX_GUEST_REV}.tar.gz"
 
 post_install() {
@@ -104,5 +104,17 @@ post_install() {
   # booting Thor.
   mkdir -p ${INSTALL}/flash
   cp "${guest_extract}/docs/contracts/HOW-TO-FALL-BACK.md" ${INSTALL}/flash/HOW-TO-FALL-BACK.md
+  if [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ]; then
+    cat >> ${INSTALL}/flash/HOW-TO-FALL-BACK.md <<'EOF'
+
+## SM8550 minimal-host recovery note
+
+This image is built with `SM8550_MINIMAL_HOST=yes`. Recovery mode is
+SSH-first: `/flash/rocknix.no-nspawn` or `rocknix.safe=1` routes the next
+boot to `multi-user.target` so host SSH, storage, and `/storage/.update/`
+remain available without starting the legacy ROCKNIX UI stack. Remove the
+flag file and reboot to return to the Nix guest main-space target.
+EOF
+  fi
 
 }

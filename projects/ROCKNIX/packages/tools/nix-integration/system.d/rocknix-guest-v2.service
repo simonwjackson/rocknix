@@ -51,6 +51,36 @@ NotifyAccess=all
 KillMode=mixed
 Delegate=yes
 TasksMax=4096
+# DeviceAllow entries must cover every host device the guest compositor and
+# guest daemons open. Adding /dev/net/tun alone for Tailscale narrows the
+# service cgroup enough that wlroots/libseat cannot open the VT/DRM/input
+# devices even though they are bound into the container. Use explicit device
+# nodes here: systemd-255 does not apply the wildcard forms reliably enough
+# for wlroots/libseat's DRM open path on Thor.
+DeviceAllow=/dev/net/tun rwm
+DeviceAllow=/dev/snd/controlC0 rwm
+DeviceAllow=/dev/snd/pcmC0D0p rwm
+DeviceAllow=/dev/snd/pcmC0D1p rwm
+DeviceAllow=/dev/snd/pcmC0D2c rwm
+DeviceAllow=/dev/snd/timer rwm
+DeviceAllow=/dev/dri/card0 rwm
+DeviceAllow=/dev/dri/renderD128 rwm
+DeviceAllow=/dev/input/event0 rwm
+DeviceAllow=/dev/input/event1 rwm
+DeviceAllow=/dev/input/event2 rwm
+DeviceAllow=/dev/input/event3 rwm
+DeviceAllow=/dev/input/event4 rwm
+DeviceAllow=/dev/input/event5 rwm
+DeviceAllow=/dev/input/event6 rwm
+DeviceAllow=/dev/input/event7 rwm
+DeviceAllow=/dev/input/event8 rwm
+DeviceAllow=/dev/input/event9 rwm
+DeviceAllow=/dev/input/event10 rwm
+DeviceAllow=/dev/input/event11 rwm
+DeviceAllow=/dev/input/event12 rwm
+DeviceAllow=/dev/tty0 rwm
+DeviceAllow=/dev/tty1 rwm
+DeviceAllow=/dev/rfkill rwm
 
 # Force unified cgroup hierarchy inside the guest container. The host
 # kernel cmdline sets systemd.unified_cgroup_hierarchy=1, but
@@ -89,6 +119,9 @@ ExecStart=/usr/bin/systemd-nspawn \
   --boot \
   --register=no \
   --keep-unit \
+  --capability=CAP_NET_ADMIN \
+  --capability=CAP_NET_RAW \
+  --bind=/dev/net/tun \
   --bind=/dev/snd \
   --bind=/dev/rfkill \
   --bind=/dev/dri/card0 \

@@ -7,7 +7,16 @@ PKG_VERSION=""
 PKG_LICENSE="various"
 PKG_SITE="https://libreelec.tv"
 PKG_URL=""
-PKG_DEPENDS_TARGET="toolchain connman iwd netbase ethtool openssh iw wireless-regdb rsync tailscale avahi miniupnpc nss-mdns speedtest-cli"
+if [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ]; then
+  # Minimal SM8550 host keeps only what the recovery/update substrate needs:
+  # Wi-Fi bring-up, host SSH, transfer tooling, and basic name resolution.
+  # Product-facing network services (tailscale, avahi, miniupnpc,
+  # speedtest-cli, samba, simple-http-server, zerotier, wireguard) move to
+  # the guest or disappear from the host image.
+  PKG_DEPENDS_TARGET="toolchain connman iwd netbase ethtool openssh iw wireless-regdb rsync nss-mdns"
+else
+  PKG_DEPENDS_TARGET="toolchain connman iwd netbase ethtool openssh iw wireless-regdb rsync tailscale avahi miniupnpc nss-mdns speedtest-cli"
+fi
 PKG_SECTION="virtual"
 PKG_LONGDESC="Metapackage for various packages to install network support"
 
