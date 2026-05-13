@@ -78,6 +78,7 @@ DeviceAllow=/dev/input/event9 rwm
 DeviceAllow=/dev/input/event10 rwm
 DeviceAllow=/dev/input/event11 rwm
 DeviceAllow=/dev/input/event12 rwm
+DeviceAllow=/dev/uinput rwm
 DeviceAllow=/dev/tty0 rwm
 DeviceAllow=/dev/tty1 rwm
 DeviceAllow=/dev/rfkill rwm
@@ -104,13 +105,10 @@ WorkingDirectory=/storage/machines/rocknix-guest
 # ownership marker; verify the rootfs is shaped for SM8550 guest.
 ExecStartPre=/usr/bin/rocknix-guest-prep
 
-# Stage a scrubbed copy of /run/udev under /run/.guest-udev. libseat
-# walks the kernel udev DB during DRM session bring-up; if it finds an
-# entry for a device InputPlumber has already hot-removed (the AYN
-# gamepad source on event3) it aborts and cascades into a wlroots GPU
-# reset. The stage script removes any data file tagged
-# `inputplumber/by-hidden` from a private copy. The bind below then
-# replaces the guest's /run/udev with the cleaned tree.
+# Stage a copy of /run/udev under /run/.guest-udev for the guest. Older
+# images used this to scrub host-InputPlumber-hidden event nodes. The guest now
+# owns InputPlumber, but keeping the staged copy preserves the guest's udev DB
+# contract and remains harmless when no hidden host records exist.
 ExecStartPre=/usr/bin/rocknix-guest-udev-stage
 
 ExecStart=/usr/bin/systemd-nspawn \
@@ -127,6 +125,7 @@ ExecStart=/usr/bin/systemd-nspawn \
   --bind=/dev/dri/card0 \
   --bind=/dev/dri/renderD128 \
   --bind=/dev/input \
+  --bind=/dev/uinput \
   --bind=/dev/tty0 \
   --bind=/dev/tty1 \
   --bind-ro=/run/.guest-udev:/run/udev \
