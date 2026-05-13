@@ -15,6 +15,8 @@ set -eu
 LOG_TAG="rocknix-guest-start"
 RUN_DIR="${ROCKNIX_GUEST_START_RUN_DIR:-/run/rocknix-guest-substrate}"
 ARGS_FILE="${RUN_DIR}/nspawn.args"
+DEVICE_ALLOW_FILE="${RUN_DIR}/device-allow.args"
+GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
 
 log() {
   printf '%s: %s\n' "${LOG_TAG}" "$*"
@@ -22,6 +24,10 @@ log() {
 
 emit_arg() {
   printf '%s\n' "$1" >> "${ARGS_FILE}"
+}
+
+emit_device_allow() {
+  printf '%s\n' "$1" >> "${DEVICE_ALLOW_FILE}"
 }
 
 block_root_for() {
@@ -118,6 +124,7 @@ emit_safe_block_binds() {
       member=$(basename "${sysmember}")
       [ -b "/dev/${member}" ] || continue
       emit_arg "--bind=/dev/${member}"
+      emit_device_allow "DeviceAllow=/dev/${member} rw"
       log "pass safe game/media block node /dev/${member}"
     done
   done
@@ -125,6 +132,7 @@ emit_safe_block_binds() {
 
 mkdir -p "${RUN_DIR}"
 : > "${ARGS_FILE}"
+: > "${DEVICE_ALLOW_FILE}"
 
 emit_arg "--machine=rocknix-guest"
 emit_arg "--directory=/storage/machines/rocknix-guest"
@@ -150,7 +158,46 @@ emit_arg "--bind=/sys/class/devfreq"
 emit_arg "--bind=/sys/devices/system/cpu/cpufreq"
 emit_arg "--bind=/storage/.guest"
 
+emit_device_allow "DeviceAllow=/dev/net/tun rwm"
+emit_device_allow "DeviceAllow=/dev/uhid rwm"
+emit_device_allow "DeviceAllow=/dev/snd/controlC0 rwm"
+emit_device_allow "DeviceAllow=/dev/snd/pcmC0D0p rwm"
+emit_device_allow "DeviceAllow=/dev/snd/pcmC0D1p rwm"
+emit_device_allow "DeviceAllow=/dev/snd/pcmC0D2c rwm"
+emit_device_allow "DeviceAllow=/dev/snd/timer rwm"
+emit_device_allow "DeviceAllow=char-alsa rwm"
+emit_device_allow "DeviceAllow=/dev/dri/card0 rwm"
+emit_device_allow "DeviceAllow=/dev/dri/renderD128 rwm"
+emit_device_allow "DeviceAllow=/dev/input/event0 rwm"
+emit_device_allow "DeviceAllow=/dev/input/event1 rwm"
+emit_device_allow "DeviceAllow=/dev/input/event2 rwm"
+emit_device_allow "DeviceAllow=/dev/input/event3 rwm"
+emit_device_allow "DeviceAllow=/dev/input/event4 rwm"
+emit_device_allow "DeviceAllow=/dev/input/event5 rwm"
+emit_device_allow "DeviceAllow=/dev/input/event6 rwm"
+emit_device_allow "DeviceAllow=/dev/input/event7 rwm"
+emit_device_allow "DeviceAllow=/dev/input/event8 rwm"
+emit_device_allow "DeviceAllow=/dev/input/event9 rwm"
+emit_device_allow "DeviceAllow=/dev/input/event10 rwm"
+emit_device_allow "DeviceAllow=/dev/input/event11 rwm"
+emit_device_allow "DeviceAllow=/dev/input/event12 rwm"
+emit_device_allow "DeviceAllow=char-input rwm"
+emit_device_allow "DeviceAllow=char-hidraw rwm"
+emit_device_allow "DeviceAllow=/dev/uinput rwm"
+emit_device_allow "DeviceAllow=/dev/tty0 rwm"
+emit_device_allow "DeviceAllow=/dev/tty1 rwm"
+emit_device_allow "DeviceAllow=/dev/rfkill rwm"
+
 emit_safe_block_binds
+
+# DeviceAllow is a cgroup property, not just an nspawn bind concern. Apply an
+# exact runtime allow-list for the service before exec. This avoids broad block
+# classes while still allowing the safe block nodes discovered above.
+set -- --runtime "${GUEST_SERVICE}"
+while IFS= read -r allow; do
+  set -- "$@" "${allow}"
+done < "${DEVICE_ALLOW_FILE}"
+systemctl set-property "$@"
 
 set --
 while IFS= read -r arg; do

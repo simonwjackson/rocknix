@@ -141,11 +141,7 @@ for device_allow in \
   'DeviceAllow=/dev/uinput rwm' \
   'DeviceAllow=/dev/tty0 rwm' \
   'DeviceAllow=/dev/tty1 rwm' \
-  'DeviceAllow=/dev/rfkill rwm' \
-  'DeviceAllow=block-sd rw' \
-  'DeviceAllow=block-mmc rw' \
-  'DeviceAllow=block-nvme rw' \
-  'DeviceAllow=block-blkext rw'; do
+  'DeviceAllow=/dev/rfkill rwm'; do
   grep -q "${device_allow}" "${guest_unit}" || fail "guest unit must not let tun DeviceAllow block main-space devices: ${device_allow}"
 done
 grep -q -- '--capability=CAP_NET_ADMIN' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must retain CAP_NET_ADMIN for guest Tailscale"
@@ -162,8 +158,12 @@ grep -q -- '--bind=/storage/.guest' "${PKG_DIR}/scripts/rocknix-guest-start" || 
 ! grep -q -- '--bind=/storage/.config/MangoHud' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must not bind host MangoHud config"
 ! grep -q -- '--bind=/storage/.local' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must not bind host .local"
 grep -q 'is_host_mounted_root' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must guard against host-mounted block roots"
-grep -q 'DeviceAllow=block-sd rw' "${guest_unit}" || fail "guest unit must allow guarded sd game-media nodes without mknod"
-! grep -q 'DeviceAllow=block-sd rwm' "${guest_unit}" || fail "guest block DeviceAllow must not permit mknod"
+grep -q 'systemctl set-property' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must apply exact runtime DeviceAllow entries"
+grep -q 'emit_device_allow "DeviceAllow=/dev/${member} rw"' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must allow discovered block nodes exactly"
+! grep -q 'DeviceAllow=block-sd' "${guest_unit}" || fail "guest unit must not use broad sd block allow"
+! grep -q 'DeviceAllow=block-mmc' "${guest_unit}" || fail "guest unit must not use broad mmc block allow"
+! grep -q 'DeviceAllow=block-nvme' "${guest_unit}" || fail "guest unit must not use broad nvme block allow"
+! grep -q 'DeviceAllow=block-blkext' "${guest_unit}" || fail "guest unit must not use broad blkext block allow"
 ! grep -q 'ExecStopPost=' "${guest_unit}" || fail "guest unit must not run host-side fallback/reclaim hooks"
 grep -q 'Restart=on-failure' "${guest_unit}" || fail "guest unit must restart on failure"
 grep -q 'WantedBy=rocknix-main-space.target' "${guest_unit}" || fail "guest unit must be wanted by rocknix-main-space.target"
