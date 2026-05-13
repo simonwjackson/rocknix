@@ -26,6 +26,7 @@ GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
 PROFILE_DIR="${GUEST_ROOT}/nix/var/nix/profiles"
 SYSTEM_PROFILE="${PROFILE_DIR}/system"
 GUEST_RUN_DIR="${GUEST_ROOT}/run"
+GUEST_STORAGE_ROOT="${GUEST_ROOT}/storage"
 RESOLV_OWN_MARKER="${GUEST_ROOT}/etc/resolv.conf.guest-owned"
 GUEST_AREA="/storage/.guest"
 LOG_TAG="rocknix-guest-prep"
@@ -98,13 +99,31 @@ if [ -L "${SYSTEM_PROFILE}" ]; then
   fi
 fi
 
-# Guest writable area on /storage. This is what we bind into the guest
-# instead of the whole /storage tree. Create on first boot.
+# Guest writable area on host /storage. This is the only host storage seam we
+# bind into the guest; product ROM/config/state paths should be guest-owned or
+# guest-mounted rather than app-specific host binds.
 if [ ! -d "${GUEST_AREA}" ]; then
   log "creating guest writable area at ${GUEST_AREA}"
   mkdir -p "${GUEST_AREA}"
   chmod 0755 "${GUEST_AREA}"
 fi
+
+# The guest owns its own /storage namespace. Ensure the persistent guest rootfs
+# has the expected home/config/cache mountpoints before nspawn starts; only
+# /storage/.guest is over-mounted by the host bind for control/promotion files.
+for dir in \
+  "${GUEST_STORAGE_ROOT}" \
+  "${GUEST_STORAGE_ROOT}/.guest" \
+  "${GUEST_STORAGE_ROOT}/.config" \
+  "${GUEST_STORAGE_ROOT}/.local" \
+  "${GUEST_STORAGE_ROOT}/.cache" \
+  "${GUEST_STORAGE_ROOT}/roms"; do
+  if [ ! -d "${dir}" ]; then
+    log "creating guest-owned storage path ${dir}"
+    mkdir -p "${dir}"
+    chmod 0755 "${dir}"
+  fi
+done
 
 # Seed /run/current-system + /run/booted-system. The guest's /run is
 # tmpfs (created when systemd-nspawn boots into the guest), so we

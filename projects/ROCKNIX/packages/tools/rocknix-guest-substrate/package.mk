@@ -39,12 +39,14 @@ post_install() {
   mkdir -p ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-prep ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-promote ${INSTALL}/usr/bin
+  cp ${PKG_DIR}/scripts/rocknix-guest-start ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-recovery-toggle ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-soak ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-udev-stage ${INSTALL}/usr/bin
   chmod 0755 \
     ${INSTALL}/usr/bin/rocknix-guest-prep \
     ${INSTALL}/usr/bin/rocknix-guest-promote \
+    ${INSTALL}/usr/bin/rocknix-guest-start \
     ${INSTALL}/usr/bin/rocknix-recovery-toggle \
     ${INSTALL}/usr/bin/rocknix-guest-soak \
     ${INSTALL}/usr/bin/rocknix-guest-udev-stage

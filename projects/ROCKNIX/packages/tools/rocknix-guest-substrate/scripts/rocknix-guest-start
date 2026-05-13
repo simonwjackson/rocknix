@@ -1,0 +1,160 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# Start the SM8550 NixOS main-space guest.
+#
+# This wrapper keeps the static unit readable while letting the host discover
+# safe game/media block devices at launch time. The host remains the substrate
+# owner for /flash, /storage, /nix, updates, and the guest root. The guest owns
+# mounting policy only for block devices that are not backing any mounted host
+# filesystem and look like removable/game media.
+
+set -eu
+
+LOG_TAG="rocknix-guest-start"
+RUN_DIR="${ROCKNIX_GUEST_START_RUN_DIR:-/run/rocknix-guest-substrate}"
+ARGS_FILE="${RUN_DIR}/nspawn.args"
+
+log() {
+  printf '%s: %s\n' "${LOG_TAG}" "$*"
+}
+
+emit_arg() {
+  printf '%s\n' "$1" >> "${ARGS_FILE}"
+}
+
+block_root_for() {
+  name=$1
+  if [ -e "/sys/class/block/${name}/partition" ]; then
+    basename "$(dirname "$(readlink -f "/sys/class/block/${name}")")"
+  else
+    printf '%s\n' "${name}"
+  fi
+}
+
+is_ignored_block_root() {
+  root=$1
+  case "${root}" in
+    loop*|ram*|zram*|dm-*|mtd*|sr*) return 0 ;;
+  esac
+
+  # ROCKNIX's historical automount script treats devices with boot0 siblings as
+  # likely Android/eMMC boot media. Keep that conservative guard here too.
+  [ -e "/sys/class/block/${root}boot0" ] && return 0
+
+  return 1
+}
+
+is_host_mounted_root() {
+  root=$1
+  while read -r source _target _rest; do
+    case "${source}" in
+      /dev/*)
+        dev_name=$(basename "${source}")
+        dev_root=$(block_root_for "${dev_name}" 2>/dev/null || true)
+        [ "${dev_root}" = "${root}" ] && return 0
+        ;;
+    esac
+  done < /proc/mounts
+
+  return 1
+}
+
+is_large_enough_root() {
+  root=$1
+  sectors=$(cat "/sys/class/block/${root}/size" 2>/dev/null || echo 0)
+  # 8 GiB floor, matching the old ROCKNIX game-media automount heuristic.
+  [ "${sectors}" -gt 16777216 ] 2>/dev/null
+}
+
+has_supported_fs_member() {
+  root=$1
+  for sysdev in /sys/class/block/${root} /sys/class/block/${root}/*; do
+    [ -e "${sysdev}" ] || continue
+    node=$(basename "${sysdev}")
+    [ -b "/dev/${node}" ] || continue
+    type=$(blkid -o value -s TYPE "/dev/${node}" 2>/dev/null || true)
+    case "${type}" in
+      ext2|ext3|ext4|btrfs|vfat|exfat|ntfs) return 0 ;;
+    esac
+  done
+
+  return 1
+}
+
+emit_safe_block_binds() {
+  seen_roots=" "
+  for sysdev in /sys/class/block/*; do
+    [ -e "${sysdev}" ] || continue
+    node=$(basename "${sysdev}")
+    root=$(block_root_for "${node}" 2>/dev/null || true)
+    [ -n "${root}" ] || continue
+
+    case "${seen_roots}" in
+      *" ${root} "*) continue ;;
+    esac
+    seen_roots="${seen_roots}${root} "
+
+    if is_ignored_block_root "${root}"; then
+      log "skip block root ${root}: ignored root kind"
+      continue
+    fi
+    if is_host_mounted_root "${root}"; then
+      log "skip block root ${root}: backs a mounted host filesystem"
+      continue
+    fi
+    if ! is_large_enough_root "${root}"; then
+      log "skip block root ${root}: smaller than game-media floor"
+      continue
+    fi
+    if ! has_supported_fs_member "${root}"; then
+      log "skip block root ${root}: no supported filesystem member"
+      continue
+    fi
+
+    for sysmember in /sys/class/block/${root} /sys/class/block/${root}/*; do
+      [ -e "${sysmember}" ] || continue
+      member=$(basename "${sysmember}")
+      [ -b "/dev/${member}" ] || continue
+      emit_arg "--bind=/dev/${member}"
+      log "pass safe game/media block node /dev/${member}"
+    done
+  done
+}
+
+mkdir -p "${RUN_DIR}"
+: > "${ARGS_FILE}"
+
+emit_arg "--machine=rocknix-guest"
+emit_arg "--directory=/storage/machines/rocknix-guest"
+emit_arg "--boot"
+emit_arg "--register=no"
+emit_arg "--keep-unit"
+emit_arg "--capability=CAP_NET_ADMIN"
+emit_arg "--capability=CAP_NET_RAW"
+emit_arg "--bind=/dev/net/tun"
+emit_arg "--bind=/dev/uhid"
+emit_arg "--bind=/dev/snd"
+emit_arg "--bind=/dev/rfkill"
+emit_arg "--bind=/dev/dri/card0"
+emit_arg "--bind=/dev/dri/renderD128"
+emit_arg "--bind=/dev/input"
+emit_arg "--bind=/dev/uinput"
+emit_arg "--bind=/dev/tty0"
+emit_arg "--bind=/dev/tty1"
+emit_arg "--bind-ro=/run/.guest-udev:/run/udev"
+emit_arg "--bind=/sys/class/backlight"
+emit_arg "--bind=/sys/class/leds"
+emit_arg "--bind=/sys/class/devfreq"
+emit_arg "--bind=/sys/devices/system/cpu/cpufreq"
+emit_arg "--bind=/storage/.guest"
+
+emit_safe_block_binds
+
+set --
+while IFS= read -r arg; do
+  set -- "$@" "${arg}"
+done < "${ARGS_FILE}"
+
+exec /usr/bin/systemd-nspawn "$@"

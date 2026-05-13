@@ -54,12 +54,14 @@ done
 # Remaining host scripts are the thin-host guest launcher/recovery support.
 check_script "${PKG_DIR}/scripts/rocknix-guest-prep"
 check_script "${PKG_DIR}/scripts/rocknix-guest-promote"
+check_script "${PKG_DIR}/scripts/rocknix-guest-start"
 check_script "${PKG_DIR}/scripts/rocknix-guest-udev-stage"
 check_script "${PKG_DIR}/scripts/rocknix-recovery-toggle"
 check_script "${PKG_DIR}/scripts/rocknix-guest-soak"
 
 grep -q 'rocknix-guest-prep' "${PKG_DIR}/package.mk" || fail "package.mk does not install prep helper"
 grep -q 'rocknix-guest-promote' "${PKG_DIR}/package.mk" || fail "package.mk does not install guest promotion helper"
+grep -q 'rocknix-guest-start' "${PKG_DIR}/package.mk" || fail "package.mk does not install guest start helper"
 grep -q 'rocknix-guest-udev-stage' "${PKG_DIR}/package.mk" || fail "package.mk does not install udev stage helper"
 ! grep -q 'rocknix-host-reclaim' "${PKG_DIR}/package.mk" || fail "package.mk must not install host reclaim helper"
 grep -q 'rocknix-recovery-toggle' "${PKG_DIR}/package.mk" || fail "package.mk does not install recovery toggle"
@@ -110,15 +112,17 @@ grep -q 'Options=bind' "${PKG_DIR}/system.d/nix.mount" || fail "nix.mount is not
 grep -q 'Alias=default.target' "${PKG_DIR}/system.d/rocknix-main-space.target" || fail "rocknix-main-space.target must alias default.target"
 ! grep -q 'rocknix-graphical.target' "${PKG_DIR}/system.d/rocknix-main-space.target" || fail "rocknix-main-space.target must not keep old graphical-target alias"
 grep -q 'Wants=rocknix-guest.service' "${PKG_DIR}/system.d/rocknix-main-space.target" || fail "rocknix-main-space.target must start guest unit"
+! grep -q 'rocknix-automount.service' "${PKG_DIR}/system.d/rocknix-main-space.target" || fail "main-space target must not require host game-media automount"
 grep -q 'Before=sysinit.target' "${PKG_DIR}/system.d/rocknix-recovery-toggle.service" || fail "recovery toggle must run before sysinit"
 grep -q 'ExecStart=/usr/bin/rocknix-recovery-toggle' "${PKG_DIR}/system.d/rocknix-recovery-toggle.service" || fail "recovery toggle unit has wrong ExecStart"
 
 guest_unit="${PKG_DIR}/system.d/rocknix-guest.service"
 grep -q 'ExecStartPre=/usr/bin/rocknix-guest-prep' "${guest_unit}" || fail "guest unit missing prep helper"
 grep -q 'ExecStartPre=/usr/bin/rocknix-guest-udev-stage' "${guest_unit}" || fail "guest unit missing udev stage helper"
-grep -q 'ExecStart=/usr/bin/systemd-nspawn' "${guest_unit}" || fail "guest unit must launch systemd-nspawn"
-grep -q -- '--directory=/storage/machines/rocknix-guest' "${guest_unit}" || fail "guest unit has wrong guest root"
-grep -q -- '--register=no' "${guest_unit}" || fail "guest unit must avoid machined registration"
+grep -q 'ExecStart=/usr/bin/rocknix-guest-start' "${guest_unit}" || fail "guest unit must launch through guest start helper"
+grep -q '/usr/bin/systemd-nspawn' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must exec systemd-nspawn"
+grep -q -- '--directory=/storage/machines/rocknix-guest' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper has wrong guest root"
+grep -q -- '--register=no' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must avoid machined registration"
 grep -q 'DeviceAllow=/dev/net/tun rwm' "${guest_unit}" || fail "guest unit must allow tun device access for guest Tailscale"
 for device_allow in \
   'DeviceAllow=/dev/uhid rwm' \
@@ -137,17 +141,29 @@ for device_allow in \
   'DeviceAllow=/dev/uinput rwm' \
   'DeviceAllow=/dev/tty0 rwm' \
   'DeviceAllow=/dev/tty1 rwm' \
-  'DeviceAllow=/dev/rfkill rwm'; do
+  'DeviceAllow=/dev/rfkill rwm' \
+  'DeviceAllow=block-sd rw' \
+  'DeviceAllow=block-mmc rw' \
+  'DeviceAllow=block-nvme rw' \
+  'DeviceAllow=block-blkext rw'; do
   grep -q "${device_allow}" "${guest_unit}" || fail "guest unit must not let tun DeviceAllow block main-space devices: ${device_allow}"
 done
-grep -q -- '--capability=CAP_NET_ADMIN' "${guest_unit}" || fail "guest unit must retain CAP_NET_ADMIN for guest Tailscale"
-grep -q -- '--capability=CAP_NET_RAW' "${guest_unit}" || fail "guest unit must retain CAP_NET_RAW for guest Tailscale"
-grep -q -- '--bind=/dev/net/tun' "${guest_unit}" || fail "guest unit must pass through tun device for guest Tailscale"
-grep -q -- '--bind=/dev/uhid' "${guest_unit}" || fail "guest unit must pass through uhid for guest Bluetooth HID devices"
-grep -q -- '--bind=/dev/input' "${guest_unit}" || fail "guest unit must pass through input devices"
-grep -q -- '--bind=/dev/uinput' "${guest_unit}" || fail "guest unit must pass through uinput for guest InputPlumber"
-grep -q -- '--bind=/dev/snd' "${guest_unit}" || fail "guest unit must pass through sound devices"
-grep -q -- '--bind-ro=/run/.guest-udev:/run/udev' "${guest_unit}" || fail "guest unit must bind scrubbed udev db"
+grep -q -- '--capability=CAP_NET_ADMIN' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must retain CAP_NET_ADMIN for guest Tailscale"
+grep -q -- '--capability=CAP_NET_RAW' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must retain CAP_NET_RAW for guest Tailscale"
+grep -q -- '--bind=/dev/net/tun' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must pass through tun device for guest Tailscale"
+grep -q -- '--bind=/dev/uhid' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must pass through uhid for guest Bluetooth HID devices"
+grep -q -- '--bind=/dev/input' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must pass through input devices"
+grep -q -- '--bind=/dev/uinput' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must pass through uinput for guest InputPlumber"
+grep -q -- '--bind=/dev/snd' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must pass through sound devices"
+grep -q -- '--bind-ro=/run/.guest-udev:/run/udev' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must bind scrubbed udev db"
+grep -q -- '--bind=/storage/.guest' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must keep the single host/guest storage seam"
+! grep -q -- '--bind-ro=/storage/roms' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must not bind host ROM library"
+! grep -q -- '--bind=/storage/.config/Cemu' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must not bind host Cemu config"
+! grep -q -- '--bind=/storage/.config/MangoHud' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must not bind host MangoHud config"
+! grep -q -- '--bind=/storage/.local' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must not bind host .local"
+grep -q 'is_host_mounted_root' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must guard against host-mounted block roots"
+grep -q 'DeviceAllow=block-sd rw' "${guest_unit}" || fail "guest unit must allow guarded sd game-media nodes without mknod"
+! grep -q 'DeviceAllow=block-sd rwm' "${guest_unit}" || fail "guest block DeviceAllow must not permit mknod"
 ! grep -q 'ExecStopPost=' "${guest_unit}" || fail "guest unit must not run host-side fallback/reclaim hooks"
 grep -q 'Restart=on-failure' "${guest_unit}" || fail "guest unit must restart on failure"
 grep -q 'WantedBy=rocknix-main-space.target' "${guest_unit}" || fail "guest unit must be wanted by rocknix-main-space.target"
@@ -173,7 +189,7 @@ grep -q '/storage/.guest/rocknix-guest-promote-system-path' "${PKG_DIR}/scripts/
 grep -q '/run/current-system/sw/bin/systemctl is-active NetworkManager.service' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must use absolute guest systemctl for readiness"
 ! grep -q 'seq 1 60' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not depend on seq during early guest boot"
 grep -q '/run/current-system/sw/bin/sleep 2' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must use absolute guest sleep when available"
-for forbidden in '--bind-ro=/usr' '--bind-ro=/lib' '--bind-ro=/etc/profile' '--bind=/storage '; do
+for forbidden in '--bind-ro=/usr' '--bind-ro=/lib' '--bind-ro=/etc/profile' '--bind=/storage ' '--bind-ro=/storage/roms' '--bind=/storage/.config/Cemu' '--bind=/storage/.config/MangoHud' '--bind=/storage/.local'; do
   ! grep -v '^#' "${guest_unit}" | grep -F -q -- "${forbidden}" || fail "guest unit still contains forbidden broad bind: ${forbidden}"
 done
 
@@ -186,6 +202,7 @@ grep -q 'systemctl set-default' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || 
 
 grep -q 'resolv.conf.guest-owned' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing resolv.conf ownership marker"
 grep -q '/storage/.guest' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing guest writable area"
+grep -q 'GUEST_STORAGE_ROOT=' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper must create guest-owned storage namespace"
 grep -q '/nix/var/nix/profiles/system' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing system profile check"
 grep -q 'inputplumber/by-hidden' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" || fail "udev stage must scrub InputPlumber-hidden devices"
 grep -q 'check_host_ssh_responsive' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing host SSH check"
