@@ -67,12 +67,18 @@ check_grep '--directory=/storage/machines/rocknix-guest' "${guest_unit}" "guest 
 check_grep '--register=no' "${guest_unit}" "guest unit must avoid machined registration"
 check_grep 'DeviceAllow=/dev/net/tun rwm' "${guest_unit}" "guest unit must allow tun device access for guest Tailscale"
 for device_allow in \
-  'DeviceAllow=/dev/snd/\* rwm' \
-  'DeviceAllow=/dev/dri/\* rwm' \
-  'DeviceAllow=/dev/input/\* rwm' \
-  'DeviceAllow=/dev/tty0 rw' \
-  'DeviceAllow=/dev/tty1 rw' \
-  'DeviceAllow=/dev/rfkill rw'; do
+  'DeviceAllow=/dev/snd/controlC0 rwm' \
+  'DeviceAllow=/dev/snd/pcmC0D0p rwm' \
+  'DeviceAllow=/dev/snd/pcmC0D1p rwm' \
+  'DeviceAllow=/dev/snd/pcmC0D2c rwm' \
+  'DeviceAllow=/dev/snd/timer rwm' \
+  'DeviceAllow=/dev/dri/card0 rwm' \
+  'DeviceAllow=/dev/dri/renderD128 rwm' \
+  'DeviceAllow=/dev/input/event0 rwm' \
+  'DeviceAllow=/dev/input/event11 rwm' \
+  'DeviceAllow=/dev/tty0 rwm' \
+  'DeviceAllow=/dev/tty1 rwm' \
+  'DeviceAllow=/dev/rfkill rwm'; do
   check_grep "${device_allow}" "${guest_unit}" "guest unit must not let tun DeviceAllow block main-space devices: ${device_allow}"
 done
 check_grep '--capability=CAP_NET_ADMIN' "${guest_unit}" "guest unit must retain CAP_NET_ADMIN for guest Tailscale"
