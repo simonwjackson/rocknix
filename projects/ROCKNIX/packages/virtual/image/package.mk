@@ -10,10 +10,14 @@ PKG_LONGDESC="Root package used to build and create complete image"
 
 PKG_DEPENDS_TARGET="toolchain squashfs-tools:host dosfstools:host fakeroot:host kmod:host \
                     mtools:host populatefs:host libc gcc linux linux-drivers linux-firmware \
-                    ${BOOTLOADER} busybox lsof umtprd util-linux usb-modeswitch poppler jq socat \
-                    p7zip file initramfs grep util-linux btrfs-progs zstd lz4 empty lzo libzip \
+                    ${BOOTLOADER} busybox lsof util-linux jq socat \
+                    file initramfs grep util-linux btrfs-progs zstd lz4 empty lzo libzip \
                     bash coreutils system-utils autostart quirks powerstate \
                     gzip six xmlstarlet pyudev dialog network rocknix"
+
+# USB/MTP, PDF/image tooling, and archive helpers belong to the monolithic
+# host UX. The SM8550 minimal host keeps SSH/scp/cat transfer paths instead.
+[ "${SM8550_MINIMAL_HOST:-no}" != "yes" ] && PKG_DEPENDS_TARGET+=" umtprd usb-modeswitch poppler p7zip"
 
 # Host OSD/UI belongs to the monolithic ROCKNIX UX. Keep it out of the
 # SM8550 minimal host so it cannot pull Sway/wlroots/Mesa back into the
@@ -42,8 +46,14 @@ if [ "${BASE_ONLY}" = "true" ] || [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ]
 then
   EMULATION_DEVICE=no
   ENABLE_32BIT=no
-  PKG_DEPENDS_TARGET+=" ${PKG_TOOLS} ${PKG_FONTS}"
-  [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ] && PKG_DEPENDS_TARGET+=" ${ADDITIONAL_PACKAGES}"
+  if [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ]; then
+    # Keep only hardware-inspection tooling used by SM8550 host scripts.
+    # patchelf/evtest/corefonts are development or UX conveniences and stay
+    # out of the recovery/update/container substrate.
+    PKG_DEPENDS_TARGET+=" i2c-tools ${ADDITIONAL_PACKAGES}"
+  else
+    PKG_DEPENDS_TARGET+=" ${PKG_TOOLS} ${PKG_FONTS}"
+  fi
 else
   PKG_DEPENDS_TARGET+=" ${PKG_TOOLS} ${PKG_FONTS} ${PKG_SOUND} ${PKG_SYNC} ${PKG_GRAPHICS} ${PKG_UI} ${PKG_UI_TOOLS} ${PKG_MULTIMEDIA} misc-packages"
 
@@ -108,10 +118,13 @@ fi
 # modules packages
 [ "${MODULES_PKG}" = "yes" ] && PKG_DEPENDS_TARGET+=" modules"
 
-# Entware support
-mkdir -p ${INSTALL}
-ln -sf /storage/.opt ${INSTALL}/opt
-PKG_DEPENDS_TARGET+=" entware"
+# Entware support. Keep it for the classic monolithic image, but do not ship
+# the host-side package-manager bootstrap in the SM8550 minimal substrate.
+if [ "${SM8550_MINIMAL_HOST:-no}" != "yes" ]; then
+  mkdir -p ${INSTALL}
+  ln -sf /storage/.opt ${INSTALL}/opt
+  PKG_DEPENDS_TARGET+=" entware"
+fi
 
 # Nix integration: SM8550-only guest main-space.
 [ "${DEVICE}" = "SM8550" ] && PKG_DEPENDS_TARGET+=" nix-integration"
@@ -124,7 +137,8 @@ if [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ]; then
     emulators gamesupport emulationstation es-themes retroarch lib32 \
     mako-osd sway swaywm-env wlroots xwayland \
     screen-switch gamepadcalibration mesa-demos glmark2 vkmark \
-    tailscale wireguard-tools; do
+    tailscale wireguard-tools corefonts poppler p7zip umtprd \
+    usb-modeswitch ntfs-3g_ntfsprogs exfatprogs entware evtest patchelf; do
     case " ${PKG_DEPENDS_TARGET} " in
       *" ${forbidden} "*)
         echo "image: SM8550 minimal host pulled forbidden payload: ${forbidden}" >&2

@@ -86,6 +86,8 @@
       SIMPLE_HTTP_SERVER="no"
       ZEROTIER_SUPPORT="no"
       WIREGUARD_SUPPORT="no"
+      NTFS3G="no"
+      EXFAT="no"
       NANO_EDITOR="no"
       HTOP_TOOL="no"
       BTOP_TOOL="no"
