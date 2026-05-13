@@ -115,6 +115,7 @@ grep -q -- '--directory=/storage/machines/rocknix-guest' "${guest_unit}" || fail
 grep -q -- '--register=no' "${guest_unit}" || fail "guest unit must avoid machined registration"
 grep -q 'DeviceAllow=/dev/net/tun rwm' "${guest_unit}" || fail "guest unit must allow tun device access for guest Tailscale"
 for device_allow in \
+  'DeviceAllow=/dev/uhid rwm' \
   'DeviceAllow=/dev/snd/controlC0 rwm' \
   'DeviceAllow=/dev/snd/pcmC0D0p rwm' \
   'DeviceAllow=/dev/snd/pcmC0D1p rwm' \
@@ -136,6 +137,7 @@ done
 grep -q -- '--capability=CAP_NET_ADMIN' "${guest_unit}" || fail "guest unit must retain CAP_NET_ADMIN for guest Tailscale"
 grep -q -- '--capability=CAP_NET_RAW' "${guest_unit}" || fail "guest unit must retain CAP_NET_RAW for guest Tailscale"
 grep -q -- '--bind=/dev/net/tun' "${guest_unit}" || fail "guest unit must pass through tun device for guest Tailscale"
+grep -q -- '--bind=/dev/uhid' "${guest_unit}" || fail "guest unit must pass through uhid for guest Bluetooth HID devices"
 grep -q -- '--bind=/dev/input' "${guest_unit}" || fail "guest unit must pass through input devices"
 grep -q -- '--bind=/dev/uinput' "${guest_unit}" || fail "guest unit must pass through uinput for guest InputPlumber"
 grep -q -- '--bind=/dev/snd' "${guest_unit}" || fail "guest unit must pass through sound devices"
