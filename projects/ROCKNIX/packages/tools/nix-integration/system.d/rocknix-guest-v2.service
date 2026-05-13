@@ -78,6 +78,11 @@ DeviceAllow=/dev/input/event9 rwm
 DeviceAllow=/dev/input/event10 rwm
 DeviceAllow=/dev/input/event11 rwm
 DeviceAllow=/dev/input/event12 rwm
+# Keep exact built-in event nodes for the known SM8550 layout, but also allow
+# the kernel input classes so USB-C keyboard/gamepad hotplug is not hostage to
+# event-number ordering after cold boot.
+DeviceAllow=char-input rwm
+DeviceAllow=char-hidraw rwm
 DeviceAllow=/dev/uinput rwm
 DeviceAllow=/dev/tty0 rwm
 DeviceAllow=/dev/tty1 rwm
