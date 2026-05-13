@@ -63,7 +63,7 @@ resolve_guest_pid() {
     printf '%s\n' "${GUEST_PID}"
     return 0
   fi
-  pid=$(systemctl show -p MainPID --value rocknix-guest-v2.service 2>/dev/null)
+  pid=$(systemctl show -p MainPID --value rocknix-guest.service 2>/dev/null)
   if [ -z "${pid}" ] || [ "${pid}" = "0" ]; then
     pid=$(systemctl show -p MainPID --value rocknix-guest.service 2>/dev/null)
   fi
@@ -202,7 +202,7 @@ run_one_sample() {
   log "  guest outer=${outer:-none} inner=${inner:-none}"
 
   if [ -z "${outer}" ] || [ "${outer}" = "0" ]; then
-    alarm "rocknix-guest-v2.service / rocknix-guest.service not active"
+    alarm "rocknix-guest.service not active"
     return
   fi
 

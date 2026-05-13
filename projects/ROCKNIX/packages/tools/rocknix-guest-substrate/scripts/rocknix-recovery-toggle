@@ -11,7 +11,7 @@
 #   neither                              -> SM8550 guest main-space
 #
 # Safety:
-#   - Setting default.target to rocknix-graphical.target is the normal
+#   - Setting default.target to rocknix-main-space.target is the normal
 #     SM8550 path.
 #   - Setting default.target to multi-user.target is the minimal-host
 #     recovery path: host SSH, storage, and update plumbing, but no
@@ -23,7 +23,7 @@ set -u
 
 FLAG_FILE="/flash/rocknix.no-nspawn"
 CMDLINE_FILE="/proc/cmdline"
-NORMAL_TARGET="rocknix-graphical.target"
+NORMAL_TARGET="rocknix-main-space.target"
 # Minimal-host recovery is deliberately SSH-first. The legacy ROCKNIX UI
 # stack is not part of the substrate once the NixOS guest owns product UX,
 # so recovery lands on multi-user.target instead of rocknix.target.

@@ -126,8 +126,8 @@ if [ "${SM8550_MINIMAL_HOST:-no}" != "yes" ]; then
   PKG_DEPENDS_TARGET+=" entware"
 fi
 
-# Nix integration: SM8550-only guest main-space.
-[ "${DEVICE}" = "SM8550" ] && PKG_DEPENDS_TARGET+=" nix-integration"
+# Guest substrate: SM8550-only NixOS main-space.
+[ "${DEVICE}" = "SM8550" ] && PKG_DEPENDS_TARGET+=" rocknix-guest-substrate"
 
 # SM8550 minimal host intentionally keeps only the ROCKNIX substrate:
 # boot/update/storage/network/recovery/nspawn/InputPlumber plus guest wiring.

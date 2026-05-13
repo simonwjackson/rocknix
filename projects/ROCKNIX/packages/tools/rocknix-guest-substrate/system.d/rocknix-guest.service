@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 #
-# SM8550 guest: Nix main-space guest unit (v2).
+# SM8550 guest: NixOS main-space guest unit.
 #
-# This unit replaces the experimental broad-bind unit that lived at
-# /storage/.config/system.d/rocknix-guest.service during the Tier A-E
-# spike series. The shopping list applied here is the direct lesson
-# of those spikes:
+# This unit replaces both the experimental broad-bind unit from the Tier A-E
+# spike series and the transitional rocknix-guest-v2.service name. The
+# shopping list applied here is the direct lesson of those spikes:
 #
 #   - NO host /usr leak  -> drop --bind-ro=/usr (Vulkan/EGL ICD pollution,
 #                           Mesa store-path mismatch)
@@ -34,11 +33,11 @@
 #     explicit recovery uses /flash/rocknix.no-nspawn or rocknix.safe=1;
 #     we do not resurrect the legacy host UI automatically.
 #
-# This unit is enabled on SM8550 via Wants= on rocknix-graphical.target.
+# This unit is enabled on SM8550 via Wants= on rocknix-main-space.target.
 
 [Unit]
-Description=ROCKNIX SM8550 guest (Nix main-space, v2)
-Documentation=file:///usr/lib/nix-integration/docs/layer14-main-space-contract.md
+Description=ROCKNIX SM8550 guest (NixOS main-space)
+Documentation=file:///usr/lib/rocknix-guest-substrate/docs/layer14-main-space-contract.md
 RequiresMountsFor=/storage /nix
 After=local-fs.target nix.mount network-pre.target rocknix-automount.service
 Requires=nix.mount
@@ -164,4 +163,5 @@ StandardError=journal
 [Install]
 # Intentionally NOT WantedBy=multi-user.target; this unit is owned by the
 # SM8550 main-space target instead.
-WantedBy=rocknix-graphical.target
+WantedBy=rocknix-main-space.target
+Alias=rocknix-guest-v2.service

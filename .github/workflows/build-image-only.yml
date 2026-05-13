@@ -1,7 +1,7 @@
 name: Build image only (fast-iter)
 
 # Fast-iter workflow for changes that ONLY touch the install / image
-# step (e.g. nix-integration/package.mk, nix-integration scripts,
+# step (e.g. rocknix-guest-substrate/package.mk, rocknix-guest-substrate scripts,
 # system.d units, profile.d files, post_install logic). Reuses the
 # heavy artifacts -- toolchain, aarch64, arm, mame-lr, qt6,
 # emu-libretro, emu-standalone -- from a previous successful "Build"
@@ -39,8 +39,8 @@ on:
           - RK3588
           - S922X
           - H700
-      CLEAN_NIX_INTEGRATION:
-        description: "Force re-run of nix-integration's post_install by cleaning that package before image"
+      CLEAN_GUEST_SUBSTRATE:
+        description: "Force re-run of rocknix-guest-substrate's post_install by cleaning that package before image"
         required: false
         default: true
         type: boolean
@@ -164,19 +164,19 @@ jobs:
         id: owner
         run: echo "OWNER_LC=$(echo '${{ github.repository_owner }}' | tr A-Z a-z)" >> $GITHUB_OUTPUT
 
-      # Force a re-run of nix-integration's post_install by removing
+      # Force a re-run of rocknix-guest-substrate's post_install by removing
       # its install_pkg checkpoint. The build_distro detects the
       # missing stamp and re-installs (no recompile needed since
       # PKG_TOOLCHAIN="manual"). Without this, post_install changes
       # would not take effect.
-      - name: Clean nix-integration to force post_install re-run
-        if: ${{ inputs.CLEAN_NIX_INTEGRATION }}
+      - name: Clean rocknix-guest-substrate to force post_install re-run
+        if: ${{ inputs.CLEAN_GUEST_SUBSTRATE }}
         run: |
           ./scripts/get_env > .env
           docker run --init --env-file .env --rm --user $(id -u):$(id -g) \
             -v ${PWD}:${PWD} -w ${PWD} \
             "ghcr.io/${{ steps.owner.outputs.OWNER_LC }}/rocknix-build:latest" \
-            bash -c "./scripts/clean nix-integration || true"
+            bash -c "./scripts/clean nix-integration || true; ./scripts/clean rocknix-guest-substrate || true"
 
       - name: build
         run: |

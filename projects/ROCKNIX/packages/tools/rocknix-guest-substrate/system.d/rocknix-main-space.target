@@ -4,16 +4,16 @@
 # Main-space target. This is default.target on SM8550 builds. It Wants
 # the guest unit and does NOT Want the legacy host
 # sway/essway/pipewire/wireplumber/bluetooth/inputplumber stack -- those
-# stay installed but un-Wanted; explicit recovery can bring them up via
-# rocknix.target when requested.
+# are not part of the thin-host product path; SSH-first recovery uses
+# multi-user.target.
 
 [Unit]
-Description=ROCKNIX Nix main-space (SM8550 guest)
-Documentation=file:///usr/lib/nix-integration/docs/layer14-main-space-contract.md
+Description=ROCKNIX main-space (SM8550 guest)
+Documentation=file:///usr/lib/rocknix-guest-substrate/docs/layer14-main-space-contract.md
 Requires=multi-user.target rocknix-automount.service nix.mount
 After=multi-user.target rocknix-automount.service nix.mount network-online.target
-Wants=rocknix-guest-v2.service
+Wants=rocknix-guest.service
 AllowIsolate=yes
 
 [Install]
-Alias=default.target
+Alias=default.target rocknix-graphical.target

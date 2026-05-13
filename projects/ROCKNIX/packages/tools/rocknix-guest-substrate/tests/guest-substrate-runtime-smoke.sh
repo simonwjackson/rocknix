@@ -21,7 +21,7 @@ if [ -d "${SCRIPT_DIR}/../scripts" ]; then
   SCRIPT_ROOT="${PKG_DIR}/scripts"
   UNIT_ROOT="${PKG_DIR}/system.d"
 else
-  PKG_DIR="/usr/lib/nix-integration"
+  PKG_DIR="/usr/lib/rocknix-guest-substrate"
   SCRIPT_ROOT="/usr/bin"
   UNIT_ROOT="/usr/lib/systemd/system"
 fi
@@ -56,12 +56,17 @@ check_executable "${SCRIPT_ROOT}/rocknix-guest-soak"
 
 check_file "${UNIT_ROOT}/nix-storage-setup.service"
 check_file "${UNIT_ROOT}/nix.mount"
-check_file "${UNIT_ROOT}/rocknix-graphical.target"
-check_file "${UNIT_ROOT}/rocknix-guest-v2.service"
+check_file "${UNIT_ROOT}/rocknix-main-space.target"
+check_file "${UNIT_ROOT}/rocknix-guest.service"
 check_file "${UNIT_ROOT}/rocknix-guest-promote.service"
 check_file "${UNIT_ROOT}/rocknix-recovery-toggle.service"
 
-guest_unit="${UNIT_ROOT}/rocknix-guest-v2.service"
+for retired_unit in nix-daemon.service nix-daemon.socket; do
+  [ ! -e "${UNIT_ROOT}/${retired_unit}" ] || fail "retired host Nix service still installed: ${retired_unit}"
+  ! grep -R -q "${retired_unit}" "${UNIT_ROOT}" || fail "unit still references retired host Nix service: ${retired_unit}"
+done
+
+guest_unit="${UNIT_ROOT}/rocknix-guest.service"
 check_grep 'ExecStart=/usr/bin/systemd-nspawn' "${guest_unit}" "guest unit must use systemd-nspawn"
 check_grep '--directory=/storage/machines/rocknix-guest' "${guest_unit}" "guest unit must target /storage/machines/rocknix-guest"
 check_grep '--register=no' "${guest_unit}" "guest unit must avoid machined registration"
@@ -96,12 +101,12 @@ check_grep 'ExecStartPre=/usr/bin/rocknix-guest-udev-stage' "${guest_unit}" "gue
 if grep -q 'ExecStopPost=' "${guest_unit}"; then
   fail "guest unit must not run host-side fallback/reclaim hooks"
 fi
-check_grep 'WantedBy=rocknix-graphical.target' "${guest_unit}" "guest unit must install under rocknix-graphical.target"
+check_grep 'WantedBy=rocknix-main-space.target' "${guest_unit}" "guest unit must install under rocknix-main-space.target"
 
 promote_unit="${UNIT_ROOT}/rocknix-guest-promote.service"
-check_grep 'After=rocknix-guest-v2.service' "${promote_unit}" "promotion unit must run after guest boot"
+check_grep 'After=rocknix-guest.service' "${promote_unit}" "promotion unit must run after guest boot"
 check_grep 'ExecStart=/usr/bin/rocknix-guest-promote' "${promote_unit}" "promotion unit has wrong ExecStart"
-check_grep 'WantedBy=rocknix-graphical.target' "${promote_unit}" "promotion unit must install under graphical target"
+check_grep 'WantedBy=rocknix-main-space.target' "${promote_unit}" "promotion unit must install under main-space target"
 
 for forbidden in '--bind-ro=/usr' '--bind-ro=/lib' '--bind-ro=/etc/profile' '--bind=/storage '; do
   if grep -v '^#' "${guest_unit}" | grep -F -q -- "${forbidden}"; then
@@ -119,8 +124,8 @@ if [ "${ROCKNIX_GUEST_LIVE_SMOKE:-0}" = "1" ]; then
   [ -d /nix ] || fail "/nix mountpoint missing"
 
   mountpoint -q /nix || fail "/nix is not mounted"
-  systemctl list-unit-files rocknix-graphical.target >/dev/null 2>&1 || fail "rocknix-graphical.target not installed"
-  systemctl list-unit-files rocknix-guest-v2.service >/dev/null 2>&1 || fail "rocknix-guest-v2.service not installed"
+  systemctl list-unit-files rocknix-main-space.target >/dev/null 2>&1 || fail "rocknix-main-space.target not installed"
+  systemctl list-unit-files rocknix-guest.service >/dev/null 2>&1 || fail "rocknix-guest.service not installed"
   systemctl list-unit-files rocknix-guest-promote.service >/dev/null 2>&1 || fail "guest promotion service not installed"
   systemctl list-unit-files rocknix-recovery-toggle.service >/dev/null 2>&1 || fail "recovery toggle service not installed"
   systemctl list-unit-files sshd.service >/dev/null 2>&1 || fail "sshd.service not installed"
@@ -128,9 +133,9 @@ if [ "${ROCKNIX_GUEST_LIVE_SMOKE:-0}" = "1" ]; then
 
   default_target=$(systemctl get-default 2>/dev/null || true)
   case "${default_target}" in
-    rocknix-graphical.target|multi-user.target) : ;;
+    rocknix-main-space.target|multi-user.target) : ;;
     *) fail "default.target points at unexpected target: ${default_target}" ;;
   esac
 fi
 
-printf 'nix-integration thin-host runtime smoke passed\n'
+printf 'rocknix-guest-substrate thin-host runtime smoke passed\n'
