@@ -17,6 +17,15 @@ makeinstall_target() {
   then
     cp -r ${PKG_DIR}/platforms/* ${INSTALL}/usr/lib/autostart/quirks/platforms
   fi
+  if [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ]; then
+    # These SM8550 quirks only configure the legacy host UI/MangoHud plane.
+    # The minimal host has no host compositor or emulator UX; the Nix guest
+    # owns those concerns.
+    rm -f \
+      ${INSTALL}/usr/lib/autostart/quirks/platforms/SM8550/075-mangohud-supported \
+      ${INSTALL}/usr/lib/autostart/quirks/platforms/SM8550/090-ui_service \
+      ${INSTALL}/usr/lib/autostart/quirks/platforms/SM8550/091-ui_shader
+  fi
   chmod -R 0755 ${INSTALL}/usr/lib/autostart/quirks
 }
 

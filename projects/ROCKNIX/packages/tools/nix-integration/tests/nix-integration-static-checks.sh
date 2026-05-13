@@ -184,6 +184,7 @@ SM8550_OPTIONS="${REPO_ROOT}/projects/ROCKNIX/devices/SM8550/options"
 IMAGE_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk"
 NETWORK_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/virtual/network/package.mk"
 OPENSSH_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/network/openssh/package.mk"
+QUIRKS_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/hardware/quirks/package.mk"
 WORKFLOW_DIR="${REPO_ROOT}/.github/workflows"
 [ -f "${SYSTEMD_PKG}" ] || fail "missing ROCKNIX systemd package.mk"
 [ -f "${OPENSSH_PKG}" ] || fail "missing ROCKNIX openssh package.mk"
@@ -197,15 +198,33 @@ grep -q 'SM8550 minimal host pulled forbidden payload' "${IMAGE_PKG}" \
   || fail "image package must fail closed if minimal host reintroduces UX/emulation/network payloads"
 grep -q '\[ "\${SM8550_MINIMAL_HOST:-no}" != "yes" \] && PKG_DEPENDS_TARGET+=" mako-osd"' "${IMAGE_PKG}" \
   || fail "mako-osd must be gated out of the SM8550 minimal host"
-for forbidden in mako-osd sway swaywm-env wlroots xwayland screen-switch gamepadcalibration mesa-demos glmark2 vkmark emulators gamesupport retroarch lib32 tailscale wireguard-tools; do
+for forbidden in \
+  mako-osd sway swaywm-env wlroots xwayland screen-switch gamepadcalibration \
+  mesa-demos glmark2 vkmark emulators gamesupport retroarch lib32 tailscale \
+  wireguard-tools corefonts poppler p7zip umtprd usb-modeswitch \
+  ntfs-3g_ntfsprogs exfatprogs entware evtest patchelf; do
   grep -q " ${forbidden}" "${IMAGE_PKG}" || fail "image fail-closed guard must mention forbidden payload: ${forbidden}"
 done
 grep -q 'DISPLAYSERVER="no"' "${SM8550_OPTIONS}" || fail "SM8550 minimal host must disable host display server"
 grep -q 'WINDOWMANAGER="none"' "${SM8550_OPTIONS}" || fail "SM8550 minimal host must disable host window manager"
 grep -q 'EMULATION_DEVICE="no"' "${SM8550_OPTIONS}" || fail "SM8550 minimal host must disable host emulation device roots"
 grep -q 'ENABLE_32BIT=no' "${IMAGE_PKG}" || fail "minimal-host image path must disable 32-bit roots"
+grep -q 'PKG_DEPENDS_TARGET+=" i2c-tools ${ADDITIONAL_PACKAGES}"' "${IMAGE_PKG}" \
+  || fail "SM8550 minimal host must keep i2c-tools while dropping patchelf/evtest/corefonts"
+grep -q '\[ "\${SM8550_MINIMAL_HOST:-no}" != "yes" \] && PKG_DEPENDS_TARGET+=" umtprd usb-modeswitch poppler p7zip"' "${IMAGE_PKG}" \
+  || fail "SM8550 minimal host must gate host USB/MTP/PDF/archive payloads out"
+grep -q 'if \[ "\${SM8550_MINIMAL_HOST:-no}" != "yes" \]; then' "${IMAGE_PKG}" \
+  || fail "SM8550 minimal host must gate entware out"
+grep -q 'NTFS3G="no"' "${SM8550_OPTIONS}" || fail "SM8550 minimal host must disable NTFS3G"
+grep -q 'EXFAT="no"' "${SM8550_OPTIONS}" || fail "SM8550 minimal host must disable exFAT"
 grep -q 'ADDITIONAL_PACKAGES="rocknix-abl inputplumber"' "${SM8550_OPTIONS}" \
   || fail "SM8550 minimal host must keep only ABL and InputPlumber additional packages"
+grep -q '075-mangohud-supported' "${QUIRKS_PKG}" \
+  || fail "SM8550 minimal host must remove host MangoHud quirk"
+grep -q '090-ui_service' "${QUIRKS_PKG}" \
+  || fail "SM8550 minimal host must remove host UI service quirk"
+grep -q '091-ui_shader' "${QUIRKS_PKG}" \
+  || fail "SM8550 minimal host must remove host UI shader quirk"
 grep -q 'Minimal SM8550 host keeps only what the recovery/update substrate needs' "${NETWORK_PKG}" \
   || fail "ROCKNIX network meta must document the minimal-host dependency set"
 grep -q 'PKG_DEPENDS_TARGET="toolchain connman iwd netbase ethtool openssh iw wireless-regdb rsync nss-mdns"' "${NETWORK_PKG}" \
