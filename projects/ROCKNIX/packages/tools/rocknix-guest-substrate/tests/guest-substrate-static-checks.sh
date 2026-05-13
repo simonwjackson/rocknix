@@ -188,6 +188,8 @@ grep -q 'rocknix-guest-system-path' "${PKG_DIR}/scripts/rocknix-guest-promote" |
 grep -q 'resolve_guest_system_profile' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must inspect persistent guest system profile"
 grep -q 'guest_system_path_valid' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must verify applied system path has an executable init"
 grep -q 'system profile drifted' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must repair profile drift when revision marker matches"
+grep -q 'wait_for_guest_current_system' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must wait for guest current-system before repairing drift"
+grep -q 'guest current system did not become available' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must fail clearly when guest current-system is unavailable"
 grep -q 'applied system path is missing; rebuilding' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must rebuild if revision marker matches but system path is gone"
 grep -q 'nsenter .* sh -c' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must avoid login shell nsenter invocations"
 ! grep -q 'nsenter .* sh -lc' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not invoke guest login shell"
