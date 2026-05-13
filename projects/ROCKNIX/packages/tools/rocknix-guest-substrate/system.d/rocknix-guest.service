@@ -18,12 +18,22 @@
 #   - NO /tmp/.X11-unix bind     -> guest does not need host X11
 #   - NO /etc/ssh/authorized_keys.d bind -> guest SSH, when enabled in
 #                                           the guest, owns its own keys
-#   - NO blanket /storage bind   -> only narrow subdirs (roms RO, guest area RW)
+#   - NO product storage binds -> guest owns product state and media mounting;
+#                                  host exposes only /storage/.guest as the
+#                                  intentional host/guest control + persist seam
 #
 # Network:
 #   --register=no  -> avoid host machinectl coupling
 #   no --private-network -> shared host netns; guest's NetworkManager owns
 #                           wlan0 directly (Tier C finding)
+#
+# Storage:
+#   Host owns substrate storage: /flash, /storage, /nix, /storage/.update,
+#   and /storage/machines/rocknix-guest. The guest owns game/media mounting.
+#   rocknix-guest-start discovers safe non-host-mounted game/media block
+#   devices and passes those nodes through at launch; broad block DeviceAllow
+#   entries are rw-only (no mknod) so the guest cannot create hidden host
+#   substrate device nodes.
 #
 # Lifecycle:
 #   ExecStartPre seeds /run/current-system + /run/booted-system from
@@ -39,7 +49,7 @@
 Description=ROCKNIX SM8550 guest (NixOS main-space)
 Documentation=file:///usr/lib/rocknix-guest-substrate/docs/layer14-main-space-contract.md
 RequiresMountsFor=/storage /nix
-After=local-fs.target nix.mount network-pre.target rocknix-automount.service
+After=local-fs.target nix.mount network-pre.target
 Requires=nix.mount
 ConditionPathExists=/storage/machines/rocknix-guest
 ConditionPathExists=/usr/bin/systemd-nspawn
@@ -92,6 +102,14 @@ DeviceAllow=/dev/uinput rwm
 DeviceAllow=/dev/tty0 rwm
 DeviceAllow=/dev/tty1 rwm
 DeviceAllow=/dev/rfkill rwm
+# Game/media storage is passed by rocknix-guest-start after excluding any
+# block root that backs mounted host filesystems. These class allows are
+# deliberately rw-only: without mknod, the guest can use bound safe nodes but
+# cannot manufacture access to hidden host substrate devices.
+DeviceAllow=block-sd rw
+DeviceAllow=block-mmc rw
+DeviceAllow=block-nvme rw
+DeviceAllow=block-blkext rw
 
 # Force unified cgroup hierarchy inside the guest container. The host
 # kernel cmdline sets systemd.unified_cgroup_hierarchy=1, but
@@ -121,35 +139,7 @@ ExecStartPre=/usr/bin/rocknix-guest-prep
 # contract and remains harmless when no hidden host records exist.
 ExecStartPre=/usr/bin/rocknix-guest-udev-stage
 
-ExecStart=/usr/bin/systemd-nspawn \
-  --machine=rocknix-guest \
-  --directory=/storage/machines/rocknix-guest \
-  --boot \
-  --register=no \
-  --keep-unit \
-  --capability=CAP_NET_ADMIN \
-  --capability=CAP_NET_RAW \
-  --bind=/dev/net/tun \
-  --bind=/dev/uhid \
-  --bind=/dev/snd \
-  --bind=/dev/rfkill \
-  --bind=/dev/dri/card0 \
-  --bind=/dev/dri/renderD128 \
-  --bind=/dev/input \
-  --bind=/dev/uinput \
-  --bind=/dev/tty0 \
-  --bind=/dev/tty1 \
-  --bind-ro=/run/.guest-udev:/run/udev \
-  --bind=/sys/class/backlight \
-  --bind=/sys/class/leds \
-  --bind=/sys/class/devfreq \
-  --bind=/sys/devices/system/cpu/cpufreq \
-  --bind-ro=/storage/roms \
-  --bind=/storage/roms/bios:/storage/roms/bios \
-  --bind=/storage/.config/Cemu:/storage/.config/Cemu \
-  --bind=/storage/.config/MangoHud:/storage/.config/MangoHud \
-  --bind=/storage/.local:/storage/.local \
-  --bind=/storage/.guest
+ExecStart=/usr/bin/rocknix-guest-start
 
 Restart=on-failure
 RestartSec=2s

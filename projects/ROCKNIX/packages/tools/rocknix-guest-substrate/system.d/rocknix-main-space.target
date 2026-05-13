@@ -10,8 +10,8 @@
 [Unit]
 Description=ROCKNIX main-space (SM8550 guest)
 Documentation=file:///usr/lib/rocknix-guest-substrate/docs/layer14-main-space-contract.md
-Requires=multi-user.target rocknix-automount.service nix.mount
-After=multi-user.target rocknix-automount.service nix.mount network-online.target
+Requires=multi-user.target nix.mount
+After=multi-user.target nix.mount network-online.target
 Wants=rocknix-guest.service
 AllowIsolate=yes
 

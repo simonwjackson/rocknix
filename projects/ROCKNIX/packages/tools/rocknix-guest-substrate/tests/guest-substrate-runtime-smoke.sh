@@ -50,6 +50,7 @@ check_grep() {
 
 check_executable "${SCRIPT_ROOT}/rocknix-guest-prep"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-promote"
+check_executable "${SCRIPT_ROOT}/rocknix-guest-start"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-udev-stage"
 check_executable "${SCRIPT_ROOT}/rocknix-recovery-toggle"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-soak"
@@ -67,9 +68,10 @@ for retired_unit in nix-daemon.service nix-daemon.socket; do
 done
 
 guest_unit="${UNIT_ROOT}/rocknix-guest.service"
-check_grep 'ExecStart=/usr/bin/systemd-nspawn' "${guest_unit}" "guest unit must use systemd-nspawn"
-check_grep '--directory=/storage/machines/rocknix-guest' "${guest_unit}" "guest unit must target /storage/machines/rocknix-guest"
-check_grep '--register=no' "${guest_unit}" "guest unit must avoid machined registration"
+check_grep 'ExecStart=/usr/bin/rocknix-guest-start' "${guest_unit}" "guest unit must use guest start helper"
+check_grep '/usr/bin/systemd-nspawn' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must exec systemd-nspawn"
+check_grep '--directory=/storage/machines/rocknix-guest' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must target /storage/machines/rocknix-guest"
+check_grep '--register=no' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must avoid machined registration"
 check_grep 'DeviceAllow=/dev/net/tun rwm' "${guest_unit}" "guest unit must allow tun device access for guest Tailscale"
 for device_allow in \
   'DeviceAllow=/dev/uhid rwm' \
@@ -88,14 +90,20 @@ for device_allow in \
   'DeviceAllow=/dev/uinput rwm' \
   'DeviceAllow=/dev/tty0 rwm' \
   'DeviceAllow=/dev/tty1 rwm' \
-  'DeviceAllow=/dev/rfkill rwm'; do
+  'DeviceAllow=/dev/rfkill rwm' \
+  'DeviceAllow=block-sd rw' \
+  'DeviceAllow=block-mmc rw' \
+  'DeviceAllow=block-nvme rw' \
+  'DeviceAllow=block-blkext rw'; do
   check_grep "${device_allow}" "${guest_unit}" "guest unit must not let tun DeviceAllow block main-space devices: ${device_allow}"
 done
-check_grep '--capability=CAP_NET_ADMIN' "${guest_unit}" "guest unit must retain CAP_NET_ADMIN for guest Tailscale"
-check_grep '--capability=CAP_NET_RAW' "${guest_unit}" "guest unit must retain CAP_NET_RAW for guest Tailscale"
-check_grep '--bind=/dev/net/tun' "${guest_unit}" "guest unit must pass through tun for guest Tailscale"
-check_grep '--bind=/dev/uhid' "${guest_unit}" "guest unit must pass through uhid for guest Bluetooth HID devices"
-check_grep '--bind=/dev/uinput' "${guest_unit}" "guest unit must pass through uinput for guest InputPlumber"
+check_grep '--capability=CAP_NET_ADMIN' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must retain CAP_NET_ADMIN for guest Tailscale"
+check_grep '--capability=CAP_NET_RAW' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must retain CAP_NET_RAW for guest Tailscale"
+check_grep '--bind=/dev/net/tun' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must pass through tun for guest Tailscale"
+check_grep '--bind=/dev/uhid' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must pass through uhid for guest Bluetooth HID devices"
+check_grep '--bind=/dev/uinput' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must pass through uinput for guest InputPlumber"
+check_grep '--bind=/storage/.guest' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must keep the single host/guest storage seam"
+check_grep 'is_host_mounted_root' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must guard host-mounted block roots"
 check_grep 'ExecStartPre=/usr/bin/rocknix-guest-prep' "${guest_unit}" "guest unit missing prep helper"
 check_grep 'ExecStartPre=/usr/bin/rocknix-guest-udev-stage' "${guest_unit}" "guest unit missing udev stage helper"
 if grep -q 'ExecStopPost=' "${guest_unit}"; then
@@ -108,7 +116,7 @@ check_grep 'After=rocknix-guest.service' "${promote_unit}" "promotion unit must 
 check_grep 'ExecStart=/usr/bin/rocknix-guest-promote' "${promote_unit}" "promotion unit has wrong ExecStart"
 check_grep 'WantedBy=rocknix-main-space.target' "${promote_unit}" "promotion unit must install under main-space target"
 
-for forbidden in '--bind-ro=/usr' '--bind-ro=/lib' '--bind-ro=/etc/profile' '--bind=/storage '; do
+for forbidden in '--bind-ro=/usr' '--bind-ro=/lib' '--bind-ro=/etc/profile' '--bind=/storage ' '--bind-ro=/storage/roms' '--bind=/storage/.config/Cemu' '--bind=/storage/.config/MangoHud' '--bind=/storage/.local'; do
   if grep -v '^#' "${guest_unit}" | grep -F -q -- "${forbidden}"; then
     fail "guest unit contains forbidden host leak: ${forbidden}"
   fi
