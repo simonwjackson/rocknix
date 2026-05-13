@@ -31,9 +31,9 @@
 #   Host owns substrate storage: /flash, /storage, /nix, /storage/.update,
 #   and /storage/machines/rocknix-guest. The guest owns game/media mounting.
 #   rocknix-guest-start discovers safe non-host-mounted game/media block
-#   devices and passes those nodes through at launch; broad block DeviceAllow
-#   entries are rw-only (no mknod) so the guest cannot create hidden host
-#   substrate device nodes.
+#   devices, applies exact runtime DeviceAllow entries for those nodes, and
+#   passes them through at launch. Do not use broad block DeviceAllow classes:
+#   nspawn/devtmpfs can still expose host block nodes inside the guest.
 #
 # Lifecycle:
 #   ExecStartPre seeds /run/current-system + /run/booted-system from
@@ -102,14 +102,10 @@ DeviceAllow=/dev/uinput rwm
 DeviceAllow=/dev/tty0 rwm
 DeviceAllow=/dev/tty1 rwm
 DeviceAllow=/dev/rfkill rwm
+
 # Game/media storage is passed by rocknix-guest-start after excluding any
-# block root that backs mounted host filesystems. These class allows are
-# deliberately rw-only: without mknod, the guest can use bound safe nodes but
-# cannot manufacture access to hidden host substrate devices.
-DeviceAllow=block-sd rw
-DeviceAllow=block-mmc rw
-DeviceAllow=block-nvme rw
-DeviceAllow=block-blkext rw
+# block root that backs mounted host filesystems. Keep block DeviceAllow exact
+# and runtime-generated there; broad block classes expose host substrate disks.
 
 # Force unified cgroup hierarchy inside the guest container. The host
 # kernel cmdline sets systemd.unified_cgroup_hierarchy=1, but

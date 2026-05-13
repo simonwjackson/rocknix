@@ -90,11 +90,7 @@ for device_allow in \
   'DeviceAllow=/dev/uinput rwm' \
   'DeviceAllow=/dev/tty0 rwm' \
   'DeviceAllow=/dev/tty1 rwm' \
-  'DeviceAllow=/dev/rfkill rwm' \
-  'DeviceAllow=block-sd rw' \
-  'DeviceAllow=block-mmc rw' \
-  'DeviceAllow=block-nvme rw' \
-  'DeviceAllow=block-blkext rw'; do
+  'DeviceAllow=/dev/rfkill rwm'; do
   check_grep "${device_allow}" "${guest_unit}" "guest unit must not let tun DeviceAllow block main-space devices: ${device_allow}"
 done
 check_grep '--capability=CAP_NET_ADMIN' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must retain CAP_NET_ADMIN for guest Tailscale"
@@ -104,6 +100,10 @@ check_grep '--bind=/dev/uhid' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start 
 check_grep '--bind=/dev/uinput' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must pass through uinput for guest InputPlumber"
 check_grep '--bind=/storage/.guest' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must keep the single host/guest storage seam"
 check_grep 'is_host_mounted_root' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must guard host-mounted block roots"
+check_grep 'systemctl set-property' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must apply exact runtime DeviceAllow entries"
+if grep -q 'DeviceAllow=block-sd' "${guest_unit}"; then
+  fail "guest unit must not use broad block DeviceAllow classes"
+fi
 check_grep 'ExecStartPre=/usr/bin/rocknix-guest-prep' "${guest_unit}" "guest unit missing prep helper"
 check_grep 'ExecStartPre=/usr/bin/rocknix-guest-udev-stage' "${guest_unit}" "guest unit missing udev stage helper"
 if grep -q 'ExecStopPost=' "${guest_unit}"; then
