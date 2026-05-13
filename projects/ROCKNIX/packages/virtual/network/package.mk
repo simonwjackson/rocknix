@@ -9,7 +9,8 @@ PKG_SITE="https://libreelec.tv"
 PKG_URL=""
 if [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ]; then
   # Minimal SM8550 host keeps only what the recovery/update substrate needs:
-  # Wi-Fi bring-up, host SSH, transfer tooling, and basic name resolution.
+  # wired recovery networking, host SSH, transfer tooling, and basic name
+  # resolution. Wi-Fi authentication/control moves to the NixOS guest.
   # Product-facing network services (tailscale, avahi, miniupnpc,
   # speedtest-cli, samba, simple-http-server, zerotier, wireguard) move to
   # the guest or disappear from the host image.
