@@ -76,6 +76,8 @@ for device_allow in \
   'DeviceAllow=/dev/dri/renderD128 rwm' \
   'DeviceAllow=/dev/input/event0 rwm' \
   'DeviceAllow=/dev/input/event11 rwm' \
+  'DeviceAllow=char-input rwm' \
+  'DeviceAllow=char-hidraw rwm' \
   'DeviceAllow=/dev/uinput rwm' \
   'DeviceAllow=/dev/tty0 rwm' \
   'DeviceAllow=/dev/tty1 rwm' \
