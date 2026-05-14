@@ -104,7 +104,10 @@ applied_rev="$(read_first_line "${APPLIED_REV_FILE}")"
 applied_system="$(read_first_line "${APPLIED_SYSTEM_FILE}")"
 hold_state="absent"
 [ -e "${MANUAL_HOLD_FILE}" ] && hold_state="present"
-import_candidate="$(read_first_line "${IMPORT_PROVENANCE_FILE}")"
+import_candidate=""
+if [ -r "${IMPORT_PROVENANCE_FILE}" ]; then
+  import_candidate="$(sed -n 's/^system=//p' "${IMPORT_PROVENANCE_FILE}" | head -1 | tr -d '[:space:]')"
+fi
 
 log "selected=${selected_system:-none}"
 log "legacy=${legacy_system:-none}"
@@ -137,6 +140,8 @@ fi
 
 if [ -n "${running_system}" ] && [ -f "${GUEST_ROOT}${running_system}/${PROOF_MARKER_REL}" ]; then
   log "proof_marker=${running_system}/${PROOF_MARKER_REL}"
+elif [ -n "${running_system}" ] && [ -n "${import_candidate}" ] && [ "${running_system}" = "${import_candidate}" ]; then
+  fail "running imported candidate is missing proof marker: ${running_system}/${PROOF_MARKER_REL}"
 fi
 
 log "audit complete"
