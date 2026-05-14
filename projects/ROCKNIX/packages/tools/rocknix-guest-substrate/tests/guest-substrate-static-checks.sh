@@ -425,6 +425,49 @@ run_prep_profile_fixture() {
 run_prep_profile_fixture
 
 grep -q 'inputplumber/by-hidden' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" || fail "udev stage must scrub InputPlumber-hidden devices"
+grep -q 'SYS_SOUND_DIR' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" || fail "udev stage must allow fixture-controlled sound sysfs"
+grep -q 'DEVNAME=/dev/snd/controlC' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" || fail "udev stage must treat the control device udev record as sound-ready"
+! grep -q 'ALSA_CARD_NUMBER' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" || fail "udev stage must not wait for ALSA_CARD_NUMBER; ROCKNIX udev records may not provide it"
+
+run_udev_stage_sound_wait_fixture() {
+  tmp_dir=$(mktemp -d)
+  source_dir="${tmp_dir}/udev"
+  stage_dir="${tmp_dir}/stage"
+  sys_sound_dir="${tmp_dir}/sys-sound"
+  mkdir -p "${source_dir}/data" "${source_dir}/tags" "${sys_sound_dir}"
+
+  (
+    sleep 1
+    mkdir -p "${sys_sound_dir}/controlC0"
+    printf '%s\n' '116:5' > "${sys_sound_dir}/controlC0/dev"
+    cat > "${source_dir}/data/c116:5" <<'EOF'
+E:DEVPATH=/devices/platform/sound/sound/card0/controlC0
+E:DEVNAME=/dev/snd/controlC0
+E:SUBSYSTEM=sound
+E:ID_PATH=platform-sound
+EOF
+  ) &
+  producer_pid=$!
+
+  SOURCE_DIR="${source_dir}" \
+    STAGE_DIR="${stage_dir}" \
+    SYS_SOUND_DIR="${sys_sound_dir}" \
+    SOUND_UDEV_WAIT_SECS=3 \
+    "${PKG_DIR}/scripts/rocknix-guest-udev-stage" >/dev/null 2>&1 || {
+      wait "${producer_pid}" 2>/dev/null || true
+      rm -rf "${tmp_dir}"
+      fail "udev stage fixture: stage helper failed"
+    }
+  wait "${producer_pid}"
+
+  [ -f "${stage_dir}/data/c116:5" ] || fail "udev stage fixture: did not wait for late sound control record"
+  grep -q 'E:DEVNAME=/dev/snd/controlC0' "${stage_dir}/data/c116:5" \
+    || fail "udev stage fixture: staged sound control record is incomplete"
+
+  rm -rf "${tmp_dir}"
+}
+run_udev_stage_sound_wait_fixture
+
 grep -q 'check_host_ssh_responsive' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing host SSH check"
 grep -q 'ROCKNIX_REQUIRE_HOST_ESSWAY' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper must allow SSH-first recovery without host essway"
 grep -q 'check_resolv_owned' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing resolv ownership check"
