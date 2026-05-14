@@ -81,6 +81,14 @@ post_install() {
     mv "${guest_tarball}.tmp" "${guest_tarball}"
   fi
 
+  actual_sha="$(sha256sum "${guest_tarball}" | awk '{print $1}')"
+  if [ "${actual_sha}" != "${PKG_NIX_GUEST_SHA256}" ]; then
+    echo "rocknix-guest-substrate: cached rocknix-nix-guest tarball SHA256 mismatch" >&2
+    echo "  expected: ${PKG_NIX_GUEST_SHA256}" >&2
+    echo "  actual:   ${actual_sha}" >&2
+    exit 1
+  fi
+
   guest_extract="${PKG_BUILD}/.rocknix-nix-guest"
   rm -rf "${guest_extract}"
   mkdir -p "${guest_extract}"

@@ -48,6 +48,9 @@ on:
 jobs:
   build-image-only:
     runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
     env:
       JAVA_HOME: /usr
       PROJECT: ROCKNIX
@@ -66,6 +69,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
       BASE_RUN_ID: ${{ inputs.BASE_RUN_ID }}
+      CLEAN_GUEST_SUBSTRATE: ${{ inputs.CLEAN_GUEST_SUBSTRATE }}
     steps:
       - name: Maximize build space
         uses: justinthelaw/maximize-github-runner-space@v0.7.0
@@ -97,23 +101,81 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Run build integrity checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags https://github.com/ROCKNIX/distribution.git \
+            next:refs/remotes/upstream/next
+          projects/ROCKNIX/packages/tools/rocknix-guest-substrate/tests/guest-substrate-static-checks.sh
+          git diff --check upstream/next...HEAD
+
       - name: Verify base run is on the same branch and successful
         run: |
           set -euo pipefail
           run_json=$(gh api "repos/${GH_REPO}/actions/runs/${BASE_RUN_ID}")
-          base_branch=$(echo "${run_json}" | jq -r '.head_branch')
+          base_branch=$(echo "${run_json}" | jq -r '.head_branch // empty')
           base_status=$(echo "${run_json}" | jq -r '.conclusion')
           base_workflow=$(echo "${run_json}" | jq -r '.name')
+          base_sha=$(echo "${run_json}" | jq -r '.head_sha // empty')
+          current_branch="${GITHUB_REF_NAME}"
+          current_sha="$(git rev-parse HEAD)"
           echo "base run: ${BASE_RUN_ID}"
-          echo "  workflow: ${base_workflow}"
-          echo "  branch:   ${base_branch}"
-          echo "  status:   ${base_status}"
+          echo "  workflow:    ${base_workflow}"
+          echo "  branch:      ${base_branch:-<empty>}"
+          echo "  sha:         ${base_sha:-<empty>}"
+          echo "  status:      ${base_status}"
+          echo "current run:"
+          echo "  branch:      ${current_branch}"
+          echo "  sha:         ${current_sha}"
           if [ "${base_status}" != "success" ]; then
             echo "::error::base run ${BASE_RUN_ID} did not succeed (status=${base_status})"
             exit 1
           fi
           if [ "${base_workflow}" != "Build" ]; then
             echo "::error::base run ${BASE_RUN_ID} is not a 'Build' workflow run (was '${base_workflow}')"
+            exit 1
+          fi
+          if [ -z "${base_branch}" ] || [ "${base_branch}" = "null" ]; then
+            echo "::error::base run ${BASE_RUN_ID} has no branch; fast-iter artifact reuse is branch-only"
+            exit 1
+          fi
+          if [ "${base_branch}" != "${current_branch}" ]; then
+            echo "::error::base run ${BASE_RUN_ID} is on branch '${base_branch}', but this workflow is running '${current_branch}'"
+            exit 1
+          fi
+          if [ -z "${base_sha}" ] || [ "${base_sha}" = "null" ]; then
+            echo "::error::base run ${BASE_RUN_ID} has no head SHA"
+            exit 1
+          fi
+          if ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+            echo "::error::base run SHA ${base_sha} is not present in the checked-out history"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${base_sha}" HEAD; then
+            echo "::error::base run SHA ${base_sha} is not an ancestor of current SHA ${current_sha}"
+            exit 1
+          fi
+
+          changed_paths="$(git diff --name-only "${base_sha}..HEAD")"
+          if [ -n "${changed_paths}" ]; then
+            echo "changed paths since base run:"
+            printf '%s\n' "${changed_paths}" | sed 's/^/  /'
+          else
+            echo "changed paths since base run: none"
+          fi
+
+          unsafe_changes="$(printf '%s\n' "${changed_paths}" | grep -Ev '^(\.github/workflows/(build-image-only|build-nightly)\.yml|scripts/local-image-build|projects/ROCKNIX/packages/tools/rocknix-guest-substrate/(package\.mk|scripts/.*|system\.d/.*|tests/.*))$' || true)"
+          if [ -n "${unsafe_changes}" ]; then
+            echo "::error::base run is stale for this checkout; changed paths are not image-step-safe. Run a full Build first."
+            printf '%s\n' "${unsafe_changes}" | sed 's/^/  /'
+            exit 1
+          fi
+
+          guest_substrate_changes="$(printf '%s\n' "${changed_paths}" | grep -E '^projects/ROCKNIX/packages/tools/rocknix-guest-substrate/(package\.mk|scripts/|system\.d/|tests/)' || true)"
+          if [ -n "${guest_substrate_changes}" ] && [ "${CLEAN_GUEST_SUBSTRATE}" != "true" ]; then
+            echo "::error::guest-substrate package/script/unit/test changes require CLEAN_GUEST_SUBSTRATE=true"
+            printf '%s\n' "${guest_substrate_changes}" | sed 's/^/  /'
             exit 1
           fi
 
@@ -176,7 +238,7 @@ jobs:
           docker run --init --env-file .env --rm --user $(id -u):$(id -g) \
             -v ${PWD}:${PWD} -w ${PWD} \
             "ghcr.io/${{ steps.owner.outputs.OWNER_LC }}/rocknix-build:latest" \
-            bash -c "./scripts/clean rocknix-guest-substrate || true"
+            bash -c "./scripts/clean rocknix-guest-substrate"
 
       - name: build
         run: |

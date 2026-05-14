@@ -407,4 +407,6 @@ else
   err "==> launching foreground; logs to ${LOG_FILE}"
   err "==> Ctrl+C will stop the build cleanly (SIGINT propagates to scope)"
   "${RUN_CMD[@]}" 2>&1 | tee "${LOG_FILE}"
+  build_status=${PIPESTATUS[0]}
+  exit "${build_status}"
 fi

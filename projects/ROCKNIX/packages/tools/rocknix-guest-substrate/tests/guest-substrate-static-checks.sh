@@ -25,6 +25,31 @@ check_unit() {
   [ -f "${path}" ] || fail "missing unit: ${path}"
 }
 
+assert_order() {
+  path=$1
+  first=$2
+  second=$3
+  message=$4
+  awk -v first="${first}" -v second="${second}" '
+    index($0, first) { seen = 1 }
+    seen && index($0, second) { found = 1 }
+    END { exit found ? 0 : 1 }
+  ' "${path}" || fail "${message}"
+}
+
+assert_job_contains() {
+  path=$1
+  job=$2
+  needle=$3
+  message=$4
+  awk -v job="  ${job}:" -v needle="${needle}" '
+    $0 == job { in_job = 1; next }
+    in_job && /^  [A-Za-z0-9_-]+:/ { exit found ? 0 : 1 }
+    in_job && index($0, needle) { found = 1 }
+    END { if (in_job) exit found ? 0 : 1; exit 1 }
+  ' "${path}" || fail "${message}"
+}
+
 # Package shape: thin-host bootstrap only. No old Layer 4-13 host CLIs,
 # module kit, profile.d hook, or host nix-daemon units should remain.
 [ -f "${PKG_DIR}/package.mk" ] || fail "missing package.mk"
@@ -85,7 +110,11 @@ sh -n "${SCRIPT_DIR}/guest-substrate-runtime-smoke.sh" || fail "runtime smoke sy
 grep -q 'PKG_NIX_GUEST_REV=' "${PKG_DIR}/package.mk" || fail "package.mk missing guest rev pin"
 grep -q 'PKG_NIX_GUEST_SHA256=' "${PKG_DIR}/package.mk" || fail "package.mk missing guest tarball sha256 pin"
 grep -q 'rocknix-nix-guest/archive' "${PKG_DIR}/package.mk" || fail "package.mk missing guest tarball URL"
-grep -q 'sha256sum "${guest_tarball}.tmp"' "${PKG_DIR}/package.mk" || fail "package.mk must verify guest tarball sha256"
+grep -q 'sha256sum "${guest_tarball}.tmp"' "${PKG_DIR}/package.mk" || fail "package.mk must verify freshly downloaded guest tarball sha256"
+grep -q 'sha256sum "${guest_tarball}"' "${PKG_DIR}/package.mk" || fail "package.mk must verify cached guest tarball sha256 before extraction"
+grep -q 'cached rocknix-nix-guest tarball SHA256 mismatch' "${PKG_DIR}/package.mk" || fail "package.mk must fail clearly on cached tarball sha256 mismatch"
+assert_order "${PKG_DIR}/package.mk" 'sha256sum "${guest_tarball}.tmp"' 'mv "${guest_tarball}.tmp" "${guest_tarball}"' "package.mk must verify fresh guest tarball before caching it"
+assert_order "${PKG_DIR}/package.mk" 'sha256sum "${guest_tarball}"' 'tar -xzf "${guest_tarball}"' "package.mk must verify cached guest tarball before extraction"
 grep -q 'tar -xzf "${guest_tarball}"' "${PKG_DIR}/package.mk" || fail "package.mk must extract fetched guest tarball"
 grep -q 'cp -PR "${guest_extract}/."' "${PKG_DIR}/package.mk" || fail "package.mk must stage fetched guest tree"
 grep -q 'guest-revision' "${PKG_DIR}/package.mk" || fail "package.mk must ship packaged guest revision marker"
@@ -502,8 +531,47 @@ OPENSSH_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/network/openssh/package.mk"
 CONNMAN_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/network/connman/package.mk"
 QUIRKS_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/hardware/quirks/package.mk"
 WORKFLOW_DIR="${REPO_ROOT}/.github/workflows"
+BUILD_NIGHTLY_WORKFLOW="${WORKFLOW_DIR}/build-nightly.yml"
+IMAGE_ONLY_WORKFLOW="${WORKFLOW_DIR}/build-image-only.yml"
+LOCAL_IMAGE_BUILD="${REPO_ROOT}/scripts/local-image-build"
 [ -f "${SYSTEMD_PKG}" ] || fail "missing ROCKNIX systemd package.mk"
 [ -f "${OPENSSH_PKG}" ] || fail "missing ROCKNIX openssh package.mk"
+[ -f "${BUILD_NIGHTLY_WORKFLOW}" ] || fail "missing Build workflow"
+[ -f "${IMAGE_ONLY_WORKFLOW}" ] || fail "missing image-only workflow"
+[ -f "${LOCAL_IMAGE_BUILD}" ] || fail "missing local image build wrapper"
+
+# Build-integrity gates must run before expensive/artifact-producing paths.
+grep -q '^  validate-build-integrity:' "${BUILD_NIGHTLY_WORKFLOW}" || fail "Build workflow missing build-integrity validation job"
+grep -q 'guest-substrate-static-checks.sh' "${BUILD_NIGHTLY_WORKFLOW}" || fail "Build workflow must run guest-substrate static checks"
+grep -q 'git diff --check upstream/next\.\.\.HEAD' "${BUILD_NIGHTLY_WORKFLOW}" || fail "Build workflow must run upstream diff-check"
+assert_job_contains "${BUILD_NIGHTLY_WORKFLOW}" build-docker 'validate-build-integrity' "Docker build must depend on build-integrity validation"
+assert_job_contains "${BUILD_NIGHTLY_WORKFLOW}" build-devices 'validate-build-integrity' "device builds must depend on build-integrity validation"
+assert_job_contains "${BUILD_NIGHTLY_WORKFLOW}" release-nightly 'validate-build-integrity' "nightly release must depend on build-integrity validation"
+assert_job_contains "${BUILD_NIGHTLY_WORKFLOW}" release-official 'validate-build-integrity' "official release must depend on build-integrity validation"
+assert_job_contains "${BUILD_NIGHTLY_WORKFLOW}" release-nightly "!contains(needs.*.result, 'skipped')" "nightly release must not proceed when validation-dependent jobs are skipped"
+assert_job_contains "${BUILD_NIGHTLY_WORKFLOW}" release-official "!contains(needs.*.result, 'skipped')" "official release must not proceed when validation-dependent jobs are skipped"
+
+grep -q 'permissions:' "${IMAGE_ONLY_WORKFLOW}" || fail "image-only workflow must declare least-privilege permissions"
+grep -q 'actions: read' "${IMAGE_ONLY_WORKFLOW}" || fail "image-only workflow needs read-only Actions metadata/artifact permission"
+grep -q 'guest-substrate-static-checks.sh' "${IMAGE_ONLY_WORKFLOW}" || fail "image-only workflow must run guest-substrate static checks"
+grep -q 'git diff --check upstream/next\.\.\.HEAD' "${IMAGE_ONLY_WORKFLOW}" || fail "image-only workflow must run upstream diff-check"
+assert_order "${IMAGE_ONLY_WORKFLOW}" 'Run build integrity checks' 'Verify base run is on the same branch and successful' "image-only workflow must validate static/diff checks before base-run preflight"
+assert_order "${IMAGE_ONLY_WORKFLOW}" 'Verify base run is on the same branch and successful' 'Download aarch64 artifact from base run' "image-only workflow must verify artifact compatibility before download"
+grep -q 'GITHUB_REF_NAME' "${IMAGE_ONLY_WORKFLOW}" || fail "image-only workflow must compare base branch to dispatch branch"
+grep -q 'base_sha=' "${IMAGE_ONLY_WORKFLOW}" || fail "image-only workflow must inspect base run head SHA"
+grep -q 'git merge-base --is-ancestor "${base_sha}" HEAD' "${IMAGE_ONLY_WORKFLOW}" || fail "image-only workflow must require base SHA ancestry"
+grep -q 'unsafe_changes=' "${IMAGE_ONLY_WORKFLOW}" || fail "image-only workflow must reject non-image-step-safe diffs"
+grep -q 'CLEAN_GUEST_SUBSTRATE' "${IMAGE_ONLY_WORKFLOW}" || fail "image-only workflow must enforce guest-substrate clean policy"
+grep -q 'guest-substrate package/script/unit/test changes require CLEAN_GUEST_SUBSTRATE=true' "${IMAGE_ONLY_WORKFLOW}" \
+  || fail "image-only workflow must reject guest-substrate changes when package clean is disabled"
+! grep -q 'clean rocknix-guest-substrate || true' "${IMAGE_ONLY_WORKFLOW}" \
+  || fail "image-only workflow must not mask guest-substrate clean failures"
+
+# Foreground local builds pipe through tee; the build command status must win.
+grep -q '\${PIPESTATUS\[0\]}' "${LOCAL_IMAGE_BUILD}" || fail "local-image-build foreground path must capture the left side of the tee pipeline"
+assert_order "${LOCAL_IMAGE_BUILD}" '| tee "${LOG_FILE}"' 'build_status=${PIPESTATUS[0]}' "local-image-build must capture foreground build status immediately after tee"
+assert_order "${LOCAL_IMAGE_BUILD}" 'build_status=${PIPESTATUS[0]}' 'exit "${build_status}"' "local-image-build must return foreground build status"
+
 grep -q '\[ "\${DEVICE}" = "SM8550" \] && PKG_DEPENDS_TARGET+=" rocknix-guest-substrate"' "${IMAGE_PKG}" \
   || fail "image package must gate rocknix-guest-substrate on DEVICE=SM8550"
 grep -q 'SM8550_MINIMAL_HOST' "${SM8550_OPTIONS}" \

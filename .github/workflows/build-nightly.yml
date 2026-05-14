@@ -168,10 +168,33 @@ jobs:
           
           echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
 
+  validate-build-integrity:
+    if: (github.event_name != 'schedule') || (github.repository == 'ROCKNIX/distribution' && github.ref_name == 'next')
+    name: Build integrity checks
+    needs: set-envs
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run guest-substrate static checks and upstream diff check
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags https://github.com/ROCKNIX/distribution.git \
+            next:refs/remotes/upstream/next
+          projects/ROCKNIX/packages/tools/rocknix-guest-substrate/tests/guest-substrate-static-checks.sh
+          git diff --check upstream/next...HEAD
+
   build-docker:
     if: github.event_name != 'schedule' || (github.repository == 'ROCKNIX/distribution' && github.ref_name == 'next')
     name: Docker
-    needs: set-envs
+    needs:
+      - set-envs
+      - validate-build-integrity
     uses: ./.github/workflows/build-docker-image.yml
     with:
       OWNER_LC: ${{ needs.set-envs.outputs.OWNER_LC }}
@@ -181,6 +204,7 @@ jobs:
     name: Build Devices
     needs:
       - set-envs
+      - validate-build-integrity
       - build-docker
     strategy:
       fail-fast: false
@@ -206,9 +230,12 @@ jobs:
         run: gh workflow run retry-workflow.yml -F run_id=${{ github.run_id }}
 
   release-nightly:
-     if: ${{ always() && !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.repository_owner == 'ROCKNIX' && needs.set-envs.outputs.NIGHTLY == 'yes' && github.event_name != 'pull_request' }}
+     if: ${{ always() && !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'skipped') && github.repository_owner == 'ROCKNIX' && needs.set-envs.outputs.NIGHTLY == 'yes' && github.event_name != 'pull_request' }}
      name: Release nightly
-     needs: build-devices
+     needs:
+       - set-envs
+       - validate-build-integrity
+       - build-devices
      runs-on: ubuntu-24.04
      steps:
      - name: debug needs
@@ -297,9 +324,12 @@ jobs:
          done
 
   release-official:
-    if: ${{ always() && !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.repository_owner == 'ROCKNIX' && needs.set-envs.outputs.OFFICIAL == 'yes' }}
+    if: ${{ always() && !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'skipped') && github.repository_owner == 'ROCKNIX' && needs.set-envs.outputs.OFFICIAL == 'yes' }}
     name: Release official
-    needs: build-devices
+    needs:
+      - set-envs
+      - validate-build-integrity
+      - build-devices
     runs-on: ubuntu-24.04
     steps:
       - name: Maximize build space
