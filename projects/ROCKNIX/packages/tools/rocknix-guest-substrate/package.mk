@@ -40,6 +40,7 @@ post_install() {
   cp ${PKG_DIR}/scripts/rocknix-recovery-toggle ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-soak ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-udev-stage ${INSTALL}/usr/bin
+  cp ${PKG_DIR}/scripts/rocknix-guest-wifi-unblock ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-generation-import ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-generation-switch ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-activation-audit ${INSTALL}/usr/bin
@@ -50,6 +51,7 @@ post_install() {
     ${INSTALL}/usr/bin/rocknix-recovery-toggle \
     ${INSTALL}/usr/bin/rocknix-guest-soak \
     ${INSTALL}/usr/bin/rocknix-guest-udev-stage \
+    ${INSTALL}/usr/bin/rocknix-guest-wifi-unblock \
     ${INSTALL}/usr/bin/rocknix-guest-generation-import \
     ${INSTALL}/usr/bin/rocknix-guest-generation-switch \
     ${INSTALL}/usr/bin/rocknix-guest-activation-audit
@@ -99,6 +101,7 @@ post_install() {
   # ROCKNIX remains the recovery plane via rocknix-recovery-toggle.
   enable_service rocknix-main-space.target
   enable_service rocknix-guest.service
+  enable_service rocknix-guest-wifi-ready.service
   enable_service rocknix-guest-promote.service
   enable_service rocknix-recovery-toggle.service
 

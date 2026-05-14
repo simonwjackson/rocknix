@@ -1,0 +1,94 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# Keep the SM8550 Wi-Fi PHY unblocked before handing the shared network
+# namespace to the NixOS guest. systemd-rfkill persists state under /storage on
+# ROCKNIX, so a single accidental radio-off can otherwise survive reboot and
+# leave the guest with wlan0 unavailable and zero scan results.
+
+set -eu
+
+PATH="${ROCKNIX_GUEST_HOST_PATH:-/usr/bin:/usr/sbin:/bin:/sbin}"
+
+GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
+RFKILL_CACHE="${ROCKNIX_GUEST_RFKILL_CACHE:-/storage/.cache/rfkill}"
+LOG_TAG="rocknix-guest-wifi-unblock"
+MODE="all"
+
+log() { printf '%s: %s\n' "${LOG_TAG}" "$*"; }
+
+usage() {
+  cat <<EOF
+Usage: ${LOG_TAG} [--host-only|--guest-radio]
+
+--host-only    Clear persisted host Wi-Fi rfkill state and unblock live Wi-Fi.
+--guest-radio  Also enter the running guest and enable NetworkManager Wi-Fi.
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --host-only) MODE="host-only"; shift ;;
+    --guest-radio) MODE="guest-radio"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) log "unknown arg: $1"; usage; exit 1 ;;
+  esac
+done
+
+persist_wifi_unblocked() {
+  mkdir -p "${RFKILL_CACHE}" 2>/dev/null || true
+
+  # Remove systemd-rfkill temp files left by interrupted writes, then force any
+  # known WLAN records to "0" (unblocked). The filenames include the platform
+  # path and end in :wlan on Thor/Portal, but keep the match broad for future
+  # SM8550 Wi-Fi PHY naming.
+  find "${RFKILL_CACHE}" -maxdepth 1 -type f -name '.#*' -exec rm -f {} + 2>/dev/null || true
+  find "${RFKILL_CACHE}" -maxdepth 1 -type f \( -name '*wlan*' -o -name '*wifi*' \) \
+    -exec sh -c 'for f do printf "0\n" > "$f"; done' sh {} + 2>/dev/null || true
+}
+
+unblock_host_wifi() {
+  if command -v rfkill >/dev/null 2>&1; then
+    rfkill unblock wifi 2>/dev/null || rfkill unblock wlan 2>/dev/null || true
+  fi
+  persist_wifi_unblocked
+  log "host Wi-Fi rfkill state forced unblocked"
+}
+
+find_guest_inner_pid() {
+  outer_pid="$(systemctl show -p MainPID --value "${GUEST_SERVICE}" 2>/dev/null || true)"
+  case "${outer_pid}" in ''|0) return 1 ;; esac
+  inner_pid="$(pgrep -P "${outer_pid}" 2>/dev/null | head -1 || true)"
+  [ -n "${inner_pid}" ] || return 1
+}
+
+set_guest_wifi_radio_on() {
+  i=0
+  while ! find_guest_inner_pid; do
+    [ "${i}" -lt 60 ] || { log "guest namespace unavailable; leaving host Wi-Fi unblocked"; return 0; }
+    i=$((i + 1))
+    sleep 1
+  done
+
+  nsenter -t "${inner_pid}" -m -u -i -n -p sh -c '
+    set -eu
+    export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin
+    if command -v rfkill >/dev/null 2>&1; then
+      rfkill unblock wifi 2>/dev/null || rfkill unblock wlan 2>/dev/null || true
+    fi
+    if command -v nmcli >/dev/null 2>&1; then
+      nmcli radio wifi on >/dev/null 2>&1 || true
+    fi
+    if command -v iwctl >/dev/null 2>&1; then
+      iwctl device wlan0 set-property Powered on >/dev/null 2>&1 || true
+    fi
+  ' || true
+  log "guest Wi-Fi radio requested on"
+}
+
+unblock_host_wifi
+case "${MODE}" in
+  host-only) : ;;
+  guest-radio|all) set_guest_wifi_radio_on ;;
+esac

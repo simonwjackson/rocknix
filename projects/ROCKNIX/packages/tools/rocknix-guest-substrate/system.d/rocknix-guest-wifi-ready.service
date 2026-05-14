@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+[Unit]
+Description=Ensure SM8550 guest Wi-Fi is unblocked and enabled
+RequiresMountsFor=/storage
+After=rocknix-guest.service
+Before=rocknix-guest-promote.service
+ConditionPathExists=/dev/rfkill
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rocknix-guest-wifi-unblock --guest-radio
+RemainAfterExit=yes
+
+[Install]
+WantedBy=rocknix-main-space.target

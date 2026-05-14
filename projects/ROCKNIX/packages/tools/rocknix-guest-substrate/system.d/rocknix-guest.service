@@ -128,6 +128,12 @@ MemoryMax=6G
 
 WorkingDirectory=/storage/machines/rocknix-guest
 
+# Clear persisted host rfkill state before the guest inherits the shared
+# network namespace. systemd-rfkill stores state under /storage on ROCKNIX, so
+# stale Wi-Fi soft-blocks otherwise survive reboot and leave the guest with
+# wlan0 unavailable.
+ExecStartPre=/usr/bin/rocknix-guest-wifi-unblock --host-only
+
 # Seed /run/current-system + /run/booted-system; touch the resolv.conf
 # ownership marker; verify the rootfs is shaped for SM8550 guest.
 ExecStartPre=/usr/bin/rocknix-guest-prep
