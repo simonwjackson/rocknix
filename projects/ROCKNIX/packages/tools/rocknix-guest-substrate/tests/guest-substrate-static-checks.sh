@@ -219,11 +219,13 @@ grep -q 'rocknix-guest-stage10-proof-odin2portal' "${PKG_DIR}/scripts/rocknix-gu
 grep -q 'thor|odin2portal' "${PKG_DIR}/scripts/rocknix-guest-generation-import" || fail "generation import helper must allow both Thor and Odin 2 Portal explicit targets"
 grep -q 'live generation A is required for import' "${PKG_DIR}/scripts/rocknix-guest-generation-import" || fail "generation import helper must require live generation A"
 grep -q 'rocknix-stage10-proof-marker' "${PKG_DIR}/scripts/rocknix-guest-generation-import" || fail "generation import helper must require B proof marker"
+grep -q "\[ -f '\${SYSTEM_PATH}/\${PROOF_MARKER_REL}' \]" "${PKG_DIR}/scripts/rocknix-guest-generation-import" || fail "generation import helper must verify B proof marker from live guest namespace"
 grep -q 'rocknix-guest-manual-generation-hold' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must require manual generation hold"
 grep -q 'systemctl stop "${PROMOTE_SERVICE}"' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must stop in-flight promotion"
 grep -q 'systemctl reset-failed "${GUEST_SERVICE}"' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must reset failed/start-limit state before restart"
 grep -q 'selected/legacy differ before recording generation A' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must require clean A before recording rollback state"
 grep -q 'rocknix-stage10-proof-marker' "${PKG_DIR}/scripts/rocknix-guest-activation-audit" || fail "activation audit must report B proof marker"
+grep -q 'running_guest_has_file' "${PKG_DIR}/scripts/rocknix-guest-activation-audit" || fail "activation audit must verify proof marker from live guest namespace"
 grep -q 'never repair' "${PKG_DIR}/scripts/rocknix-guest-activation-audit" || fail "activation audit must document read-only behavior"
 grep -q 'rocknix-guest-activation-audit' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper must reuse activation audit when installed"
 

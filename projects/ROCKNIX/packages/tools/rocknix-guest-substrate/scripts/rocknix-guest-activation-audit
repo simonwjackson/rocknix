@@ -92,6 +92,12 @@ running_guest_system() {
   readlink "/proc/${inner_pid}/root/run/current-system" 2>/dev/null || true
 }
 
+running_guest_has_file() {
+  [ -n "${inner_pid:-}" ] || return 1
+  guest_path="$1"
+  nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "[ -f '${guest_path}' ]" 2>/dev/null
+}
+
 [ -d "${GUEST_ROOT}" ] || fail "guest root missing: ${GUEST_ROOT}"
 [ -d "${GUEST_ROOT}/nix" ] || fail "guest rootfs /nix missing: ${GUEST_ROOT}/nix"
 
@@ -138,7 +144,7 @@ if [ -n "${running_system}" ] && [ "${running_system}" != "${selected_system}" ]
   fi
 fi
 
-if [ -n "${running_system}" ] && [ -f "${GUEST_ROOT}${running_system}/${PROOF_MARKER_REL}" ]; then
+if [ -n "${running_system}" ] && running_guest_has_file "${running_system}/${PROOF_MARKER_REL}"; then
   log "proof_marker=${running_system}/${PROOF_MARKER_REL}"
 elif [ -n "${running_system}" ] && [ -n "${import_candidate}" ] && [ "${running_system}" = "${import_candidate}" ]; then
   fail "running imported candidate is missing proof marker: ${running_system}/${PROOF_MARKER_REL}"

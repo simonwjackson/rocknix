@@ -96,10 +96,9 @@ if [ -n "${NAR_FILE}" ]; then
 fi
 
 log "verifying candidate from live guest namespace: ${SYSTEM_PATH}"
-nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "set -eu; export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin; [ -x '${SYSTEM_PATH}/init' ]; /run/current-system/sw/bin/nix-store -qR '${SYSTEM_PATH}' >/dev/null; /run/current-system/sw/bin/nix-store --verify-path '${SYSTEM_PATH}' >/dev/null"
+nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "set -eu; export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin; [ -x '${SYSTEM_PATH}/init' ]; /run/current-system/sw/bin/nix-store -qR '${SYSTEM_PATH}' >/dev/null; /run/current-system/sw/bin/nix-store --verify-path '${SYSTEM_PATH}' >/dev/null; [ -f '${SYSTEM_PATH}/${PROOF_MARKER_REL}' ]"
 
 [ -x "${GUEST_ROOT}${SYSTEM_PATH}/init" ] || fail "candidate init is not visible from host guest-rootfs view: ${GUEST_ROOT}${SYSTEM_PATH}/init"
-[ -f "${GUEST_ROOT}${SYSTEM_PATH}/${PROOF_MARKER_REL}" ] || fail "candidate is missing B proof marker: ${SYSTEM_PATH}/${PROOF_MARKER_REL}"
 
 mkdir -p "$(dirname "${IMPORT_PROVENANCE_FILE}")"
 {
