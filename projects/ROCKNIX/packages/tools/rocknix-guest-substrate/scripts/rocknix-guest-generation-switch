@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 #
-# Manual selected-generation switch helper for the Stage 10 Thor A->B->A proof.
+# Manual selected-generation switch helper for the Stage 10 SM8550 A->B->A proof.
 # It updates both the canonical selected profile and the legacy system mirror.
 
 set -eu

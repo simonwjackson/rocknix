@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 #
-# Import and verify an off-device-built Thor guest generation for the Stage 10
+# Import and verify an off-device-built SM8550 guest generation for the Stage 10
 # A->B->A proof. This helper deliberately requires a healthy running guest A so
 # import and verification happen in the same namespace that owns guest Nix.
 
@@ -26,9 +26,10 @@ usage() {
   cat <<EOF
 Usage: ${LOG_TAG} --system /nix/store/<toplevel> [--nar /storage/.guest/closure.nar] [--source REF]
 
-Imports/verifies a Thor guest generation while the current guest generation A
-is running. Build B off-device with the explicit Thor output:
-  nix build .#nixosConfigurations.rocknix-guest-main-space-thor.config.system.build.toplevel
+Imports/verifies an SM8550 guest generation while the current guest generation A
+is running. Build B off-device with an explicit per-device proof output, e.g.:
+  nix build .#nixosConfigurations.rocknix-guest-stage10-proof-thor.config.system.build.toplevel
+  nix build .#nixosConfigurations.rocknix-guest-stage10-proof-odin2portal.config.system.build.toplevel
 EOF
 }
 
@@ -48,7 +49,10 @@ done
 
 [ -n "${SYSTEM_PATH}" ] || fail "--system is required"
 case "${SYSTEM_PATH}" in /nix/store/*) : ;; *) fail "system path must be guest-absolute under /nix/store: ${SYSTEM_PATH}" ;; esac
-[ "${TARGET_ID}" = "thor" ] || fail "first Stage 10 import proof is Thor-only (got target=${TARGET_ID})"
+case "${TARGET_ID}" in
+  thor|odin2portal) : ;;
+  *) fail "Stage 10 import proof target must be thor or odin2portal (got target=${TARGET_ID})" ;;
+esac
 [ -d "${GUEST_ROOT}" ] || fail "guest rootfs missing: ${GUEST_ROOT}"
 [ -d "${GUEST_ROOT}/nix" ] || fail "guest /nix missing under ${GUEST_ROOT}"
 

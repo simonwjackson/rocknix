@@ -1,23 +1,24 @@
-# Stage 10 Thor generation switch proof
+# Stage 10 SM8550 generation switch proof
 
-This runbook validates the first Stage 10 proof on Thor/Bandai: an off-device
-NixOS guest generation can be imported into the persistent guest store, selected
-as the canonical guest system, booted, audited, and rolled back to the original
-generation without using host product UX.
+This runbook validates the Stage 10 proof on an explicit SM8550 target: an
+off-device NixOS guest generation can be imported into the persistent guest
+store, selected as the canonical guest system, booted, audited, and rolled back
+to the original generation without using host product UX.
 
 ## Scope
 
 This proof is intentionally narrow:
 
-- Target device: Thor only.
-- Off-device build output: `nixosConfigurations.rocknix-guest-main-space-thor.config.system.build.toplevel`.
+- Target device: an explicit supported SM8550 profile (`thor` or `odin2portal`).
+- Off-device build output: an explicit per-device proof output, e.g.
+  `nixosConfigurations.rocknix-guest-stage10-proof-thor.config.system.build.toplevel`
+  or `nixosConfigurations.rocknix-guest-stage10-proof-odin2portal.config.system.build.toplevel`.
 - Import mode: requires a healthy running guest generation A.
 - Profile switch: updates both `/nix/var/nix/profiles/per-user/root/rocknix-guest-system` and `/nix/var/nix/profiles/system`.
 - Recovery: manual host SSH/recovery only. There is no automatic rollback.
 
-Portal/Sobo, device-generic selection, offline host-side import, arbitrary
-in-guest `nixos-rebuild switch`, and legacy profile retirement are follow-up
-work.
+Device-generic proof, offline host-side import, arbitrary in-guest
+`nixos-rebuild switch`, and legacy profile retirement are follow-up work.
 
 ## Required proof marker
 
@@ -39,7 +40,7 @@ Capture the generation state at each boundary with
 | State | Expected evidence |
 |-------|-------------------|
 | Clean A | selected = legacy = running = A; no B proof marker required |
-| Imported B | B toplevel exists in the guest store and import provenance names target `thor` |
+| Imported B | B toplevel exists in the guest store and import provenance names the explicit target (`thor` or `odin2portal`) |
 | Selected B, not restarted | selected = legacy = B; running may still be A |
 | Booted B | selected = legacy = running = B; B proof marker visible |
 | Selected A, not restarted | selected = legacy = A; running may still be B |
