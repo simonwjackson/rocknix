@@ -14,7 +14,7 @@ This proof is intentionally narrow:
   `nixosConfigurations.rocknix-guest-stage10-proof-thor.config.system.build.toplevel`
   or `nixosConfigurations.rocknix-guest-stage10-proof-odin2portal.config.system.build.toplevel`.
 - Import mode: requires a healthy running guest generation A.
-- Profile switch: updates both `/nix/var/nix/profiles/per-user/root/rocknix-guest-system` and `/nix/var/nix/profiles/system`.
+- Profile switch: updates only `/nix/var/nix/profiles/per-user/root/rocknix-guest-system`; `/nix/var/nix/profiles/system` is retired as a host-recognized boot authority.
 - Recovery: manual host SSH/recovery only. There is no automatic rollback.
 
 Device-generic proof, offline host-side import, arbitrary in-guest
@@ -39,17 +39,17 @@ Capture the generation state at each boundary with
 
 | State | Expected evidence |
 |-------|-------------------|
-| Clean A | selected = legacy = running = A; no B proof marker required |
+| Clean A | selected = running = A; no B proof marker required |
 | Imported B | B toplevel exists in the guest store and import provenance names the explicit target (`thor` or `odin2portal`) |
-| Selected B, not restarted | selected = legacy = B; running may still be A |
-| Booted B | selected = legacy = running = B; B proof marker visible |
-| Selected A, not restarted | selected = legacy = A; running may still be B |
-| Restored A | selected = legacy = running = A; host and guest failed units remain clean |
+| Selected B, not restarted | selected = B; running may still be A |
+| Booted B | selected = running = B; B proof marker visible |
+| Selected A, not restarted | selected = A; running may still be B |
+| Restored A | selected = running = A; host and guest failed units remain clean |
 
 Applied marker files such as `/etc/rocknix-guest-revision` and
 `/etc/rocknix-guest-system-path` are corroborating evidence only during this
-manual proof. The selected and legacy profiles plus live `/run/current-system`
-are authoritative.
+manual proof. The selected profile plus live `/run/current-system` are
+authoritative.
 
 ## Promotion hold lifecycle
 

@@ -11,14 +11,13 @@
 #   The host does not own a root /nix store. It resolves guest generations
 #   through the persistent guest rootfs. The selected guest generation is the
 #   guest-absolute profile below, read by the host as ${GUEST_ROOT}${path}.
-#   /nix/var/nix/profiles/system remains a compatibility fallback/mirror while
-#   the selector contract is proven.
+#   The old guest-local system profile is retired as a boot authority: the
+#   host starts only the explicit selected guest-system profile.
 
 set -eu
 
 GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
 SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
-LEGACY_PROFILE_GUEST="/nix/var/nix/profiles/system"
 GUEST_RUN_DIR="${GUEST_ROOT}/run"
 GUEST_STORAGE_ROOT="${GUEST_ROOT}/storage"
 RESOLV_OWN_MARKER="${GUEST_ROOT}/etc/resolv.conf.guest-owned"
@@ -118,18 +117,9 @@ mkdir -p "$(dirname "${selected_profile_path}")"
 chmod 0755 "$(dirname "${selected_profile_path}")"
 
 selected_system="$(resolve_system_profile "${SELECTED_PROFILE_GUEST}" "selected guest system" || true)"
-legacy_system="$(resolve_system_profile "${LEGACY_PROFILE_GUEST}" "legacy guest system" || true)"
-
-if [ -n "${selected_system}" ]; then
-  log "selected guest system profile: ${selected_system}"
-  relink_guest_init "${selected_system}"
-elif [ -n "${legacy_system}" ]; then
-  log "WARNING: selected guest system profile missing or invalid; falling back to legacy profile"
-  log "legacy guest system profile: ${legacy_system}"
-  relink_guest_init "${legacy_system}"
-else
-  fail "no valid guest system profile found at ${SELECTED_PROFILE_GUEST} or ${LEGACY_PROFILE_GUEST}"
-fi
+[ -n "${selected_system}" ] || fail "no valid selected guest system profile found at ${SELECTED_PROFILE_GUEST}"
+log "selected guest system profile: ${selected_system}"
+relink_guest_init "${selected_system}"
 
 # Guest writable area on host /storage. This is the only host storage seam we
 # bind into the guest; product ROM/config/state paths should be guest-owned or
@@ -159,12 +149,8 @@ done
 
 # The guest's /run is tmpfs at runtime. The live guest must seed
 # /run/current-system from its selected generation; the host only verifies that
-# the selected/legacy profile chain is coherent before nspawn starts.
-if [ -n "${selected_system}" ]; then
-  log "guest selected profile present: ${selected_system}"
-elif [ -n "${legacy_system}" ]; then
-  log "guest legacy profile present: ${legacy_system}"
-fi
+# the selected profile chain is coherent before nspawn starts.
+log "guest selected profile present: ${selected_system}"
 
 # Ownership marker for /etc/resolv.conf. The guest config sets this
 # file declaratively; if anything host-side ever clobbers it, the

@@ -3,8 +3,8 @@
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 #
 # Read-only Stage 10 generation-state audit for the SM8550 guest substrate.
-# This script reports the selected profile, legacy mirror, running guest
-# /run/current-system, init symlinks, promotion markers, manual-generation
+# This script reports the selected profile, running guest /run/current-system,
+# init symlinks, promotion markers, manual-generation
 # hold state, and optional proof marker. It never repairs state.
 
 set -eu
@@ -14,7 +14,6 @@ PATH="${ROCKNIX_GUEST_HOST_PATH:-/usr/bin:/usr/sbin:/bin:/sbin}"
 GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
 GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
 SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
-LEGACY_PROFILE_GUEST="/nix/var/nix/profiles/system"
 APPLIED_REV_FILE="${ROCKNIX_GUEST_APPLIED_REV_FILE:-${GUEST_ROOT}/etc/rocknix-guest-revision}"
 APPLIED_SYSTEM_FILE="${ROCKNIX_GUEST_APPLIED_SYSTEM_FILE:-${GUEST_ROOT}/etc/rocknix-guest-system-path}"
 MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}"
@@ -105,7 +104,6 @@ running_guest_has_file() {
 [ -d "${GUEST_ROOT}/nix" ] || fail "guest rootfs /nix missing: ${GUEST_ROOT}/nix"
 
 selected_system="$(resolve_guest_profile "${SELECTED_PROFILE_GUEST}" || true)"
-legacy_system="$(resolve_guest_profile "${LEGACY_PROFILE_GUEST}" || true)"
 running_system="$(running_guest_system || true)"
 init_link="$(readlink "${GUEST_ROOT}/init" 2>/dev/null || true)"
 sbin_init_link="$(readlink "${GUEST_ROOT}/sbin/init" 2>/dev/null || true)"
@@ -119,7 +117,6 @@ if [ -r "${IMPORT_PROVENANCE_FILE}" ]; then
 fi
 
 log "selected=${selected_system:-none}"
-log "legacy=${legacy_system:-none}"
 log "running=${running_system:-none}"
 log "init=${init_link:-none}"
 log "sbin_init=${sbin_init_link:-none}"
@@ -129,12 +126,6 @@ log "manual_generation_hold=${hold_state}"
 log "import_candidate=${import_candidate:-none}"
 
 [ -n "${selected_system}" ] || fail "selected guest profile is missing or invalid"
-[ -n "${legacy_system}" ] || fail "legacy guest profile is missing or invalid"
-
-if [ "${selected_system}" != "${legacy_system}" ]; then
-  fail "selected and legacy profiles diverged: selected=${selected_system} legacy=${legacy_system}"
-fi
-
 expected_init="${selected_system}/init"
 [ "${init_link}" = "${expected_init}" ] || fail "guest /init drifted: ${init_link:-none} expected=${expected_init}"
 [ "${sbin_init_link}" = "${expected_init}" ] || fail "guest /sbin/init drifted: ${sbin_init_link:-none} expected=${expected_init}"

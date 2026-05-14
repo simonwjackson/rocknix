@@ -210,16 +210,16 @@ grep -q 'nix build --impure' "${PKG_DIR}/scripts/rocknix-guest-promote" \
   || fail "guest promotion must pass --impure (by-compatible dispatch reads /proc/device-tree/compatible at eval time)"
 grep -q 'ROCKNIX_GUEST_SYSTEM_PROFILE' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must honor selected profile override"
 grep -q "nix-env -p '\${SELECTED_PROFILE_GUEST}' --set" "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must update selected guest system profile"
-grep -q "nix-env -p '\${LEGACY_PROFILE_GUEST}' --set" "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must mirror legacy guest system profile"
+! grep -q "LEGACY_PROFILE_GUEST" "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not maintain the retired legacy system mirror"
+! grep -q "nix-env -p '/nix/var/nix/profiles/system'" "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not write retired legacy system profile"
 grep -q 'systemctl restart --no-block "${GUEST_SERVICE}"' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must restart guest after profile update"
 grep -q 'rocknix-guest-revision' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must track applied guest revision"
 grep -q 'rocknix-guest-system-path' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must track applied guest system path"
 grep -q 'resolve_guest_system_profile' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must inspect persistent guest system profile"
 grep -q 'guest_system_path_valid' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must verify applied system path has an executable init"
-grep -q 'system profile drifted' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must repair profile drift when revision marker matches"
-grep -q 'wait_for_guest_current_system' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must wait for guest current-system before repairing drift"
-grep -q 'guest current system did not become available' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must fail clearly when guest current-system is unavailable"
-grep -q 'applied system path is missing; rebuilding' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must rebuild if revision marker matches but system path is gone"
+! grep -q 'system profile drifted' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not repair selected-profile drift from marker state"
+! grep -q 'wait_for_guest_current_system' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not carry drift-repair readiness code"
+grep -q 'refusing to use applied markers as source of truth' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must treat applied markers as audit data, not source of truth"
 grep -q 'nsenter .* sh -c' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must avoid login shell nsenter invocations"
 ! grep -q 'nsenter .* sh -lc' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not invoke guest login shell"
 grep -q 'ROCKNIX_GUEST_PROMOTE_SYSTEM_PATH' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must allow promote result file override for tests"
@@ -240,7 +240,8 @@ grep -q "\[ -f '\${SYSTEM_PATH}/\${PROOF_MARKER_REL}' \]" "${PKG_DIR}/scripts/ro
 grep -q 'rocknix-guest-manual-generation-hold' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must require manual generation hold"
 grep -q 'systemctl stop "${PROMOTE_SERVICE}"' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must stop in-flight promotion"
 grep -q 'systemctl reset-failed "${GUEST_SERVICE}"' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must reset failed/start-limit state before restart"
-grep -q 'selected/legacy differ before recording generation A' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must require clean A before recording rollback state"
+grep -q 'selected/running differ before recording generation A' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must require clean selected generation A before recording rollback state"
+! grep -q "LEGACY_PROFILE_GUEST" "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must not write retired legacy system profile"
 grep -q 'rocknix-stage10-proof-marker' "${PKG_DIR}/scripts/rocknix-guest-activation-audit" || fail "activation audit must report B proof marker"
 grep -q 'running_guest_has_file' "${PKG_DIR}/scripts/rocknix-guest-activation-audit" || fail "activation audit must verify proof marker from live guest namespace"
 grep -q 'never repair' "${PKG_DIR}/scripts/rocknix-guest-activation-audit" || fail "activation audit must document read-only behavior"
@@ -307,9 +308,7 @@ EOF
   }
 
   selected_profile="${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system"
-  legacy_profile="${guest_root}/nix/var/nix/profiles/system"
   set_profile "${selected_profile}" "rocknix-guest-system-1-link" "/nix/store/applied-system"
-  set_profile "${legacy_profile}" "system-1-link" "/nix/store/applied-system"
 
   ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
     ROCKNIX_TEST_NSENTER_LOG="${nsenter_log}" \
@@ -324,7 +323,8 @@ EOF
   [ ! -s "${systemctl_log}" ] || fail "promote fixture: already-applied path should not restart guest"
 
   set_profile "${selected_profile}" "rocknix-guest-system-1-link" "/nix/store/old-system"
-  set_profile "${legacy_profile}" "system-1-link" "/nix/store/old-system"
+  : > "${nsenter_log}"
+  : > "${systemctl_log}"
   ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
     ROCKNIX_TEST_NSENTER_LOG="${nsenter_log}" \
     ROCKNIX_TEST_SYSTEMCTL_LOG="${systemctl_log}" \
@@ -334,12 +334,8 @@ EOF
     ROCKNIX_GUEST_REV_FILE="${guest_rev}" \
     ROCKNIX_GUEST_STAGED_SOURCE="${staged_source}" \
     "${PKG_DIR}/scripts/rocknix-guest-promote" >/dev/null
-  grep -q "nix-env -p '/nix/var/nix/profiles/per-user/root/rocknix-guest-system' --set '/nix/store/applied-system'" "${nsenter_log}" \
-    || fail "promote fixture: drift repair did not write selected profile"
-  grep -q "nix-env -p '/nix/var/nix/profiles/system' --set '/nix/store/applied-system'" "${nsenter_log}" \
-    || fail "promote fixture: drift repair did not mirror legacy profile"
-  grep -q 'restart --no-block rocknix-guest.service' "${systemctl_log}" \
-    || fail "promote fixture: drift repair did not restart guest"
+  [ ! -s "${nsenter_log}" ] || fail "promote fixture: marker-matching selected profile must remain authoritative"
+  [ ! -s "${systemctl_log}" ] || fail "promote fixture: marker-matching selected profile should not restart guest"
 
   mkdir -p "${guest_root}/nix/store/rebuilt-system"
   : > "${guest_root}/nix/store/rebuilt-system/init"
@@ -360,8 +356,8 @@ EOF
     "${PKG_DIR}/scripts/rocknix-guest-promote" >/dev/null
   grep -q "nix-env -p '/nix/var/nix/profiles/per-user/root/rocknix-guest-system' --set '/nix/store/rebuilt-system'" "${nsenter_log}" \
     || fail "promote fixture: rebuild path did not write selected profile"
-  grep -q "nix-env -p '/nix/var/nix/profiles/system' --set '/nix/store/rebuilt-system'" "${nsenter_log}" \
-    || fail "promote fixture: rebuild path did not mirror legacy profile"
+  ! grep -q "nix-env -p '/nix/var/nix/profiles/system'" "${nsenter_log}" \
+    || fail "promote fixture: rebuild path wrote retired legacy profile"
   [ "$(sed -n '1p' "${guest_root}/etc/rocknix-guest-revision")" = "rev-b" ] \
     || fail "promote fixture: rebuild path did not update revision marker"
   [ "$(sed -n '1p' "${guest_root}/etc/rocknix-guest-system-path")" = "/nix/store/rebuilt-system" ] \
@@ -404,9 +400,9 @@ grep -q 'resolv.conf.guest-owned' "${PKG_DIR}/scripts/rocknix-guest-prep" || fai
 grep -q '/storage/.guest' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing guest writable area"
 grep -q 'GUEST_STORAGE_ROOT=' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper must create guest-owned storage namespace"
 grep -q '/nix/var/nix/profiles/per-user/root/rocknix-guest-system' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing selected guest system profile check"
-grep -q '/nix/var/nix/profiles/system' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing legacy system profile fallback"
-grep -q 'selected guest system profile missing or invalid; falling back to legacy profile' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper must log selected-profile fallback"
-grep -q 'expected .*init to be executable' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper must validate selected/legacy init"
+! grep -q '/nix/var/nix/profiles/system' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper must not fall back to retired legacy system profile"
+grep -q 'no valid selected guest system profile' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper must fail clearly when selected profile is invalid"
+grep -q 'expected .*init to be executable' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper must validate selected init"
 
 run_prep_profile_fixture() {
   tmp_dir=$(mktemp -d)
@@ -416,35 +412,28 @@ run_prep_profile_fixture() {
     "${guest_root}/nix/var/nix/profiles/per-user/root" \
     "${guest_root}/nix/var/nix/profiles" \
     "${guest_root}/nix/store/selected-system" \
-    "${guest_root}/nix/store/legacy-system" \
     "${guest_root}/etc" \
     "${guest_root}/sbin" \
     "${guest_area}"
   : > "${guest_root}/nix/store/selected-system/init"
-  : > "${guest_root}/nix/store/legacy-system/init"
-  chmod 0755 "${guest_root}/nix/store/selected-system/init" "${guest_root}/nix/store/legacy-system/init"
+  chmod 0755 "${guest_root}/nix/store/selected-system/init"
   ln -s /nix/store/selected-system "${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system-1-link"
   ln -s rocknix-guest-system-1-link "${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system"
-  ln -s /nix/store/legacy-system "${guest_root}/nix/var/nix/profiles/system-1-link"
-  ln -s system-1-link "${guest_root}/nix/var/nix/profiles/system"
 
   ROCKNIX_GUEST_ROOT="${guest_root}" ROCKNIX_GUEST_AREA="${guest_area}" "${PKG_DIR}/scripts/rocknix-guest-prep" >/dev/null 2>&1
   [ "$(readlink "${guest_root}/init")" = "/nix/store/selected-system/init" ] || fail "prep fixture: selected profile did not win"
   [ "$(readlink "${guest_root}/sbin/init")" = "/nix/store/selected-system/init" ] || fail "prep fixture: selected profile did not relink sbin/init"
 
   rm -f "${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system"
-  ROCKNIX_GUEST_ROOT="${guest_root}" ROCKNIX_GUEST_AREA="${guest_area}" "${PKG_DIR}/scripts/rocknix-guest-prep" >/dev/null 2>&1
-  [ "$(readlink "${guest_root}/init")" = "/nix/store/legacy-system/init" ] || fail "prep fixture: missing selected profile did not fall back to legacy"
+  if ROCKNIX_GUEST_ROOT="${guest_root}" ROCKNIX_GUEST_AREA="${guest_area}" "${PKG_DIR}/scripts/rocknix-guest-prep" >/dev/null 2>&1; then
+    fail "prep fixture: missing selected profile should fail"
+  fi
 
   ln -s rocknix-guest-system-1-link "${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system"
   rm -f "${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system-1-link"
   ln -s /nix/store/missing-system "${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system-1-link"
-  ROCKNIX_GUEST_ROOT="${guest_root}" ROCKNIX_GUEST_AREA="${guest_area}" "${PKG_DIR}/scripts/rocknix-guest-prep" >/dev/null 2>&1
-  [ "$(readlink "${guest_root}/init")" = "/nix/store/legacy-system/init" ] || fail "prep fixture: invalid selected profile did not fall back to legacy"
-
-  rm -f "${guest_root}/nix/var/nix/profiles/system"
   if ROCKNIX_GUEST_ROOT="${guest_root}" ROCKNIX_GUEST_AREA="${guest_area}" "${PKG_DIR}/scripts/rocknix-guest-prep" >/dev/null 2>&1; then
-    fail "prep fixture: both profiles invalid should fail"
+    fail "prep fixture: invalid selected profile should fail"
   fi
 
   rm -rf "${tmp_dir}"

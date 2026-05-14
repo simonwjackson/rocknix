@@ -123,36 +123,16 @@ check_selected_system_profile() {
   fi
 
   selected_profile="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
-  legacy_profile="/nix/var/nix/profiles/system"
 
   selected=$(resolve_guest_profile "${selected_profile}" || true)
-  legacy=$(resolve_guest_profile "${legacy_profile}" || true)
 
-  promotion_markers=0
-  if [ -e "${GUEST_ROOT}/etc/rocknix-guest-revision" ] || [ -e "${GUEST_ROOT}/etc/rocknix-guest-system-path" ]; then
-    promotion_markers=1
-  fi
-
-  if [ -n "${selected}" ]; then
-    if [ "${promotion_markers}" = "1" ] && [ -z "${legacy}" ]; then
-      alarm "legacy guest profile missing after selected profile and promotion markers exist: selected=${selected}"
-    fi
-    if [ -n "${legacy}" ] && [ "${selected}" != "${legacy}" ]; then
-      alarm "selected guest profile drifted from legacy profile: selected=${selected} legacy=${legacy}"
-    fi
-  elif [ -n "${legacy}" ]; then
-    if [ "${promotion_markers}" = "1" ]; then
-      alarm "selected guest profile missing after guest promotion markers exist; legacy=${legacy}"
-    else
-      log "  selected guest profile missing before first promotion; legacy fallback=${legacy}"
-    fi
-  else
-    alarm "no valid selected or legacy guest system profile"
+  if [ -z "${selected}" ]; then
+    alarm "no valid selected guest system profile"
   fi
 
   [ -n "${inner}" ] || return 0
   running=$(readlink "/proc/${inner}/root/run/current-system" 2>/dev/null || true)
-  expected="${selected:-${legacy:-}}"
+  expected="${selected:-}"
   if [ -z "${running}" ]; then
     alarm "guest /run/current-system not seeded (inner pid=${inner})"
   elif [ -n "${expected}" ] && [ "${running}" != "${expected}" ]; then

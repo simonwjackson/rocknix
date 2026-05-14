@@ -10,8 +10,9 @@
 # lifecycle boundary after the old guest has booted and networking is owned by
 # the guest: it builds the packaged main-space NixOS configuration inside the
 # running guest, points the selected guest-system profile at the new toplevel,
-# mirrors /nix/var/nix/profiles/system for NixOS compatibility, then asks the
-# host to restart the guest once so PID 1 boots the selected generation.
+# then asks the host to restart the guest once so PID 1 boots the selected
+# generation. The selected profile is the only host-recognized guest system
+# authority; /nix/var/nix/profiles/system is intentionally not repaired.
 
 set -eu
 
@@ -27,7 +28,6 @@ APPLIED_SYSTEM_FILE="${ROCKNIX_GUEST_APPLIED_SYSTEM_FILE:-${GUEST_ROOT}/etc/rock
 PROMOTE_SYSTEM_PATH_FILE="${ROCKNIX_GUEST_PROMOTE_SYSTEM_PATH:-/storage/.guest/rocknix-guest-promote-system-path}"
 MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}"
 SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
-LEGACY_PROFILE_GUEST="/nix/var/nix/profiles/system"
 DEVICE_COMPATIBLE_FILE="${ROCKNIX_GUEST_DEVICE_COMPATIBLE_FILE:-/proc/device-tree/compatible}"
 LOG_TAG="rocknix-guest-promote"
 
@@ -118,25 +118,6 @@ first_device_compatible() {
   tr '\000' '\n' < "${DEVICE_COMPATIBLE_FILE}" | sed -n '/./{p;q;}'
 }
 
-wait_for_guest_current_system() {
-  nsenter -t "${inner_pid}" -m -u -i -n -p sh -c '
-    set -eu
-    i=0
-    while [ "${i}" -lt 60 ]; do
-      if [ -x /run/current-system/sw/bin/mkdir ] && [ -x /run/current-system/sw/bin/nix-env ]; then
-        exit 0
-      fi
-      i=$((i + 1))
-      if [ -x /run/current-system/sw/bin/sleep ]; then
-        /run/current-system/sw/bin/sleep 1
-      else
-        sleep 1 2>/dev/null || true
-      fi
-    done
-    exit 1
-  ' || fail "guest current system did not become available"
-}
-
 [ -d "${GUEST_ROOT}" ] || fail "guest rootfs missing: ${GUEST_ROOT}"
 [ -d "${GUEST_SOURCE}" ] || fail "packaged guest source missing: ${GUEST_SOURCE}"
 [ -r "${GUEST_REV_FILE}" ] || fail "packaged guest revision missing: ${GUEST_REV_FILE}"
@@ -152,32 +133,15 @@ wanted_rev="$(sed -n '1p' "${GUEST_REV_FILE}" | tr -d '[:space:]')"
 exit_if_manual_generation_hold_active
 
 current_rev="$(read_first_line "${APPLIED_REV_FILE}")"
-applied_system="$(read_first_line "${APPLIED_SYSTEM_FILE}")"
 current_system="$(resolve_guest_system_profile "${SELECTED_PROFILE_GUEST}" || true)"
-legacy_system="$(resolve_guest_system_profile "${LEGACY_PROFILE_GUEST}" || true)"
 
 if [ "${current_rev}" = "${wanted_rev}" ]; then
-  if [ -n "${applied_system}" ] \
-    && [ "${current_system}" = "${applied_system}" ] \
-    && [ "${legacy_system}" = "${applied_system}" ] \
-    && guest_system_path_valid "${applied_system}"; then
-    log "guest revision already applied: ${wanted_rev} (${applied_system})"
+  if [ -n "${current_system}" ] && guest_system_path_valid "${current_system}"; then
+    log "guest revision already applied: ${wanted_rev}; selected profile is ${current_system}"
     exit 0
   fi
 
-  if [ -n "${applied_system}" ] && guest_system_path_valid "${applied_system}"; then
-    log "guest revision marker matches, but system profile drifted: selected=${current_system:-none} legacy=${legacy_system:-none} -> ${applied_system}"
-    ensure_guest_namespace
-    wait_for_guest_current_system
-    exit_if_manual_generation_hold_active
-    nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "set -eu; export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin; /run/current-system/sw/bin/mkdir -p /nix/var/nix/profiles/per-user/root; /run/current-system/sw/bin/nix-env -p '${SELECTED_PROFILE_GUEST}' --set '${applied_system}'; /run/current-system/sw/bin/nix-env -p '${LEGACY_PROFILE_GUEST}' --set '${applied_system}'"
-    exit_if_manual_generation_hold_active
-    log "restarting guest to boot repaired generation"
-    systemctl restart --no-block "${GUEST_SERVICE}"
-    exit 0
-  fi
-
-  log "guest revision marker matches, but applied system path is missing; rebuilding"
+  fail "guest revision marker matches ${wanted_rev}, but selected profile is missing or invalid; refusing to use applied markers as source of truth"
 fi
 
 log "promoting guest revision ${wanted_rev} (current: ${current_rev:-none})"
@@ -252,13 +216,12 @@ fi
 [ -n "${system_path}" ] || fail "guest build did not report a system path"
 
 exit_if_manual_generation_hold_active
-nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "set -eu; export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin; /run/current-system/sw/bin/mkdir -p /nix/var/nix/profiles/per-user/root; /run/current-system/sw/bin/nix-env -p '${SELECTED_PROFILE_GUEST}' --set '${system_path}'; /run/current-system/sw/bin/nix-env -p '${LEGACY_PROFILE_GUEST}' --set '${system_path}'"
+nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "set -eu; export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin; /run/current-system/sw/bin/mkdir -p /nix/var/nix/profiles/per-user/root; /run/current-system/sw/bin/nix-env -p '${SELECTED_PROFILE_GUEST}' --set '${system_path}'"
 exit_if_manual_generation_hold_active
 
 printf '%s\n' "${wanted_rev}" > "${APPLIED_REV_FILE}"
 printf '%s\n' "${system_path}" > "${APPLIED_SYSTEM_FILE}"
 
 log "selected guest profile now points at ${system_path}"
-log "legacy guest profile mirrored to ${system_path}"
 log "restarting guest to boot promoted generation"
 systemctl restart --no-block "${GUEST_SERVICE}"

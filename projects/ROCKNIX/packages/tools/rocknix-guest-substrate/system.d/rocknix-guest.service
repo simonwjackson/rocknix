@@ -37,8 +37,8 @@
 #
 # Lifecycle:
 #   ExecStartPre resolves the selected guest generation from the guest rootfs
-#     profile /nix/var/nix/profiles/per-user/root/rocknix-guest-system,
-#     falling back to /nix/var/nix/profiles/system during the transition.
+#     profile /nix/var/nix/profiles/per-user/root/rocknix-guest-system.
+#     /nix/var/nix/profiles/system is no longer a host boot authority.
 #   Restart=on-failure lets systemd retry the guest, but StartLimit* bounds
 #     bad-generation crash loops. If it remains broken, explicit recovery uses
 #     /flash/rocknix.no-nspawn or rocknix.safe=1; we do not resurrect the

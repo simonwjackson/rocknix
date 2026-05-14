@@ -53,9 +53,9 @@ NixOS guest rootfs on a LibreELEC-derived read-only host image:
   `nix build` *inside the running guest namespace* via `nsenter`, updates the
   selected guest profile via
   `nix-env -p /nix/var/nix/profiles/per-user/root/rocknix-guest-system --set`,
-  mirrors `/nix/var/nix/profiles/system` during the transition, then restarts
-  the guest one time. This is the on-device update mechanism for the
-  main-space.
+  then restarts the guest one time. `/nix/var/nix/profiles/system` is retired
+  as a host-recognized boot authority. This is the on-device update mechanism
+  for the main-space.
 
 ### 1.3 What's already excised vs. what still ships
 
@@ -530,7 +530,7 @@ stabilize.
 | No circular dependencies | OK | Host fetches guest tarball at build time; guest never imports from host except at runtime via narrow binds. |
 | Defense in depth on device gating | Strong | Three independent SM8550 gates (§3.3). |
 | Recovery decoupling | Strong | `/flash/rocknix.no-nspawn` is readable from a card reader; `HOW-TO-FALL-BACK.md` is shipped to `/flash`; kernel cmdline override exists. |
-| Lifecycle boundary on guest profile | Strong | `rocknix-guest-promote` is the sole writer; drift repair branches are tested for via the static checker. |
+| Lifecycle boundary on guest profile | Strong | `rocknix-guest-promote` writes only the canonical `rocknix-guest-system` profile; drift repair branches are tested for via the static checker. |
 
 ---
 

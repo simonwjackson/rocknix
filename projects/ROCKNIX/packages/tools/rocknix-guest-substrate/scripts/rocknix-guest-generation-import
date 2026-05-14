@@ -13,7 +13,6 @@ PATH="${ROCKNIX_GUEST_HOST_PATH:-/usr/bin:/usr/sbin:/bin:/sbin}"
 GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
 GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
 SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
-LEGACY_PROFILE_GUEST="/nix/var/nix/profiles/system"
 IMPORT_PROVENANCE_FILE="${ROCKNIX_GUEST_IMPORT_PROVENANCE:-/storage/.guest/rocknix-guest-generation-import-candidate}"
 PROOF_MARKER_REL="${ROCKNIX_GUEST_PROOF_MARKER_REL:-etc/rocknix-stage10-proof-marker}"
 TARGET_ID="thor"
@@ -79,10 +78,7 @@ ensure_guest_namespace() {
 }
 
 selected="$(resolve_profile "${SELECTED_PROFILE_GUEST}" || true)"
-legacy="$(resolve_profile "${LEGACY_PROFILE_GUEST}" || true)"
 [ -n "${selected}" ] || fail "selected profile is missing before import"
-[ -n "${legacy}" ] || fail "legacy profile is missing before import"
-[ "${selected}" = "${legacy}" ] || fail "selected/legacy profiles differ before import: selected=${selected} legacy=${legacy}"
 
 ensure_guest_namespace
 running="$(readlink "/proc/${inner_pid}/root/run/current-system" 2>/dev/null || true)"

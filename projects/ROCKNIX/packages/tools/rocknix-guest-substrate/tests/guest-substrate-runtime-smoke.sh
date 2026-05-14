@@ -148,9 +148,6 @@ if [ "${ROCKNIX_GUEST_LIVE_SMOKE:-0}" = "1" ]; then
 
   GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
   SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
-  LEGACY_PROFILE_GUEST="/nix/var/nix/profiles/system"
-  APPLIED_REV_FILE="${GUEST_ROOT}/etc/rocknix-guest-revision"
-  APPLIED_SYSTEM_FILE="${GUEST_ROOT}/etc/rocknix-guest-system-path"
   MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}"
 
   [ -d "${GUEST_ROOT}" ] || fail "guest root missing: ${GUEST_ROOT}"
@@ -178,27 +175,7 @@ if [ "${ROCKNIX_GUEST_LIVE_SMOKE:-0}" = "1" ]; then
   }
 
   selected_system="$(resolve_profile "${SELECTED_PROFILE_GUEST}" || true)"
-  legacy_system="$(resolve_profile "${LEGACY_PROFILE_GUEST}" || true)"
-  promotion_markers=0
-  if [ -e "${APPLIED_REV_FILE}" ] || [ -e "${APPLIED_SYSTEM_FILE}" ]; then
-    promotion_markers=1
-  fi
-
-  if [ -n "${selected_system}" ]; then
-    if [ "${promotion_markers}" = "1" ] && [ -z "${legacy_system}" ]; then
-      fail "legacy guest profile missing after selected profile and promotion markers exist: selected=${selected_system}"
-    fi
-    if [ -n "${legacy_system}" ] && [ "${selected_system}" != "${legacy_system}" ]; then
-      fail "selected and legacy guest profiles drifted: selected=${selected_system} legacy=${legacy_system}"
-    fi
-  elif [ -n "${legacy_system}" ]; then
-    if [ "${promotion_markers}" = "1" ]; then
-      fail "selected guest profile missing after guest promotion markers exist; legacy=${legacy_system}"
-    fi
-    echo "WARNING: selected guest profile missing before first promotion; live smoke using legacy fallback ${legacy_system}" >&2
-  else
-    fail "no valid selected or legacy guest system profile"
-  fi
+  [ -n "${selected_system}" ] || fail "no valid selected guest system profile"
 
   systemctl list-unit-files rocknix-main-space.target >/dev/null 2>&1 || fail "rocknix-main-space.target not installed"
   systemctl list-unit-files rocknix-guest.service >/dev/null 2>&1 || fail "rocknix-guest.service not installed"
@@ -216,7 +193,7 @@ if [ "${ROCKNIX_GUEST_LIVE_SMOKE:-0}" = "1" ]; then
     inner_pid="$(pgrep -P "${outer_pid}" | head -1 || true)"
     if [ -n "${inner_pid}" ]; then
       running_system="$(readlink "/proc/${inner_pid}/root/run/current-system" 2>/dev/null || true)"
-      expected_system="${selected_system:-${legacy_system:-}}"
+      expected_system="${selected_system:-}"
       if [ -n "${expected_system}" ] && [ -z "${running_system}" ]; then
         fail "running guest /run/current-system missing while expected generation is ${expected_system}"
       fi
