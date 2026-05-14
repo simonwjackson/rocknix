@@ -18,8 +18,8 @@ PKG_TOOLCHAIN="manual"
 # to a newer guest release. The closure layout dropped into
 # /usr/lib/rocknix-guest-substrate/guest/ remains byte-identical to the
 # old in-tree guest/ subtree -- only the source of truth moved.
-PKG_NIX_GUEST_REV="d7d5d72821c509ba42b15f2663cd1bfa2e7c5229"
-PKG_NIX_GUEST_SHA256="60f49d95006f6064fa3578b1947a91c6a0b3704718684f6f4e1d19819507165a"
+PKG_NIX_GUEST_REV="4fb6d8f14bae8e1b5fb0f833895640c7c7238e78"
+PKG_NIX_GUEST_SHA256="8922a056e03d233e81a2fe0b588dc4e05fd6c716b56785db9f26076eb3a16497"
 PKG_NIX_GUEST_URL="https://github.com/simonwjackson/rocknix-nix-guest/archive/${PKG_NIX_GUEST_REV}.tar.gz"
 
 # Bootable first-boot guest rootfs seed. This must be a prebuilt tarball
@@ -30,8 +30,9 @@ PKG_NIX_GUEST_URL="https://github.com/simonwjackson/rocknix-nix-guest/archive/${
 # placeholders unset only while developing the substrate; post_install fails
 # closed until a real URL and SHA256 are provided.
 PKG_NIX_GUEST_ROOTFS_SEED_REV="${PKG_NIX_GUEST_REV}"
-PKG_NIX_GUEST_ROOTFS_SEED_SHA256="REPLACE_WITH_BOOTABLE_ROOTFS_SEED_SHA256"
+PKG_NIX_GUEST_ROOTFS_SEED_SHA256="dc05c42344496c6f0fa66aa7514845cc6ab32a2d61881eb9341843aad39bcdde"
 PKG_NIX_GUEST_ROOTFS_SEED_URL=""
+PKG_NIX_GUEST_ROOTFS_SEED_URLS="https://github.com/simonwjackson/rocknix-nix-guest/releases/download/rootfs-seed-odin2portal-4fb6d8f14bae/rocknix-guest-rootfs-odin2portal-4fb6d8f14bae.tar.zst.part-00 https://github.com/simonwjackson/rocknix-nix-guest/releases/download/rootfs-seed-odin2portal-4fb6d8f14bae/rocknix-guest-rootfs-odin2portal-4fb6d8f14bae.tar.zst.part-01"
 
 post_install() {
   # rocknix-guest-substrate is an SM8550-only package. Other devices do
@@ -112,20 +113,33 @@ post_install() {
   printf '%s\n' "${PKG_NIX_GUEST_REV}" > "${substrate_lib}/guest-revision"
   printf '%s\n' "${PKG_NIX_GUEST_REV}" > "${substrate_lib}/guest/.rocknix-guest-revision"
 
-  if [ -z "${PKG_NIX_GUEST_ROOTFS_SEED_URL}" ] || [ "${PKG_NIX_GUEST_ROOTFS_SEED_SHA256}" = "REPLACE_WITH_BOOTABLE_ROOTFS_SEED_SHA256" ]; then
+  if { [ -z "${PKG_NIX_GUEST_ROOTFS_SEED_URL}" ] && [ -z "${PKG_NIX_GUEST_ROOTFS_SEED_URLS}" ]; } || \
+     [ "${PKG_NIX_GUEST_ROOTFS_SEED_SHA256}" = "REPLACE_WITH_BOOTABLE_ROOTFS_SEED_SHA256" ]; then
     echo "rocknix-guest-substrate: bootable guest rootfs seed URL/SHA256 are not configured" >&2
     echo "  Build and publish rocknix-nix-guest .#rootfs-thor for ${PKG_NIX_GUEST_ROOTFS_SEED_REV}, then set:" >&2
-    echo "  PKG_NIX_GUEST_ROOTFS_SEED_URL and PKG_NIX_GUEST_ROOTFS_SEED_SHA256" >&2
+    echo "  PKG_NIX_GUEST_ROOTFS_SEED_URL or PKG_NIX_GUEST_ROOTFS_SEED_URLS, plus PKG_NIX_GUEST_ROOTFS_SEED_SHA256" >&2
     exit 1
   fi
 
-  seed_ext="${PKG_NIX_GUEST_ROOTFS_SEED_URL##*.}"
-  seed_tarball="${SOURCES}/rocknix-nix-guest/rocknix-guest-rootfs-seed-${PKG_NIX_GUEST_ROOTFS_SEED_REV}.tar.${seed_ext}"
+  seed_tarball="${SOURCES}/rocknix-nix-guest/rocknix-guest-rootfs-seed-${PKG_NIX_GUEST_ROOTFS_SEED_REV}.tar.zst"
   if [ ! -f "${seed_tarball}" ]; then
     mkdir -p "$(dirname "${seed_tarball}")"
     echo "rocknix-guest-substrate: fetching bootable guest rootfs seed ${PKG_NIX_GUEST_ROOTFS_SEED_REV}"
-    curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
-         --output "${seed_tarball}.tmp" "${PKG_NIX_GUEST_ROOTFS_SEED_URL}"
+    if [ -n "${PKG_NIX_GUEST_ROOTFS_SEED_URLS}" ]; then
+      rm -f "${seed_tarball}.tmp" "${seed_tarball}.tmp".part-*
+      part_index=0
+      for seed_url in ${PKG_NIX_GUEST_ROOTFS_SEED_URLS}; do
+        printf -v part_path '%s.tmp.part-%02d' "${seed_tarball}" "${part_index}"
+        curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
+             --output "${part_path}" "${seed_url}"
+        part_index=$((part_index + 1))
+      done
+      cat "${seed_tarball}.tmp".part-* > "${seed_tarball}.tmp"
+      rm -f "${seed_tarball}.tmp".part-*
+    else
+      curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
+           --output "${seed_tarball}.tmp" "${PKG_NIX_GUEST_ROOTFS_SEED_URL}"
+    fi
     actual_seed_sha="$(sha256sum "${seed_tarball}.tmp" | awk '{print $1}')"
     if [ "${actual_seed_sha}" != "${PKG_NIX_GUEST_ROOTFS_SEED_SHA256}" ]; then
       echo "rocknix-guest-substrate: bootable guest rootfs seed SHA256 mismatch" >&2
@@ -179,7 +193,7 @@ post_install() {
   {
     printf 'revision=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_REV}"
     printf 'sha256=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_SHA256}"
-    printf 'source=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_URL}"
+    printf 'source=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_URL:-${PKG_NIX_GUEST_ROOTFS_SEED_URLS}}"
   } > "${substrate_lib}/guest-rootfs-seed/.rocknix-guest-rootfs-seed"
 
   # Contract docs are owned by rocknix-nix-guest under docs/contracts/.
