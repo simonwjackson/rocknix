@@ -28,6 +28,7 @@ PROMOTE_SYSTEM_PATH_FILE="${ROCKNIX_GUEST_PROMOTE_SYSTEM_PATH:-/storage/.guest/r
 MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}"
 SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
 LEGACY_PROFILE_GUEST="/nix/var/nix/profiles/system"
+DEVICE_COMPATIBLE_FILE="${ROCKNIX_GUEST_DEVICE_COMPATIBLE_FILE:-/proc/device-tree/compatible}"
 LOG_TAG="rocknix-guest-promote"
 
 log() {
@@ -110,6 +111,11 @@ ensure_guest_namespace() {
 
   inner_pid="$(pgrep -P "${outer_pid}" | head -1 || true)"
   [ -n "${inner_pid}" ] || fail "could not find guest payload PID under ${outer_pid}"
+}
+
+first_device_compatible() {
+  [ -r "${DEVICE_COMPATIBLE_FILE}" ] || fail "device compatible file missing: ${DEVICE_COMPATIBLE_FILE}"
+  tr '\000' '\n' < "${DEVICE_COMPATIBLE_FILE}" | sed -n '/./{p;q;}'
 }
 
 wait_for_guest_current_system() {
@@ -222,10 +228,13 @@ nsenter -t "${inner_pid}" -m -u -i -n -p sh -c '
 # docs/contracts/layer14-main-space-contract.md in rocknix-nix-guest for
 # the device-addition workflow; the host substrate must not maintain a
 # parallel device list.
-log "building packaged guest inside running guest namespace"
+device_compatible="$(first_device_compatible)"
+[ -n "${device_compatible}" ] || fail "empty device compatible string from ${DEVICE_COMPATIBLE_FILE}"
+log "building packaged guest inside running guest namespace for compatible ${device_compatible}"
 nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "
   set -eu
   export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin
+  export ROCKNIX_GUEST_DEVICE_COMPATIBLE='${device_compatible}'
   cd /storage/.guest/rocknix-nix-guest-packaged
   /run/current-system/sw/bin/nix build --impure --extra-experimental-features \"nix-command flakes\" \
     .#nixosConfigurations.rocknix-guest-main-space-by-compatible.config.system.build.toplevel \

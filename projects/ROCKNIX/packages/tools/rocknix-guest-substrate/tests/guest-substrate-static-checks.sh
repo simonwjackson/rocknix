@@ -234,6 +234,7 @@ run_promote_profile_fixture() {
   bin_dir="${tmp_dir}/bin"
   nsenter_log="${tmp_dir}/nsenter.log"
   systemctl_log="${tmp_dir}/systemctl.log"
+  compatible_file="${tmp_dir}/compatible"
   mkdir -p \
     "${guest_root}/nix/var/nix/profiles/per-user/root" \
     "${guest_root}/nix/var/nix/profiles" \
@@ -246,6 +247,7 @@ run_promote_profile_fixture() {
   : > "${guest_root}/nix/store/old-system/init"
   chmod 0755 "${guest_root}/nix/store/applied-system/init" "${guest_root}/nix/store/old-system/init"
   printf 'rev-a\n' > "${guest_rev}"
+  printf 'ayn,thor\n' > "${compatible_file}"
   printf 'rev-a\n' > "${guest_root}/etc/rocknix-guest-revision"
   printf '/nix/store/applied-system\n' > "${guest_root}/etc/rocknix-guest-system-path"
 
@@ -292,6 +294,7 @@ EOF
     ROCKNIX_TEST_NSENTER_LOG="${nsenter_log}" \
     ROCKNIX_TEST_SYSTEMCTL_LOG="${systemctl_log}" \
     ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
     ROCKNIX_GUEST_SOURCE="${guest_source}" \
     ROCKNIX_GUEST_REV_FILE="${guest_rev}" \
     ROCKNIX_GUEST_STAGED_SOURCE="${staged_source}" \
@@ -305,6 +308,7 @@ EOF
     ROCKNIX_TEST_NSENTER_LOG="${nsenter_log}" \
     ROCKNIX_TEST_SYSTEMCTL_LOG="${systemctl_log}" \
     ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
     ROCKNIX_GUEST_SOURCE="${guest_source}" \
     ROCKNIX_GUEST_REV_FILE="${guest_rev}" \
     ROCKNIX_GUEST_STAGED_SOURCE="${staged_source}" \
@@ -328,6 +332,7 @@ EOF
     ROCKNIX_TEST_SYSTEMCTL_LOG="${systemctl_log}" \
     ROCKNIX_GUEST_PROMOTE_SYSTEM_PATH="${promote_result}" \
     ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
     ROCKNIX_GUEST_SOURCE="${guest_source}" \
     ROCKNIX_GUEST_REV_FILE="${guest_rev}" \
     ROCKNIX_GUEST_STAGED_SOURCE="${staged_source}" \
@@ -351,6 +356,7 @@ EOF
     ROCKNIX_TEST_SYSTEMCTL_LOG="${systemctl_log}" \
     ROCKNIX_GUEST_MANUAL_HOLD_FILE="${tmp_dir}/manual-hold" \
     ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
     ROCKNIX_GUEST_SOURCE="${guest_source}" \
     ROCKNIX_GUEST_REV_FILE="${guest_rev}" \
     ROCKNIX_GUEST_STAGED_SOURCE="${staged_source}" \
