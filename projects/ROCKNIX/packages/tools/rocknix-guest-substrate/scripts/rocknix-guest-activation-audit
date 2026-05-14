@@ -93,9 +93,12 @@ running_guest_system() {
 }
 
 running_guest_has_file() {
-  [ -n "${inner_pid:-}" ] || return 1
   guest_path="$1"
-  nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "[ -f '${guest_path}' ]" 2>/dev/null
+  outer_pid="$(systemctl show -p MainPID --value "${GUEST_SERVICE}" 2>/dev/null || true)"
+  case "${outer_pid}" in ''|0) return 1 ;; esac
+  file_check_inner_pid="$(pgrep -P "${outer_pid}" 2>/dev/null | head -1 || true)"
+  [ -n "${file_check_inner_pid}" ] || return 1
+  nsenter -t "${file_check_inner_pid}" -m -u -i -n -p sh -c "[ -f '${guest_path}' ]" 2>/dev/null
 }
 
 [ -d "${GUEST_ROOT}" ] || fail "guest root missing: ${GUEST_ROOT}"
