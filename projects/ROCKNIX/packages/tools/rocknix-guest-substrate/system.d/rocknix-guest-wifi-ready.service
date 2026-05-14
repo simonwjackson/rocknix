@@ -11,6 +11,7 @@ ConditionPathExists=/dev/rfkill
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/rocknix-guest-wifi-unblock --guest-radio
+TimeoutStartSec=3min
 RemainAfterExit=yes
 
 [Install]
