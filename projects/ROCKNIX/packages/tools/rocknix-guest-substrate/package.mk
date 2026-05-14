@@ -40,13 +40,19 @@ post_install() {
   cp ${PKG_DIR}/scripts/rocknix-recovery-toggle ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-soak ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-udev-stage ${INSTALL}/usr/bin
+  cp ${PKG_DIR}/scripts/rocknix-guest-generation-import ${INSTALL}/usr/bin
+  cp ${PKG_DIR}/scripts/rocknix-guest-generation-switch ${INSTALL}/usr/bin
+  cp ${PKG_DIR}/scripts/rocknix-guest-activation-audit ${INSTALL}/usr/bin
   chmod 0755 \
     ${INSTALL}/usr/bin/rocknix-guest-prep \
     ${INSTALL}/usr/bin/rocknix-guest-promote \
     ${INSTALL}/usr/bin/rocknix-guest-start \
     ${INSTALL}/usr/bin/rocknix-recovery-toggle \
     ${INSTALL}/usr/bin/rocknix-guest-soak \
-    ${INSTALL}/usr/bin/rocknix-guest-udev-stage
+    ${INSTALL}/usr/bin/rocknix-guest-udev-stage \
+    ${INSTALL}/usr/bin/rocknix-guest-generation-import \
+    ${INSTALL}/usr/bin/rocknix-guest-generation-switch \
+    ${INSTALL}/usr/bin/rocknix-guest-activation-audit
 
   mkdir -p "${substrate_lib}/tests"
   cp ${PKG_DIR}/tests/guest-substrate-runtime-smoke.sh "${substrate_lib}/tests"

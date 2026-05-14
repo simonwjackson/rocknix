@@ -58,6 +58,9 @@ check_script "${PKG_DIR}/scripts/rocknix-guest-start"
 check_script "${PKG_DIR}/scripts/rocknix-guest-udev-stage"
 check_script "${PKG_DIR}/scripts/rocknix-recovery-toggle"
 check_script "${PKG_DIR}/scripts/rocknix-guest-soak"
+check_script "${PKG_DIR}/scripts/rocknix-guest-generation-import"
+check_script "${PKG_DIR}/scripts/rocknix-guest-generation-switch"
+check_script "${PKG_DIR}/scripts/rocknix-guest-activation-audit"
 
 grep -q 'rocknix-guest-prep' "${PKG_DIR}/package.mk" || fail "package.mk does not install prep helper"
 grep -q 'rocknix-guest-promote' "${PKG_DIR}/package.mk" || fail "package.mk does not install guest promotion helper"
@@ -66,6 +69,9 @@ grep -q 'rocknix-guest-udev-stage' "${PKG_DIR}/package.mk" || fail "package.mk d
 ! grep -q 'rocknix-host-reclaim' "${PKG_DIR}/package.mk" || fail "package.mk must not install host reclaim helper"
 grep -q 'rocknix-recovery-toggle' "${PKG_DIR}/package.mk" || fail "package.mk does not install recovery toggle"
 grep -q 'rocknix-guest-soak' "${PKG_DIR}/package.mk" || fail "package.mk does not install soak helper"
+grep -q 'rocknix-guest-generation-import' "${PKG_DIR}/package.mk" || fail "package.mk does not install generation import helper"
+grep -q 'rocknix-guest-generation-switch' "${PKG_DIR}/package.mk" || fail "package.mk does not install generation switch helper"
+grep -q 'rocknix-guest-activation-audit' "${PKG_DIR}/package.mk" || fail "package.mk does not install activation audit helper"
 
 grep -q 'substrate_lib="${INSTALL}/usr/lib/rocknix-guest-substrate"' "${PKG_DIR}/package.mk" || fail "package.mk does not define substrate lib path"
 grep -q 'mkdir -p "${substrate_lib}/tests"' "${PKG_DIR}/package.mk" || fail "package.mk does not install runtime smoke tests"
@@ -205,6 +211,19 @@ grep -q '/run/current-system/sw/bin/systemctl is-active NetworkManager.service' 
 ! grep -q 'seq 1 60' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not depend on seq during early guest boot"
 grep -q '/run/current-system/sw/bin/sleep 2' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must use absolute guest sleep when available"
 grep -q 'ROCKNIX_GUEST_HOST_PATH' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must allow host command stubs for fixture tests"
+grep -q 'ROCKNIX_GUEST_MANUAL_HOLD_FILE' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must honor manual generation hold override"
+grep -q 'exit_if_manual_generation_hold_active' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must check manual generation hold"
+grep -q 'manual generation selection hold is active' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must log manual generation hold"
+grep -q 'rocknix-guest-main-space-thor' "${PKG_DIR}/scripts/rocknix-guest-generation-import" || fail "generation import helper must document explicit Thor off-device output"
+grep -q 'live generation A is required for import' "${PKG_DIR}/scripts/rocknix-guest-generation-import" || fail "generation import helper must require live generation A"
+grep -q 'rocknix-stage10-proof-marker' "${PKG_DIR}/scripts/rocknix-guest-generation-import" || fail "generation import helper must require B proof marker"
+grep -q 'rocknix-guest-manual-generation-hold' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must require manual generation hold"
+grep -q 'systemctl stop "${PROMOTE_SERVICE}"' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must stop in-flight promotion"
+grep -q 'systemctl reset-failed "${GUEST_SERVICE}"' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must reset failed/start-limit state before restart"
+grep -q 'selected/legacy differ before recording generation A' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must require clean A before recording rollback state"
+grep -q 'rocknix-stage10-proof-marker' "${PKG_DIR}/scripts/rocknix-guest-activation-audit" || fail "activation audit must report B proof marker"
+grep -q 'never repair' "${PKG_DIR}/scripts/rocknix-guest-activation-audit" || fail "activation audit must document read-only behavior"
+grep -q 'rocknix-guest-activation-audit' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper must reuse activation audit when installed"
 
 run_promote_profile_fixture() {
   tmp_dir=$(mktemp -d)
@@ -313,9 +332,9 @@ EOF
     ROCKNIX_GUEST_REV_FILE="${guest_rev}" \
     ROCKNIX_GUEST_STAGED_SOURCE="${staged_source}" \
     "${PKG_DIR}/scripts/rocknix-guest-promote" >/dev/null
-  grep -q "nix-env -p '/nix/var/nix/profiles/per-user/root/rocknix-guest-system' --set \"\${system_path}\"" "${nsenter_log}" \
+  grep -q "nix-env -p '/nix/var/nix/profiles/per-user/root/rocknix-guest-system' --set '/nix/store/rebuilt-system'" "${nsenter_log}" \
     || fail "promote fixture: rebuild path did not write selected profile"
-  grep -q "nix-env -p '/nix/var/nix/profiles/system' --set \"\${system_path}\"" "${nsenter_log}" \
+  grep -q "nix-env -p '/nix/var/nix/profiles/system' --set '/nix/store/rebuilt-system'" "${nsenter_log}" \
     || fail "promote fixture: rebuild path did not mirror legacy profile"
   [ "$(sed -n '1p' "${guest_root}/etc/rocknix-guest-revision")" = "rev-b" ] \
     || fail "promote fixture: rebuild path did not update revision marker"
@@ -323,6 +342,21 @@ EOF
     || fail "promote fixture: rebuild path did not update system marker"
   grep -q 'restart --no-block rocknix-guest.service' "${systemctl_log}" \
     || fail "promote fixture: rebuild path did not restart guest"
+
+  : > "${nsenter_log}"
+  : > "${systemctl_log}"
+  : > "${tmp_dir}/manual-hold"
+  ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_TEST_NSENTER_LOG="${nsenter_log}" \
+    ROCKNIX_TEST_SYSTEMCTL_LOG="${systemctl_log}" \
+    ROCKNIX_GUEST_MANUAL_HOLD_FILE="${tmp_dir}/manual-hold" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_SOURCE="${guest_source}" \
+    ROCKNIX_GUEST_REV_FILE="${guest_rev}" \
+    ROCKNIX_GUEST_STAGED_SOURCE="${staged_source}" \
+    "${PKG_DIR}/scripts/rocknix-guest-promote" >/dev/null
+  [ ! -s "${nsenter_log}" ] || fail "promote fixture: manual hold should not enter guest"
+  [ ! -s "${systemctl_log}" ] || fail "promote fixture: manual hold should not restart guest"
 
   rm -rf "${tmp_dir}"
 }

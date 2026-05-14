@@ -1,0 +1,155 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# Manual selected-generation switch helper for the Stage 10 Thor A->B->A proof.
+# It updates both the canonical selected profile and the legacy system mirror.
+
+set -eu
+
+PATH="${ROCKNIX_GUEST_HOST_PATH:-/usr/bin:/usr/sbin:/bin:/sbin}"
+
+GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
+PROMOTE_SERVICE="${ROCKNIX_GUEST_PROMOTE_SERVICE:-rocknix-guest-promote.service}"
+SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
+LEGACY_PROFILE_GUEST="/nix/var/nix/profiles/system"
+MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}"
+SWITCH_STATE_FILE="${ROCKNIX_GUEST_SWITCH_STATE:-/storage/.guest/rocknix-guest-generation-switch-a}"
+SYSTEM_PATH=""
+RESTORE=0
+RESTART=1
+LOG_TAG="rocknix-guest-generation-switch"
+
+usage() {
+  cat <<EOF
+Usage: ${LOG_TAG} --to /nix/store/<toplevel> [--no-restart]
+       ${LOG_TAG} --restore [--no-restart]
+
+Requires the manual-generation hold file:
+  ${MANUAL_HOLD_FILE}
+EOF
+}
+
+log() { printf '%s: %s\n' "${LOG_TAG}" "$*"; }
+fail() { log "FAIL: $*"; exit 1; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --to) SYSTEM_PATH="$2"; shift 2 ;;
+    --restore) RESTORE=1; shift ;;
+    --no-restart) RESTART=0; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) fail "unknown arg: $1" ;;
+  esac
+done
+
+[ "${RESTORE}" = "1" ] || [ -n "${SYSTEM_PATH}" ] || fail "--to or --restore is required"
+[ "${RESTORE}" = "0" ] || [ -z "${SYSTEM_PATH}" ] || fail "--restore cannot be combined with --to"
+[ -e "${MANUAL_HOLD_FILE}" ] || fail "manual-generation hold is required: ${MANUAL_HOLD_FILE}"
+[ -d "${GUEST_ROOT}" ] || fail "guest rootfs missing: ${GUEST_ROOT}"
+[ -d "${GUEST_ROOT}/nix" ] || fail "guest /nix missing under ${GUEST_ROOT}"
+
+profile_host_path() {
+  case "$1" in
+    /nix/*) printf '%s%s\n' "${GUEST_ROOT}" "$1" ;;
+    *) fail "profile path must be guest-absolute under /nix: $1" ;;
+  esac
+}
+
+resolve_profile() {
+  profile_guest_path="$1"
+  profile_path="$(profile_host_path "${profile_guest_path}")"
+  [ -L "${profile_path}" ] || return 1
+  target="$(readlink "${profile_path}" 2>/dev/null || true)"
+  case "${target}" in
+    /nix/*) resolved="${target}" ;;
+    '') return 1 ;;
+    *) resolved="$(readlink "$(dirname "${profile_path}")/${target}" 2>/dev/null || true)" ;;
+  esac
+  case "${resolved}" in /nix/*) : ;; *) return 1 ;; esac
+  [ -x "${GUEST_ROOT}${resolved}/init" ] || return 1
+  printf '%s\n' "${resolved}"
+}
+
+ensure_no_active_promotion() {
+  if systemctl is-active --quiet "${PROMOTE_SERVICE}" 2>/dev/null; then
+    log "stopping in-flight ${PROMOTE_SERVICE} before manual generation switch"
+    systemctl stop "${PROMOTE_SERVICE}" || true
+  fi
+
+  i=0
+  while systemctl is-active --quiet "${PROMOTE_SERVICE}" 2>/dev/null; do
+    [ "${i}" -lt 60 ] || fail "${PROMOTE_SERVICE} is still active"
+    i=$((i + 1))
+    sleep 1
+  done
+}
+
+ensure_guest_namespace() {
+  outer_pid="$(systemctl show -p MainPID --value "${GUEST_SERVICE}" 2>/dev/null || true)"
+  case "${outer_pid}" in ''|0) return 1 ;; esac
+  inner_pid="$(pgrep -P "${outer_pid}" | head -1 || true)"
+  [ -n "${inner_pid}" ] || return 1
+  return 0
+}
+
+host_set_profile() {
+  profile_guest="$1"
+  link_name="$2"
+  target_system="$3"
+  profile_path="$(profile_host_path "${profile_guest}")"
+  profile_dir="$(dirname "${profile_path}")"
+  mkdir -p "${profile_dir}"
+  ln -sfn "${target_system}" "${profile_dir}/${link_name}"
+  ln -sfn "${link_name}" "${profile_path}"
+}
+
+set_profiles() {
+  target_system="$1"
+  if ensure_guest_namespace; then
+    nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "set -eu; export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin; /run/current-system/sw/bin/mkdir -p /nix/var/nix/profiles/per-user/root; /run/current-system/sw/bin/nix-env -p '${SELECTED_PROFILE_GUEST}' --set '${target_system}'; /run/current-system/sw/bin/nix-env -p '${LEGACY_PROFILE_GUEST}' --set '${target_system}'"
+  else
+    [ "${RESTORE}" = "1" ] || fail "guest is not running; only --restore may use host-side profile fallback"
+    host_set_profile "${SELECTED_PROFILE_GUEST}" "rocknix-guest-system-manual-link" "${target_system}"
+    host_set_profile "${LEGACY_PROFILE_GUEST}" "system-manual-link" "${target_system}"
+  fi
+}
+
+selected="$(resolve_profile "${SELECTED_PROFILE_GUEST}" || true)"
+legacy="$(resolve_profile "${LEGACY_PROFILE_GUEST}" || true)"
+running=""
+if ensure_guest_namespace; then
+  running="$(readlink "/proc/${inner_pid}/root/run/current-system" 2>/dev/null || true)"
+fi
+
+if [ "${RESTORE}" = "1" ]; then
+  [ -r "${SWITCH_STATE_FILE}" ] || fail "switch state file missing: ${SWITCH_STATE_FILE}"
+  SYSTEM_PATH="$(sed -n '1p' "${SWITCH_STATE_FILE}" | tr -d '[:space:]')"
+  [ -n "${SYSTEM_PATH}" ] || fail "switch state file is empty: ${SWITCH_STATE_FILE}"
+else
+  case "${SYSTEM_PATH}" in /nix/store/*) : ;; *) fail "target must be guest-absolute under /nix/store: ${SYSTEM_PATH}" ;; esac
+  if [ ! -r "${SWITCH_STATE_FILE}" ]; then
+    [ -n "${selected}" ] || fail "selected profile is missing before recording generation A"
+    [ -n "${legacy}" ] || fail "legacy profile is missing before recording generation A"
+    [ -n "${running}" ] || fail "running guest generation is missing before recording generation A"
+    [ "${selected}" = "${legacy}" ] || fail "selected/legacy differ before recording generation A: selected=${selected} legacy=${legacy}"
+    [ "${selected}" = "${running}" ] || fail "selected/running differ before recording generation A: selected=${selected} running=${running}"
+    mkdir -p "$(dirname "${SWITCH_STATE_FILE}")"
+    printf '%s\n' "${selected}" > "${SWITCH_STATE_FILE}"
+    log "recorded generation A: ${selected}"
+  fi
+fi
+
+case "${SYSTEM_PATH}" in /nix/store/*) : ;; *) fail "target must be guest-absolute under /nix/store: ${SYSTEM_PATH}" ;; esac
+[ -x "${GUEST_ROOT}${SYSTEM_PATH}/init" ] || fail "target init is not executable: ${GUEST_ROOT}${SYSTEM_PATH}/init"
+
+ensure_no_active_promotion
+set_profiles "${SYSTEM_PATH}"
+log "selected and legacy guest profiles now point at ${SYSTEM_PATH}"
+
+if [ "${RESTART}" = "1" ]; then
+  systemctl reset-failed "${GUEST_SERVICE}" 2>/dev/null || true
+  systemctl restart --no-block "${GUEST_SERVICE}"
+  log "restarting ${GUEST_SERVICE} to boot ${SYSTEM_PATH}"
+fi

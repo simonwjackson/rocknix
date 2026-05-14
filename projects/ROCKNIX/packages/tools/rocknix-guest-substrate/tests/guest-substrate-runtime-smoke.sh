@@ -54,6 +54,9 @@ check_executable "${SCRIPT_ROOT}/rocknix-guest-start"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-udev-stage"
 check_executable "${SCRIPT_ROOT}/rocknix-recovery-toggle"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-soak"
+check_executable "${SCRIPT_ROOT}/rocknix-guest-generation-import"
+check_executable "${SCRIPT_ROOT}/rocknix-guest-generation-switch"
+check_executable "${SCRIPT_ROOT}/rocknix-guest-activation-audit"
 
 [ ! -e "${UNIT_ROOT}/nix-storage-setup.service" ] || fail "host nix-storage-setup.service must be retired"
 [ ! -e "${UNIT_ROOT}/nix.mount" ] || fail "host nix.mount must be retired"
@@ -146,6 +149,7 @@ if [ "${ROCKNIX_GUEST_LIVE_SMOKE:-0}" = "1" ]; then
   LEGACY_PROFILE_GUEST="/nix/var/nix/profiles/system"
   APPLIED_REV_FILE="${GUEST_ROOT}/etc/rocknix-guest-revision"
   APPLIED_SYSTEM_FILE="${GUEST_ROOT}/etc/rocknix-guest-system-path"
+  MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}"
 
   [ -d "${GUEST_ROOT}" ] || fail "guest root missing: ${GUEST_ROOT}"
   [ -d "${GUEST_ROOT}/nix" ] || fail "guest rootfs /nix missing: ${GUEST_ROOT}/nix"
@@ -198,6 +202,12 @@ if [ "${ROCKNIX_GUEST_LIVE_SMOKE:-0}" = "1" ]; then
   systemctl list-unit-files rocknix-guest.service >/dev/null 2>&1 || fail "rocknix-guest.service not installed"
   systemctl list-unit-files rocknix-guest-promote.service >/dev/null 2>&1 || fail "guest promotion service not installed"
   systemctl list-unit-files rocknix-recovery-toggle.service >/dev/null 2>&1 || fail "recovery toggle service not installed"
+
+  if [ -e "${MANUAL_HOLD_FILE}" ]; then
+    echo "WARNING: manual generation hold is active: ${MANUAL_HOLD_FILE}" >&2
+  fi
+
+  "${SCRIPT_ROOT}/rocknix-guest-activation-audit" --quiet || fail "guest activation audit failed"
 
   outer_pid="$(systemctl show -p MainPID --value rocknix-guest.service 2>/dev/null || true)"
   if [ -n "${outer_pid}" ] && [ "${outer_pid}" != "0" ]; then

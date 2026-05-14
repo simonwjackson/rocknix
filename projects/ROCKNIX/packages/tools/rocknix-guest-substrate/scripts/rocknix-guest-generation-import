@@ -1,0 +1,110 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# Import and verify an off-device-built Thor guest generation for the Stage 10
+# A->B->A proof. This helper deliberately requires a healthy running guest A so
+# import and verification happen in the same namespace that owns guest Nix.
+
+set -eu
+
+PATH="${ROCKNIX_GUEST_HOST_PATH:-/usr/bin:/usr/sbin:/bin:/sbin}"
+
+GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
+SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
+LEGACY_PROFILE_GUEST="/nix/var/nix/profiles/system"
+IMPORT_PROVENANCE_FILE="${ROCKNIX_GUEST_IMPORT_PROVENANCE:-/storage/.guest/rocknix-guest-generation-import-candidate}"
+PROOF_MARKER_REL="${ROCKNIX_GUEST_PROOF_MARKER_REL:-etc/rocknix-stage10-proof-marker}"
+TARGET_ID="thor"
+NAR_FILE=""
+SYSTEM_PATH=""
+SOURCE_REF="unknown"
+LOG_TAG="rocknix-guest-generation-import"
+
+usage() {
+  cat <<EOF
+Usage: ${LOG_TAG} --system /nix/store/<toplevel> [--nar /storage/.guest/closure.nar] [--source REF]
+
+Imports/verifies a Thor guest generation while the current guest generation A
+is running. Build B off-device with the explicit Thor output:
+  nix build .#nixosConfigurations.rocknix-guest-main-space-thor.config.system.build.toplevel
+EOF
+}
+
+log() { printf '%s: %s\n' "${LOG_TAG}" "$*"; }
+fail() { log "FAIL: $*"; exit 1; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --system) SYSTEM_PATH="$2"; shift 2 ;;
+    --nar) NAR_FILE="$2"; shift 2 ;;
+    --source) SOURCE_REF="$2"; shift 2 ;;
+    --target) TARGET_ID="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) fail "unknown arg: $1" ;;
+  esac
+done
+
+[ -n "${SYSTEM_PATH}" ] || fail "--system is required"
+case "${SYSTEM_PATH}" in /nix/store/*) : ;; *) fail "system path must be guest-absolute under /nix/store: ${SYSTEM_PATH}" ;; esac
+[ "${TARGET_ID}" = "thor" ] || fail "first Stage 10 import proof is Thor-only (got target=${TARGET_ID})"
+[ -d "${GUEST_ROOT}" ] || fail "guest rootfs missing: ${GUEST_ROOT}"
+[ -d "${GUEST_ROOT}/nix" ] || fail "guest /nix missing under ${GUEST_ROOT}"
+
+resolve_profile() {
+  profile_guest_path="$1"
+  profile_path="${GUEST_ROOT}${profile_guest_path}"
+  [ -L "${profile_path}" ] || return 1
+  target="$(readlink "${profile_path}" 2>/dev/null || true)"
+  case "${target}" in
+    /nix/*) resolved="${target}" ;;
+    '') return 1 ;;
+    *) resolved="$(readlink "$(dirname "${profile_path}")/${target}" 2>/dev/null || true)" ;;
+  esac
+  case "${resolved}" in /nix/*) : ;; *) return 1 ;; esac
+  [ -x "${GUEST_ROOT}${resolved}/init" ] || return 1
+  printf '%s\n' "${resolved}"
+}
+
+ensure_guest_namespace() {
+  outer_pid="$(systemctl show -p MainPID --value "${GUEST_SERVICE}" 2>/dev/null || true)"
+  case "${outer_pid}" in ''|0) fail "${GUEST_SERVICE} is not running; live generation A is required for import" ;; esac
+  inner_pid="$(pgrep -P "${outer_pid}" | head -1 || true)"
+  [ -n "${inner_pid}" ] || fail "could not find guest payload PID under ${outer_pid}"
+}
+
+selected="$(resolve_profile "${SELECTED_PROFILE_GUEST}" || true)"
+legacy="$(resolve_profile "${LEGACY_PROFILE_GUEST}" || true)"
+[ -n "${selected}" ] || fail "selected profile is missing before import"
+[ -n "${legacy}" ] || fail "legacy profile is missing before import"
+[ "${selected}" = "${legacy}" ] || fail "selected/legacy profiles differ before import: selected=${selected} legacy=${legacy}"
+
+ensure_guest_namespace
+running="$(readlink "/proc/${inner_pid}/root/run/current-system" 2>/dev/null || true)"
+[ -n "${running}" ] || fail "running guest /run/current-system is missing"
+[ "${running}" = "${selected}" ] || fail "healthy generation A required before import: selected=${selected} running=${running}"
+
+if [ -n "${NAR_FILE}" ]; then
+  [ -r "${NAR_FILE}" ] || fail "nar archive is not readable: ${NAR_FILE}"
+  log "importing closure archive into live guest namespace: ${NAR_FILE}"
+  nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "set -eu; export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin; /run/current-system/sw/bin/nix-store --import < '${NAR_FILE}'"
+fi
+
+log "verifying candidate from live guest namespace: ${SYSTEM_PATH}"
+nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "set -eu; export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin; [ -x '${SYSTEM_PATH}/init' ]; /run/current-system/sw/bin/nix-store -qR '${SYSTEM_PATH}' >/dev/null; /run/current-system/sw/bin/nix-store --verify-path '${SYSTEM_PATH}' >/dev/null"
+
+[ -x "${GUEST_ROOT}${SYSTEM_PATH}/init" ] || fail "candidate init is not visible from host guest-rootfs view: ${GUEST_ROOT}${SYSTEM_PATH}/init"
+[ -f "${GUEST_ROOT}${SYSTEM_PATH}/${PROOF_MARKER_REL}" ] || fail "candidate is missing B proof marker: ${SYSTEM_PATH}/${PROOF_MARKER_REL}"
+
+mkdir -p "$(dirname "${IMPORT_PROVENANCE_FILE}")"
+{
+  printf 'system=%s\n' "${SYSTEM_PATH}"
+  printf 'target=%s\n' "${TARGET_ID}"
+  printf 'source=%s\n' "${SOURCE_REF}"
+  printf 'imported_at=%s\n' "$(date -u +%FT%TZ)"
+  printf 'verified_from=live-generation-a\n'
+  printf 'proof_marker=%s\n' "${SYSTEM_PATH}/${PROOF_MARKER_REL}"
+} > "${IMPORT_PROVENANCE_FILE}"
+
+log "candidate imported and verified: ${SYSTEM_PATH}"

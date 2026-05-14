@@ -25,6 +25,7 @@ STAGED_SOURCE="${ROCKNIX_GUEST_STAGED_SOURCE:-/storage/.guest/rocknix-nix-guest-
 APPLIED_REV_FILE="${ROCKNIX_GUEST_APPLIED_REV_FILE:-${GUEST_ROOT}/etc/rocknix-guest-revision}"
 APPLIED_SYSTEM_FILE="${ROCKNIX_GUEST_APPLIED_SYSTEM_FILE:-${GUEST_ROOT}/etc/rocknix-guest-system-path}"
 PROMOTE_SYSTEM_PATH_FILE="${ROCKNIX_GUEST_PROMOTE_SYSTEM_PATH:-/storage/.guest/rocknix-guest-promote-system-path}"
+MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}"
 SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
 LEGACY_PROFILE_GUEST="/nix/var/nix/profiles/system"
 LOG_TAG="rocknix-guest-promote"
@@ -89,6 +90,18 @@ guest_system_path_valid() {
   esac
 }
 
+manual_generation_hold_active() {
+  [ -e "${MANUAL_HOLD_FILE}" ]
+}
+
+exit_if_manual_generation_hold_active() {
+  if manual_generation_hold_active; then
+    log "manual generation selection hold is active: ${MANUAL_HOLD_FILE}"
+    log "skipping packaged guest promotion without changing profiles, markers, or guest service"
+    exit 0
+  fi
+}
+
 ensure_guest_namespace() {
   outer_pid="$(systemctl show -p MainPID --value "${GUEST_SERVICE}" 2>/dev/null || true)"
   case "${outer_pid}" in
@@ -130,6 +143,8 @@ esac
 wanted_rev="$(sed -n '1p' "${GUEST_REV_FILE}" | tr -d '[:space:]')"
 [ -n "${wanted_rev}" ] || fail "empty packaged guest revision"
 
+exit_if_manual_generation_hold_active
+
 current_rev="$(read_first_line "${APPLIED_REV_FILE}")"
 applied_system="$(read_first_line "${APPLIED_SYSTEM_FILE}")"
 current_system="$(resolve_guest_system_profile "${SELECTED_PROFILE_GUEST}" || true)"
@@ -148,7 +163,9 @@ if [ "${current_rev}" = "${wanted_rev}" ]; then
     log "guest revision marker matches, but system profile drifted: selected=${current_system:-none} legacy=${legacy_system:-none} -> ${applied_system}"
     ensure_guest_namespace
     wait_for_guest_current_system
+    exit_if_manual_generation_hold_active
     nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "set -eu; export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin; /run/current-system/sw/bin/mkdir -p /nix/var/nix/profiles/per-user/root; /run/current-system/sw/bin/nix-env -p '${SELECTED_PROFILE_GUEST}' --set '${applied_system}'; /run/current-system/sw/bin/nix-env -p '${LEGACY_PROFILE_GUEST}' --set '${applied_system}'"
+    exit_if_manual_generation_hold_active
     log "restarting guest to boot repaired generation"
     systemctl restart --no-block "${GUEST_SERVICE}"
     exit 0
@@ -215,9 +232,6 @@ nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "
     --print-out-paths
   system_path=\"\$(/run/current-system/sw/bin/readlink -f result)\"
   [ -n \"\${system_path}\" ]
-  /run/current-system/sw/bin/mkdir -p /nix/var/nix/profiles/per-user/root
-  /run/current-system/sw/bin/nix-env -p '${SELECTED_PROFILE_GUEST}' --set \"\${system_path}\"
-  /run/current-system/sw/bin/nix-env -p '${LEGACY_PROFILE_GUEST}' --set \"\${system_path}\"
   printf \"%s\\n\" \"\${system_path}\" > '${PROMOTE_SYSTEM_PATH_FILE}'
 "
 
@@ -227,6 +241,10 @@ if [ -r "${PROMOTE_SYSTEM_PATH_FILE}" ]; then
   rm -f "${PROMOTE_SYSTEM_PATH_FILE}"
 fi
 [ -n "${system_path}" ] || fail "guest build did not report a system path"
+
+exit_if_manual_generation_hold_active
+nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "set -eu; export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin; /run/current-system/sw/bin/mkdir -p /nix/var/nix/profiles/per-user/root; /run/current-system/sw/bin/nix-env -p '${SELECTED_PROFILE_GUEST}' --set '${system_path}'; /run/current-system/sw/bin/nix-env -p '${LEGACY_PROFILE_GUEST}' --set '${system_path}'"
+exit_if_manual_generation_hold_active
 
 printf '%s\n' "${wanted_rev}" > "${APPLIED_REV_FILE}"
 printf '%s\n' "${system_path}" > "${APPLIED_SYSTEM_FILE}"

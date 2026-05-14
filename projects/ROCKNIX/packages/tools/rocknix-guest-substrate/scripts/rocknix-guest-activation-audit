@@ -1,0 +1,142 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# Read-only Stage 10 generation-state audit for the SM8550 guest substrate.
+# This script reports the selected profile, legacy mirror, running guest
+# /run/current-system, init symlinks, promotion markers, manual-generation
+# hold state, and optional proof marker. It never repairs state.
+
+set -eu
+
+PATH="${ROCKNIX_GUEST_HOST_PATH:-/usr/bin:/usr/sbin:/bin:/sbin}"
+
+GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
+SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
+LEGACY_PROFILE_GUEST="/nix/var/nix/profiles/system"
+APPLIED_REV_FILE="${ROCKNIX_GUEST_APPLIED_REV_FILE:-${GUEST_ROOT}/etc/rocknix-guest-revision}"
+APPLIED_SYSTEM_FILE="${ROCKNIX_GUEST_APPLIED_SYSTEM_FILE:-${GUEST_ROOT}/etc/rocknix-guest-system-path}"
+MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}"
+IMPORT_PROVENANCE_FILE="${ROCKNIX_GUEST_IMPORT_PROVENANCE:-/storage/.guest/rocknix-guest-generation-import-candidate}"
+PROOF_MARKER_REL="${ROCKNIX_GUEST_PROOF_MARKER_REL:-etc/rocknix-stage10-proof-marker}"
+ALLOW_TRANSITION="${ROCKNIX_GUEST_AUDIT_ALLOW_TRANSITION:-0}"
+QUIET=0
+LOG_TAG="rocknix-guest-activation-audit"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --quiet) QUIET=1; shift ;;
+    --allow-transition) ALLOW_TRANSITION=1; shift ;;
+    -h|--help)
+      sed -n '1,40p' "$0"
+      exit 0
+      ;;
+    *)
+      printf '%s: unknown arg: %s\n' "${LOG_TAG}" "$1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+log() {
+  [ "${QUIET}" = "1" ] && return 0
+  printf '%s: %s\n' "${LOG_TAG}" "$*"
+}
+
+warn() {
+  printf '%s: WARNING: %s\n' "${LOG_TAG}" "$*" >&2
+}
+
+fail() {
+  printf '%s: FAIL: %s\n' "${LOG_TAG}" "$*" >&2
+  exit 1
+}
+
+read_first_line() {
+  file="$1"
+  if [ -r "${file}" ]; then
+    sed -n '1p' "${file}" | tr -d '[:space:]'
+  fi
+}
+
+profile_host_path() {
+  case "$1" in
+    /nix/*) printf '%s%s\n' "${GUEST_ROOT}" "$1" ;;
+    *) fail "profile path must be guest-absolute under /nix: $1" ;;
+  esac
+}
+
+resolve_guest_profile() {
+  profile_guest_path="$1"
+  profile_path="$(profile_host_path "${profile_guest_path}")"
+  [ -L "${profile_path}" ] || return 1
+
+  target="$(readlink "${profile_path}" 2>/dev/null || true)"
+  case "${target}" in
+    /nix/*) resolved="${target}" ;;
+    '') return 1 ;;
+    *) resolved="$(readlink "$(dirname "${profile_path}")/${target}" 2>/dev/null || true)" ;;
+  esac
+
+  case "${resolved}" in /nix/*) : ;; *) return 1 ;; esac
+  [ -x "${GUEST_ROOT}${resolved}/init" ] || return 1
+  printf '%s\n' "${resolved}"
+}
+
+running_guest_system() {
+  outer_pid="$(systemctl show -p MainPID --value "${GUEST_SERVICE}" 2>/dev/null || true)"
+  case "${outer_pid}" in ''|0) return 1 ;; esac
+  inner_pid="$(pgrep -P "${outer_pid}" 2>/dev/null | head -1 || true)"
+  [ -n "${inner_pid}" ] || return 1
+  readlink "/proc/${inner_pid}/root/run/current-system" 2>/dev/null || true
+}
+
+[ -d "${GUEST_ROOT}" ] || fail "guest root missing: ${GUEST_ROOT}"
+[ -d "${GUEST_ROOT}/nix" ] || fail "guest rootfs /nix missing: ${GUEST_ROOT}/nix"
+
+selected_system="$(resolve_guest_profile "${SELECTED_PROFILE_GUEST}" || true)"
+legacy_system="$(resolve_guest_profile "${LEGACY_PROFILE_GUEST}" || true)"
+running_system="$(running_guest_system || true)"
+init_link="$(readlink "${GUEST_ROOT}/init" 2>/dev/null || true)"
+sbin_init_link="$(readlink "${GUEST_ROOT}/sbin/init" 2>/dev/null || true)"
+applied_rev="$(read_first_line "${APPLIED_REV_FILE}")"
+applied_system="$(read_first_line "${APPLIED_SYSTEM_FILE}")"
+hold_state="absent"
+[ -e "${MANUAL_HOLD_FILE}" ] && hold_state="present"
+import_candidate="$(read_first_line "${IMPORT_PROVENANCE_FILE}")"
+
+log "selected=${selected_system:-none}"
+log "legacy=${legacy_system:-none}"
+log "running=${running_system:-none}"
+log "init=${init_link:-none}"
+log "sbin_init=${sbin_init_link:-none}"
+log "applied_rev=${applied_rev:-none}"
+log "applied_system=${applied_system:-none}"
+log "manual_generation_hold=${hold_state}"
+log "import_candidate=${import_candidate:-none}"
+
+[ -n "${selected_system}" ] || fail "selected guest profile is missing or invalid"
+[ -n "${legacy_system}" ] || fail "legacy guest profile is missing or invalid"
+
+if [ "${selected_system}" != "${legacy_system}" ]; then
+  fail "selected and legacy profiles diverged: selected=${selected_system} legacy=${legacy_system}"
+fi
+
+expected_init="${selected_system}/init"
+[ "${init_link}" = "${expected_init}" ] || fail "guest /init drifted: ${init_link:-none} expected=${expected_init}"
+[ "${sbin_init_link}" = "${expected_init}" ] || fail "guest /sbin/init drifted: ${sbin_init_link:-none} expected=${expected_init}"
+
+if [ -n "${running_system}" ] && [ "${running_system}" != "${selected_system}" ]; then
+  if [ "${ALLOW_TRANSITION}" = "1" ]; then
+    warn "running generation differs during allowed transition: running=${running_system} selected=${selected_system}"
+  else
+    fail "running generation drifted: running=${running_system} selected=${selected_system}"
+  fi
+fi
+
+if [ -n "${running_system}" ] && [ -f "${GUEST_ROOT}${running_system}/${PROOF_MARKER_REL}" ]; then
+  log "proof_marker=${running_system}/${PROOF_MARKER_REL}"
+fi
+
+log "audit complete"

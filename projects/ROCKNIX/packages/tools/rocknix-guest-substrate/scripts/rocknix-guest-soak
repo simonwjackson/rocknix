@@ -112,6 +112,16 @@ resolve_guest_profile() {
 
 check_selected_system_profile() {
   inner=$1
+  if command -v rocknix-guest-activation-audit >/dev/null 2>&1; then
+    if ! rocknix-guest-activation-audit --quiet; then
+      alarm "guest activation audit failed"
+    fi
+    if [ -e "${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}" ]; then
+      log "  manual generation hold is active"
+    fi
+    return
+  fi
+
   selected_profile="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
   legacy_profile="/nix/var/nix/profiles/system"
 
