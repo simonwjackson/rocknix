@@ -18,8 +18,8 @@ PKG_TOOLCHAIN="manual"
 # to a newer guest release. The closure layout dropped into
 # /usr/lib/rocknix-guest-substrate/guest/ remains byte-identical to the
 # old in-tree guest/ subtree -- only the source of truth moved.
-PKG_NIX_GUEST_REV="03a6dec64bcc52156f9ff7b3dc751c9e1bf81584"
-PKG_NIX_GUEST_SHA256="c7347119ac819a7cf4e9c4f09cb35d6199368c85219f9c3eb746708b0a860979"
+PKG_NIX_GUEST_REV="d7d5d72821c509ba42b15f2663cd1bfa2e7c5229"
+PKG_NIX_GUEST_SHA256="60f49d95006f6064fa3578b1947a91c6a0b3704718684f6f4e1d19819507165a"
 PKG_NIX_GUEST_URL="https://github.com/simonwjackson/rocknix-nix-guest/archive/${PKG_NIX_GUEST_REV}.tar.gz"
 
 post_install() {
