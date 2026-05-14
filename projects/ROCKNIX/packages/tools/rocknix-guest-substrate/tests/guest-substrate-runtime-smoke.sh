@@ -48,6 +48,7 @@ check_grep() {
   grep -q -- "${pattern}" "${file}" || fail "${message}"
 }
 
+check_executable "${SCRIPT_ROOT}/rocknix-guest-root-ensure"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-prep"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-promote"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-start"
@@ -62,6 +63,7 @@ check_executable "${SCRIPT_ROOT}/rocknix-guest-activation-audit"
 [ ! -e "${UNIT_ROOT}/nix-storage-setup.service" ] || fail "host nix-storage-setup.service must be retired"
 [ ! -e "${UNIT_ROOT}/nix.mount" ] || fail "host nix.mount must be retired"
 check_file "${UNIT_ROOT}/rocknix-main-space.target"
+check_file "${UNIT_ROOT}/rocknix-guest-root-ensure.service"
 check_file "${UNIT_ROOT}/rocknix-guest.service"
 check_file "${UNIT_ROOT}/rocknix-guest-promote.service"
 check_file "${UNIT_ROOT}/rocknix-guest-wifi-ready.service"
@@ -72,8 +74,21 @@ for retired_unit in nix-daemon.service nix-daemon.socket; do
   ! grep -R -q "${retired_unit}" "${UNIT_ROOT}" || fail "unit still references retired host Nix service: ${retired_unit}"
 done
 
+ensure_unit="${UNIT_ROOT}/rocknix-guest-root-ensure.service"
+check_grep 'ExecStart=/usr/bin/rocknix-guest-root-ensure' "${ensure_unit}" "root ensure unit has wrong ExecStart"
+check_grep 'Before=rocknix-guest.service rocknix-guest-promote.service rocknix-guest-wifi-ready.service' "${ensure_unit}" "root ensure must order before guest-path services"
+check_grep 'ConditionKernelCommandLine=!rocknix.safe=1' "${ensure_unit}" "root ensure must be guarded by safe mode"
+check_grep 'ConditionPathExists=!/flash/rocknix.no-nspawn' "${ensure_unit}" "root ensure must be guarded by sticky recovery"
+
 guest_unit="${UNIT_ROOT}/rocknix-guest.service"
-check_grep 'RequiresMountsFor=/storage' "${guest_unit}" "guest unit must require storage"
+check_grep 'RequiresMountsFor=/storage /flash' "${guest_unit}" "guest unit must require storage and flash"
+check_grep 'Requires=rocknix-guest-root-ensure.service' "${guest_unit}" "guest unit must require root ensure"
+check_grep 'After=.*rocknix-guest-root-ensure.service' "${guest_unit}" "guest unit must start after root ensure"
+check_grep 'ConditionKernelCommandLine=!rocknix.safe=1' "${guest_unit}" "guest unit must be guarded by safe mode"
+check_grep 'ConditionPathExists=!/flash/rocknix.no-nspawn' "${guest_unit}" "guest unit must be guarded by sticky recovery"
+if grep -q 'ConditionPathExists=/storage/machines/rocknix-guest' "${guest_unit}"; then
+  fail "guest unit must not skip fresh installs before root ensure can run"
+fi
 if grep -q 'nix.mount' "${guest_unit}" "${UNIT_ROOT}/rocknix-main-space.target" 2>/dev/null; then
   fail "guest units must not require retired host nix.mount"
 fi
@@ -131,7 +146,11 @@ fi
 check_grep 'WantedBy=rocknix-main-space.target' "${guest_unit}" "guest unit must install under rocknix-main-space.target"
 
 promote_unit="${UNIT_ROOT}/rocknix-guest-promote.service"
-check_grep 'After=rocknix-guest.service' "${promote_unit}" "promotion unit must run after guest boot"
+check_grep 'Requires=rocknix-guest-root-ensure.service' "${promote_unit}" "promotion unit must require root ensure"
+check_grep 'After=.*rocknix-guest-root-ensure.service' "${promote_unit}" "promotion unit must run after root ensure"
+check_grep 'After=.*rocknix-guest.service' "${promote_unit}" "promotion unit must run after guest boot"
+check_grep 'ConditionKernelCommandLine=!rocknix.safe=1' "${promote_unit}" "promotion unit must be guarded by safe mode"
+check_grep 'ConditionPathExists=!/flash/rocknix.no-nspawn' "${promote_unit}" "promotion unit must be guarded by sticky recovery"
 check_grep 'ExecStart=/usr/bin/rocknix-guest-promote' "${promote_unit}" "promotion unit has wrong ExecStart"
 check_grep 'WantedBy=rocknix-main-space.target' "${promote_unit}" "promotion unit must install under main-space target"
 
@@ -178,6 +197,7 @@ if [ "${ROCKNIX_GUEST_LIVE_SMOKE:-0}" = "1" ]; then
   [ -n "${selected_system}" ] || fail "no valid selected guest system profile"
 
   systemctl list-unit-files rocknix-main-space.target >/dev/null 2>&1 || fail "rocknix-main-space.target not installed"
+  systemctl list-unit-files rocknix-guest-root-ensure.service >/dev/null 2>&1 || fail "rocknix-guest-root-ensure.service not installed"
   systemctl list-unit-files rocknix-guest.service >/dev/null 2>&1 || fail "rocknix-guest.service not installed"
   systemctl list-unit-files rocknix-guest-promote.service >/dev/null 2>&1 || fail "guest promotion service not installed"
   systemctl list-unit-files rocknix-recovery-toggle.service >/dev/null 2>&1 || fail "recovery toggle service not installed"

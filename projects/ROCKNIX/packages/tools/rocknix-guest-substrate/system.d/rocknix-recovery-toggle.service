@@ -1,22 +1,25 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 #
-# Per-boot recovery override.
+# Per-boot recovery audit.
 #
-# This oneshot runs before sysinit.target and selects the boot's
-# default.target based on two toggles (OR semantics):
+# Early target selection is owned by libreelec-target-generator. This oneshot
+# runs before sysinit.target only to leave an obvious journal/console breadcrumb
+# for the same two toggles (OR semantics):
 #   1) /flash/rocknix.no-nspawn flag file (sticky -- survives reboots
 #      until manually rm'd; clearable from a card reader on another
 #      machine without booting Thor)
 #   2) rocknix.safe=1 on the kernel cmdline (per-boot only; clearable
 #      by a normal reboot without touching /flash)
 #
-# Either toggle present -> boot to multi-user.target (SSH-first host
-# recovery plane). Both absent -> boot to rocknix-main-space.target
-# (NixOS guest main-space).
+# Either toggle present -> generator should boot to multi-user.target
+# (SSH-first host recovery plane). Both absent -> generator should boot to
+# rocknix-main-space.target (NixOS guest main-space). This unit must not call
+# systemctl set-default during boot; late persistent default mutation is not a
+# same-boot selector.
 
 [Unit]
-Description=ROCKNIX recovery override (selects default.target per boot)
+Description=ROCKNIX recovery audit (early generator selects default.target)
 Documentation=file:///flash/HOW-TO-FALL-BACK.md
 DefaultDependencies=no
 Before=sysinit.target shutdown.target

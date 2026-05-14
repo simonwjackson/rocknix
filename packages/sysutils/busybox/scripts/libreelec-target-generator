@@ -5,9 +5,32 @@
 # Copyright (C) 2020-present Team LibreELEC (https://libreelec.tv)
 
 EARLY_DIR="$2"
+CMDLINE_FILE="${LIBREELEC_TARGET_GENERATOR_CMDLINE:-/proc/cmdline}"
+STORAGE_DIR="${LIBREELEC_TARGET_GENERATOR_STORAGE:-/storage}"
+FLASH_DIR="${LIBREELEC_TARGET_GENERATOR_FLASH:-/flash}"
+SYSTEMD_SYSTEM_DIR="${LIBREELEC_TARGET_GENERATOR_SYSTEMD_DIR:-/usr/lib/systemd/system}"
+KMSG_FILE="${LIBREELEC_TARGET_GENERATOR_KMSG:-/dev/kmsg}"
 
 log() {
-  echo "libreelec-target-generator: $@" >/dev/kmsg
+  { echo "libreelec-target-generator: $@" >"${KMSG_FILE}"; } 2>/dev/null || echo "libreelec-target-generator: $@" >&2
+}
+
+is_sm8550_main_space_available() {
+  [ -e "${SYSTEMD_SYSTEM_DIR}/rocknix-main-space.target" ] || return 1
+
+  if [ -r /proc/device-tree/compatible ]; then
+    tr '\000' '\n' < /proc/device-tree/compatible | grep -qi 'sm8550\|thor\|ayn' && return 0
+  fi
+
+  # Fixture/development fallback: the target only ships in the SM8550 guest
+  # substrate package, so its presence is enough to exercise this branch in
+  # source-tree tests.
+  return 0
+}
+
+write_default_target() {
+  target="$1"
+  ln -sT "${SYSTEMD_SYSTEM_DIR}/${target}" "${EARLY_DIR}/default.target" 2>/dev/null || log "error creating symlink to ${target}: $?"
 }
 
 if [ -z "$EARLY_DIR" ]; then
@@ -16,32 +39,55 @@ if [ -z "$EARLY_DIR" ]; then
 fi
 
 TARGET=""
+SAFE_MODE="no"
 
-for arg in $(cat /proc/cmdline); do
-  case "$arg" in
-    textmode)
-      TARGET="textmode.target"
-      ;;
-    installer)
-      TARGET="installer.target"
-      ;;
-  esac
-done
+if [ -r "${CMDLINE_FILE}" ]; then
+  for arg in $(cat "${CMDLINE_FILE}"); do
+    case "$arg" in
+      textmode)
+        TARGET="textmode.target"
+        ;;
+      installer)
+        TARGET="installer.target"
+        ;;
+      rocknix.safe=1)
+        SAFE_MODE="yes"
+        ;;
+    esac
+  done
+fi
 
 BACKUP_EXTENSION_LIST=".tar .tar.gz .tar.bz2 .tar.xz"
+BACKUP_FILE=""
 for extension in $BACKUP_EXTENSION_LIST; do
-  BACKUP_FILE=$(ls -1 /storage/.restore/*${EXTENSION} 2>/dev/null | head -n 1)
+  BACKUP_FILE=$(ls -1 "${STORAGE_DIR}"/.restore/*${extension} 2>/dev/null | head -n 1)
   [ -n "${BACKUP_FILE}" ] && break
 done
 
-if [ -f /storage/.please_resize_me ]; then
+if [ -f "${STORAGE_DIR}/.please_resize_me" ]; then
   TARGET="fs-resize.target"
-elif [ -f /storage/.cache/reset_hard -o -f /storage/.cache/reset_soft ]; then
+elif [ -f "${STORAGE_DIR}/.cache/reset_hard" -o -f "${STORAGE_DIR}/.cache/reset_soft" ]; then
   TARGET="factory-reset.target"
-elif [ -f "$BACKUP_FILE" ]; then
+elif [ -n "${BACKUP_FILE}" ] && [ -f "$BACKUP_FILE" ]; then
   TARGET="backup-restore.target"
 fi
 
+# SM8550 main-space/recovery selection is deliberately below every existing
+# maintenance target above. Keep this in the same generator so default.target is
+# deterministic and does not depend on ordering between parallel generators.
+if [ -z "${TARGET}" ] && is_sm8550_main_space_available; then
+  if [ "${SAFE_MODE}" = "yes" ]; then
+    TARGET="multi-user.target"
+    log "SM8550 recovery target selected by rocknix.safe=1"
+  elif [ -f "${FLASH_DIR}/rocknix.no-nspawn" ]; then
+    TARGET="multi-user.target"
+    log "SM8550 recovery target selected by ${FLASH_DIR}/rocknix.no-nspawn"
+  else
+    TARGET="rocknix-main-space.target"
+    log "SM8550 main-space target selected"
+  fi
+fi
+
 if [ -n "$TARGET" ]; then
-  ln -sT "/usr/lib/systemd/system/$TARGET" "$EARLY_DIR/default.target" 2>/dev/kmsg || log "error creating symlink to $TARGET: $?"
+  write_default_target "$TARGET"
 fi

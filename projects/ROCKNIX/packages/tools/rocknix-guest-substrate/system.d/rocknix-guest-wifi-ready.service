@@ -3,9 +3,12 @@
 
 [Unit]
 Description=Ensure SM8550 guest Wi-Fi is unblocked and enabled
-RequiresMountsFor=/storage
-After=rocknix-guest.service
+Requires=rocknix-guest-root-ensure.service
+After=rocknix-guest-root-ensure.service rocknix-guest.service
 Before=rocknix-guest-promote.service
+RequiresMountsFor=/storage /flash
+ConditionKernelCommandLine=!rocknix.safe=1
+ConditionPathExists=!/flash/rocknix.no-nspawn
 ConditionPathExists=/dev/rfkill
 
 [Service]

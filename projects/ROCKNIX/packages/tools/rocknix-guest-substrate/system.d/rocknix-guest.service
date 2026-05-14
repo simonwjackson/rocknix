@@ -49,9 +49,11 @@
 [Unit]
 Description=ROCKNIX SM8550 guest (NixOS main-space)
 Documentation=file:///usr/lib/rocknix-guest-substrate/docs/layer14-main-space-contract.md
-RequiresMountsFor=/storage
-After=local-fs.target network-pre.target
-ConditionPathExists=/storage/machines/rocknix-guest
+Requires=rocknix-guest-root-ensure.service
+After=local-fs.target network-pre.target rocknix-guest-root-ensure.service
+RequiresMountsFor=/storage /flash
+ConditionKernelCommandLine=!rocknix.safe=1
+ConditionPathExists=!/flash/rocknix.no-nspawn
 ConditionPathExists=/usr/bin/systemd-nspawn
 StartLimitIntervalSec=5min
 StartLimitBurst=3

@@ -2,31 +2,17 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
 #
-# SM8550 guest recovery toggle script. Invoked by
-# rocknix-recovery-toggle.service before sysinit.target.
-#
-# Decision (OR semantics):
-#   /flash/rocknix.no-nspawn exists      -> SSH-first host recovery plane
-#   rocknix.safe=1 in /proc/cmdline      -> SSH-first host recovery plane
-#   neither                              -> SM8550 guest main-space
-#
-# Safety:
-#   - Setting default.target to rocknix-main-space.target is the normal
-#     SM8550 path.
-#   - Setting default.target to multi-user.target is the minimal-host
-#     recovery path: host SSH, storage, and update plumbing, but no
-#     legacy ROCKNIX UI.
-#   - This script never reboots; the user (or recovery flow) controls
-#     reboots.
+# SM8550 guest recovery audit helper. Boot selection is owned by the early
+# systemd target generator, not by late default-target mutation during sysinit.
+# Recovery inputs are /flash/rocknix.no-nspawn and rocknix.safe=1.
+# This script remains as an on-device journal/console breadcrumb for
+# the same recovery inputs.
 
 set -u
 
-FLAG_FILE="/flash/rocknix.no-nspawn"
-CMDLINE_FILE="/proc/cmdline"
+FLAG_FILE="${ROCKNIX_RECOVERY_FLAG_FILE:-/flash/rocknix.no-nspawn}"
+CMDLINE_FILE="${ROCKNIX_RECOVERY_CMDLINE_FILE:-/proc/cmdline}"
 NORMAL_TARGET="rocknix-main-space.target"
-# Minimal-host recovery is deliberately SSH-first. The legacy ROCKNIX UI
-# stack is not part of the substrate once the NixOS guest owns product UX,
-# so recovery lands on multi-user.target instead of rocknix.target.
 RECOVERY_TARGET="multi-user.target"
 LOG_TAG="rocknix-recovery-toggle"
 
@@ -52,24 +38,9 @@ if [ -r "${CMDLINE_FILE}" ] && grep -qE '(^| )rocknix\.safe=1( |$)' "${CMDLINE_F
 fi
 
 if [ "${mode}" = "recovery" ]; then
-  target="${RECOVERY_TARGET}"
-  log "recovery mode (reasons:${reasons}); setting default.target=${target}"
+  log "recovery mode observed (reasons:${reasons}); early generator should select ${RECOVERY_TARGET} and guest units are guarded"
 else
-  target="${NORMAL_TARGET}"
-  log "normal mode; setting default.target=${target}"
-fi
-
-# Refuse to set a non-existent target (catch typos in this script
-# during dev). systemctl will fail-fast on a missing unit file.
-if ! systemctl list-unit-files "${target}" >/dev/null 2>&1; then
-  log "FATAL: ${target} not installed; refusing to set default.target"
-  exit 1
-fi
-
-if systemctl set-default "${target}" >/dev/null 2>&1; then
-  log "default.target now points to ${target}"
-else
-  log "WARNING: systemctl set-default ${target} failed; boot will use existing default"
+  log "normal mode observed; early generator should select ${NORMAL_TARGET}"
 fi
 
 exit 0

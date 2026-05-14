@@ -12,7 +12,7 @@ Description=ROCKNIX main-space (SM8550 guest)
 Documentation=file:///usr/lib/rocknix-guest-substrate/docs/layer14-main-space-contract.md
 Requires=multi-user.target
 After=multi-user.target network-online.target
-Wants=rocknix-guest.service
+Wants=rocknix-guest-root-ensure.service rocknix-guest.service
 AllowIsolate=yes
 
 [Install]

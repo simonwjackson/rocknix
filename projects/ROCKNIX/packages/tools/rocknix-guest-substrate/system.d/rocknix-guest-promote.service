@@ -1,9 +1,12 @@
 [Unit]
 Description=Promote packaged ROCKNIX NixOS guest into persistent rootfs
 Documentation=file:///usr/lib/rocknix-guest-substrate/docs/layer14-main-space-contract.md
-After=rocknix-guest.service
+Requires=rocknix-guest-root-ensure.service
+After=rocknix-guest-root-ensure.service rocknix-guest.service
 Wants=rocknix-guest.service
-ConditionPathExists=/storage/machines/rocknix-guest
+RequiresMountsFor=/storage /flash
+ConditionKernelCommandLine=!rocknix.safe=1
+ConditionPathExists=!/flash/rocknix.no-nspawn
 ConditionPathExists=/usr/lib/rocknix-guest-substrate/guest-revision
 ConditionPathExists=/usr/bin/nsenter
 

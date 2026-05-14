@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+
+[Unit]
+Description=Ensure ROCKNIX SM8550 guest rootfs exists
+Documentation=file:///usr/lib/rocknix-guest-substrate/docs/layer14-main-space-contract.md
+RequiresMountsFor=/storage /flash
+Before=rocknix-guest.service rocknix-guest-promote.service rocknix-guest-wifi-ready.service
+After=local-fs.target
+ConditionKernelCommandLine=!rocknix.safe=1
+ConditionPathExists=!/flash/rocknix.no-nspawn
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rocknix-guest-root-ensure
+TimeoutStartSec=30min
+RemainAfterExit=yes
+
+[Install]
+WantedBy=rocknix-main-space.target

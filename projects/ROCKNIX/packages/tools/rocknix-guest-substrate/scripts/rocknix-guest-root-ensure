@@ -1,0 +1,237 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# Ensure the persistent SM8550 NixOS guest rootfs exists before the guest
+# service starts. This is the first-boot bridge from the immutable host image
+# to /storage/machines/rocknix-guest; promotion remains responsible only for
+# updating an already bootable guest.
+
+set -eu
+
+PATH="${ROCKNIX_GUEST_HOST_PATH:-/usr/bin:/usr/sbin:/bin:/sbin}"
+
+GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+MACHINES_ROOT="${ROCKNIX_GUEST_MACHINES_ROOT:-/storage/machines}"
+SEED_ROOT="${ROCKNIX_GUEST_ROOTFS_SEED:-/usr/lib/rocknix-guest-substrate/guest-rootfs-seed}"
+SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
+LOCK_FILE="${ROCKNIX_GUEST_ROOT_LOCK:-/run/lock/rocknix-guest-root.lock}"
+GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
+SEED_CONTRACT_MARKER=".rocknix-guest-rootfs-seed"
+SEED_IN_PROGRESS_MARKER=".rocknix-guest-rootfs-seed-in-progress"
+SEED_COMPLETE_MARKER="etc/rocknix-guest-root-seed-complete"
+LOG_TAG="rocknix-guest-root-ensure"
+
+log() {
+  printf '%s: %s\n' "${LOG_TAG}" "$*"
+}
+
+fail() {
+  log "FAIL: $*" >&2
+  exit 1
+}
+
+is_empty_dir() {
+  [ -d "$1" ] || return 1
+  [ -z "$(find "$1" -mindepth 1 -maxdepth 1 2>/dev/null | sed -n '1p')" ]
+}
+
+is_symlink_path() {
+  [ -L "$1" ]
+}
+
+ensure_safe_storage_paths() {
+  case "${GUEST_ROOT}" in
+    "${MACHINES_ROOT}"/*) : ;;
+    *) fail "guest root must live under machines root: root=${GUEST_ROOT} machines=${MACHINES_ROOT}" ;;
+  esac
+
+  storage_root=$(dirname "${MACHINES_ROOT}")
+  if [ -e "${storage_root}" ] && is_symlink_path "${storage_root}"; then
+    fail "storage root is a symlink: ${storage_root}"
+  fi
+  if [ -e "${MACHINES_ROOT}" ] && is_symlink_path "${MACHINES_ROOT}"; then
+    fail "machines root is a symlink: ${MACHINES_ROOT}"
+  fi
+  if [ -e "${GUEST_ROOT}" ] && is_symlink_path "${GUEST_ROOT}"; then
+    fail "guest root is a symlink: ${GUEST_ROOT}"
+  fi
+
+  mkdir -p "${MACHINES_ROOT}"
+  chmod 0755 "${MACHINES_ROOT}"
+}
+
+profile_host_path_for_root() {
+  root="$1"
+  profile="$2"
+  case "${profile}" in
+    /nix/*) printf '%s%s\n' "${root}" "${profile}" ;;
+    *) fail "profile path must be guest-absolute under /nix: ${profile}" ;;
+  esac
+}
+
+resolve_system_profile_for_root() {
+  root="$1"
+  profile_guest_path="$2"
+  profile_path=$(profile_host_path_for_root "${root}" "${profile_guest_path}")
+
+  [ -L "${profile_path}" ] || return 1
+  link_target=$(readlink "${profile_path}" 2>/dev/null || true)
+  case "${link_target}" in
+    /nix/*) desired_system="${link_target}" ;;
+    '') return 1 ;;
+    *)
+      profile_dir=$(dirname "${profile_path}")
+      desired_system=$(readlink "${profile_dir}/${link_target}" 2>/dev/null || true)
+      ;;
+  esac
+
+  case "${desired_system}" in
+    /nix/*) : ;;
+    *) return 1 ;;
+  esac
+
+  [ -d "${root}${desired_system}" ] || return 1
+  [ -x "${root}${desired_system}/init" ] || return 1
+  printf '%s\n' "${desired_system}"
+}
+
+validate_init_links_for_root() {
+  root="$1"
+  desired_system="$2"
+  desired="${desired_system}/init"
+
+  for init_path in "${root}/init" "${root}/sbin/init"; do
+    if [ -e "${init_path}" ]; then
+      [ -L "${init_path}" ] || fail "guest init path is not a symlink: ${init_path}"
+      cur=$(readlink "${init_path}" 2>/dev/null || true)
+      [ "${cur}" = "${desired}" ] || fail "guest init path points at ${cur:-missing}, expected ${desired}: ${init_path}"
+    else
+      # Linkable target: prep can create the symlink later, but /sbin must exist.
+      [ "$(dirname "${init_path}")" = "${root}" ] || [ -d "$(dirname "${init_path}")" ] || return 1
+    fi
+  done
+}
+
+validate_rootfs() {
+  root="$1"
+  require_seed_marker="$2"
+
+  [ -d "${root}" ] || fail "guest rootfs missing: ${root}"
+  [ -d "${root}/nix" ] || fail "guest /nix missing under ${root}"
+  [ -d "${root}/etc" ] || fail "guest /etc missing under ${root}"
+  [ -d "${root}/sbin" ] || fail "guest /sbin missing under ${root}"
+
+  if [ "${require_seed_marker}" = "yes" ]; then
+    [ -f "${root}/${SEED_CONTRACT_MARKER}" ] || fail "seed contract marker missing: ${root}/${SEED_CONTRACT_MARKER}"
+  fi
+
+  selected_system=$(resolve_system_profile_for_root "${root}" "${SELECTED_PROFILE_GUEST}" || true)
+  [ -n "${selected_system}" ] || fail "no valid selected guest system profile found at ${SELECTED_PROFILE_GUEST} under ${root}"
+  validate_init_links_for_root "${root}" "${selected_system}"
+}
+
+acquire_lock() {
+  lock_dir="${LOCK_FILE}.d"
+  mkdir -p "$(dirname "${LOCK_FILE}")"
+  if ! mkdir "${lock_dir}" 2>/dev/null; then
+    fail "guest root mutation lock is held: ${LOCK_FILE}"
+  fi
+  trap 'rmdir "${lock_dir}" 2>/dev/null || true' EXIT INT TERM
+}
+
+refuse_if_guest_active() {
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet "${GUEST_SERVICE}" 2>/dev/null; then
+      fail "${GUEST_SERVICE} is active; refusing guest root mutation"
+    fi
+  fi
+
+  if [ -e "${GUEST_ROOT}" ] && command -v mountpoint >/dev/null 2>&1; then
+    if mountpoint -q "${GUEST_ROOT}" 2>/dev/null; then
+      fail "guest root is a mountpoint; refusing mutation: ${GUEST_ROOT}"
+    fi
+  fi
+}
+
+cleanup_helper_temp() {
+  tmp_root="$1"
+  if [ -e "${tmp_root}" ]; then
+    [ -f "${tmp_root}/${SEED_IN_PROGRESS_MARKER}" ] || fail "unowned temp root exists; refusing cleanup: ${tmp_root}"
+    rm -rf "${tmp_root}"
+  fi
+}
+
+cleanup_stale_helper_temps() {
+  for tmp_root in "${GUEST_ROOT}.tmp."*; do
+    [ -e "${tmp_root}" ] || continue
+    cleanup_helper_temp "${tmp_root}"
+  done
+}
+
+preflight_storage_capacity() {
+  df -Pk "${MACHINES_ROOT}" >/dev/null 2>&1 || fail "cannot inspect storage capacity for ${MACHINES_ROOT}"
+  df -Pi "${MACHINES_ROOT}" >/dev/null 2>&1 || true
+}
+
+seed_guest_root() {
+  validate_rootfs "${SEED_ROOT}" yes
+  preflight_storage_capacity
+  cleanup_stale_helper_temps
+
+  tmp_root="${GUEST_ROOT}.tmp.$$"
+  cleanup_helper_temp "${tmp_root}"
+  mkdir -p "${tmp_root}"
+  : > "${tmp_root}/${SEED_IN_PROGRESS_MARKER}"
+
+  log "seeding guest root from ${SEED_ROOT} to ${tmp_root}"
+  cp -PR "${SEED_ROOT}/." "${tmp_root}/" || fail "copy from seed payload failed"
+  validate_rootfs "${tmp_root}" yes
+
+  mkdir -p "${tmp_root}/etc"
+  {
+    printf 'seeded_at=%s\n' "$(date -u +%FT%TZ 2>/dev/null || true)"
+    if [ -r "${SEED_ROOT}/${SEED_CONTRACT_MARKER}" ]; then
+      sed 's/^/seed_/' "${SEED_ROOT}/${SEED_CONTRACT_MARKER}" 2>/dev/null || true
+    fi
+  } > "${tmp_root}/${SEED_COMPLETE_MARKER}"
+  rm -f "${tmp_root}/${SEED_IN_PROGRESS_MARKER}"
+  sync "${tmp_root}" 2>/dev/null || sync
+
+  if [ -d "${GUEST_ROOT}" ]; then
+    is_empty_dir "${GUEST_ROOT}" || fail "guest root became non-empty during seeding: ${GUEST_ROOT}"
+    rmdir "${GUEST_ROOT}" || fail "failed to remove empty guest root before activation: ${GUEST_ROOT}"
+  fi
+
+  mv "${tmp_root}" "${GUEST_ROOT}" || fail "failed to activate seeded guest root"
+  sync "${MACHINES_ROOT}" 2>/dev/null || sync
+  validate_rootfs "${GUEST_ROOT}" no
+  log "seeded guest root is valid: ${GUEST_ROOT}"
+}
+
+main() {
+  acquire_lock
+  ensure_safe_storage_paths
+  refuse_if_guest_active
+
+  if [ -d "${GUEST_ROOT}" ]; then
+    if is_empty_dir "${GUEST_ROOT}"; then
+      log "guest root exists but is empty; seeding"
+      seed_guest_root
+      exit 0
+    fi
+
+    validate_rootfs "${GUEST_ROOT}" no
+    if [ ! -f "${GUEST_ROOT}/${SEED_COMPLETE_MARKER}" ]; then
+      log "guest root is valid without seed completion marker; treating as legacy-approved root"
+    else
+      log "guest root is already valid"
+    fi
+    exit 0
+  fi
+
+  log "guest root missing; seeding"
+  seed_guest_root
+}
+
+main "$@"

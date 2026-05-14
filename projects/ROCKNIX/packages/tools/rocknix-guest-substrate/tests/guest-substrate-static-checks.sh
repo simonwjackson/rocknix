@@ -77,6 +77,7 @@ for old_service in nix-daemon.service nix-daemon.socket; do
 done
 
 # Remaining host scripts are the thin-host guest launcher/recovery support.
+check_script "${PKG_DIR}/scripts/rocknix-guest-root-ensure"
 check_script "${PKG_DIR}/scripts/rocknix-guest-prep"
 check_script "${PKG_DIR}/scripts/rocknix-guest-promote"
 check_script "${PKG_DIR}/scripts/rocknix-guest-start"
@@ -88,6 +89,7 @@ check_script "${PKG_DIR}/scripts/rocknix-guest-generation-import"
 check_script "${PKG_DIR}/scripts/rocknix-guest-generation-switch"
 check_script "${PKG_DIR}/scripts/rocknix-guest-activation-audit"
 
+grep -q 'rocknix-guest-root-ensure' "${PKG_DIR}/package.mk" || fail "package.mk does not install guest root ensure helper"
 grep -q 'rocknix-guest-prep' "${PKG_DIR}/package.mk" || fail "package.mk does not install prep helper"
 grep -q 'rocknix-guest-promote' "${PKG_DIR}/package.mk" || fail "package.mk does not install guest promotion helper"
 grep -q 'rocknix-guest-start' "${PKG_DIR}/package.mk" || fail "package.mk does not install guest start helper"
@@ -122,6 +124,11 @@ grep -q 'docs/contracts/layer14-main-space-contract.md' "${PKG_DIR}/package.mk" 
 grep -q 'docs/contracts/layer14-soak-checklist.md' "${PKG_DIR}/package.mk" || fail "package.mk must ship soak checklist from guest"
 grep -q 'docs/contracts/HOW-TO-FALL-BACK.md' "${PKG_DIR}/package.mk" || fail "package.mk must ship fallback doc from guest"
 grep -q 'SM8550_MINIMAL_HOST=yes' "${PKG_DIR}/package.mk" || fail "package.mk must document minimal-host fallback mode when enabled"
+grep -q 'PKG_NIX_GUEST_ROOTFS_SEED_URL=' "${PKG_DIR}/package.mk" || fail "package.mk missing bootable rootfs seed URL contract"
+grep -q 'PKG_NIX_GUEST_ROOTFS_SEED_SHA256=' "${PKG_DIR}/package.mk" || fail "package.mk missing bootable rootfs seed SHA256 contract"
+grep -q 'bootable guest rootfs seed URL/SHA256 are not configured' "${PKG_DIR}/package.mk" || fail "package.mk must fail closed while rootfs seed URL/SHA are placeholders"
+grep -q 'guest-rootfs-seed' "${PKG_DIR}/package.mk" || fail "package.mk must stage bootable rootfs seed separately from guest source"
+grep -q '.rocknix-guest-rootfs-seed' "${PKG_DIR}/package.mk" || fail "package.mk must write rootfs seed contract marker"
 
 # Storage + guest service wiring. Host root /nix was retired: the guest
 # system store lives under /storage/machines/rocknix-guest/nix and is resolved
@@ -129,6 +136,7 @@ grep -q 'SM8550_MINIMAL_HOST=yes' "${PKG_DIR}/package.mk" || fail "package.mk mu
 [ ! -e "${PKG_DIR}/system.d/nix-storage-setup.service" ] || fail "host nix-storage-setup.service must be retired"
 [ ! -e "${PKG_DIR}/system.d/nix.mount" ] || fail "host nix.mount must be retired"
 check_unit "${PKG_DIR}/system.d/rocknix-main-space.target"
+check_unit "${PKG_DIR}/system.d/rocknix-guest-root-ensure.service"
 check_unit "${PKG_DIR}/system.d/rocknix-guest.service"
 check_unit "${PKG_DIR}/system.d/rocknix-guest-promote.service"
 check_unit "${PKG_DIR}/system.d/rocknix-guest-wifi-ready.service"
@@ -139,6 +147,7 @@ check_unit "${PKG_DIR}/system.d/rocknix-recovery-toggle.service"
 ! grep -q 'enable_service nix.mount' "${PKG_DIR}/package.mk" || fail "package.mk must not enable nix.mount"
 ! grep -R -q 'nix.mount' "${PKG_DIR}/system.d" "${PKG_DIR}/package.mk" || fail "host units/package must not require host nix.mount"
 grep -q 'enable_service rocknix-main-space.target' "${PKG_DIR}/package.mk" || fail "package.mk does not enable rocknix-main-space.target"
+grep -q 'enable_service rocknix-guest-root-ensure.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable guest root ensure service"
 grep -q 'enable_service rocknix-guest.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable rocknix-guest.service"
 grep -q 'enable_service rocknix-guest-wifi-ready.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable guest Wi-Fi unblock service"
 grep -q 'enable_service rocknix-guest-promote.service' "${PKG_DIR}/package.mk" || fail "package.mk does not enable guest promotion service"
@@ -146,14 +155,31 @@ grep -q 'enable_service rocknix-recovery-toggle.service' "${PKG_DIR}/package.mk"
 
 grep -q 'Alias=default.target' "${PKG_DIR}/system.d/rocknix-main-space.target" || fail "rocknix-main-space.target must alias default.target"
 ! grep -q 'rocknix-graphical.target' "${PKG_DIR}/system.d/rocknix-main-space.target" || fail "rocknix-main-space.target must not keep old graphical-target alias"
-grep -q 'Wants=rocknix-guest.service' "${PKG_DIR}/system.d/rocknix-main-space.target" || fail "rocknix-main-space.target must start guest unit"
+grep -q 'Wants=rocknix-guest-root-ensure.service rocknix-guest.service' "${PKG_DIR}/system.d/rocknix-main-space.target" || fail "rocknix-main-space.target must start root ensure before guest unit"
 ! grep -q 'rocknix-automount.service' "${PKG_DIR}/system.d/rocknix-main-space.target" || fail "main-space target must not require host game-media automount"
-grep -q 'Before=sysinit.target' "${PKG_DIR}/system.d/rocknix-recovery-toggle.service" || fail "recovery toggle must run before sysinit"
+grep -q 'Before=sysinit.target' "${PKG_DIR}/system.d/rocknix-recovery-toggle.service" || fail "recovery toggle audit must run before sysinit"
 grep -q 'ExecStart=/usr/bin/rocknix-recovery-toggle' "${PKG_DIR}/system.d/rocknix-recovery-toggle.service" || fail "recovery toggle unit has wrong ExecStart"
 
+ensure_unit="${PKG_DIR}/system.d/rocknix-guest-root-ensure.service"
+grep -q 'ExecStart=/usr/bin/rocknix-guest-root-ensure' "${ensure_unit}" || fail "root ensure unit has wrong ExecStart"
+grep -q 'Before=rocknix-guest.service rocknix-guest-promote.service rocknix-guest-wifi-ready.service' "${ensure_unit}" || fail "root ensure unit must order before all guest-path services"
+grep -q 'RequiresMountsFor=/storage /flash' "${ensure_unit}" || fail "root ensure unit must require storage and flash"
+grep -q 'ConditionKernelCommandLine=!rocknix.safe=1' "${ensure_unit}" || fail "root ensure unit must be guarded by rocknix.safe=1"
+grep -q 'ConditionPathExists=!/flash/rocknix.no-nspawn' "${ensure_unit}" || fail "root ensure unit must be guarded by sticky recovery flag"
+grep -q '/run/lock/rocknix-guest-root.lock' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must use root-owned mutation lock"
+grep -q 'guest-rootfs-seed' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must seed from packaged bootable rootfs"
+grep -q 'rocknix-guest-root-seed-complete' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must write seed completion marker"
+grep -q 'guest root mutation lock is held' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must fail closed on concurrent mutation"
+grep -q 'is a symlink' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must reject symlinked storage paths"
+
 guest_unit="${PKG_DIR}/system.d/rocknix-guest.service"
-grep -q 'RequiresMountsFor=/storage' "${guest_unit}" || fail "guest unit must require storage only"
+grep -q 'RequiresMountsFor=/storage /flash' "${guest_unit}" || fail "guest unit must require storage and flash"
 ! grep -q 'RequiresMountsFor=/storage /nix' "${guest_unit}" || fail "guest unit must not require host /nix"
+grep -q 'Requires=rocknix-guest-root-ensure.service' "${guest_unit}" || fail "guest unit must require root ensure service"
+grep -q 'After=.*rocknix-guest-root-ensure.service' "${guest_unit}" || fail "guest unit must start after root ensure service"
+! grep -q 'ConditionPathExists=/storage/machines/rocknix-guest' "${guest_unit}" || fail "guest unit must not skip fresh installs before root ensure can run"
+grep -q 'ConditionKernelCommandLine=!rocknix.safe=1' "${guest_unit}" || fail "guest unit must be guarded by rocknix.safe=1"
+grep -q 'ConditionPathExists=!/flash/rocknix.no-nspawn' "${guest_unit}" || fail "guest unit must be guarded by sticky recovery flag"
 ! grep -q 'Requires=nix.mount' "${guest_unit}" || fail "guest unit must not require host nix.mount"
 grep -q 'StartLimitIntervalSec=5min' "${guest_unit}" || fail "guest unit must bound bad-generation restart loops"
 grep -q 'StartLimitBurst=3' "${guest_unit}" || fail "guest unit must cap restart bursts"
@@ -214,7 +240,11 @@ grep -q 'WantedBy=rocknix-main-space.target' "${guest_unit}" || fail "guest unit
 ! grep -q 'Alias=rocknix-guest-v2.service' "${guest_unit}" || fail "guest unit must not keep old v2 alias"
 
 wifi_unit="${PKG_DIR}/system.d/rocknix-guest-wifi-ready.service"
-grep -q 'After=rocknix-guest.service' "${wifi_unit}" || fail "guest Wi-Fi unblock service must run after guest starts"
+grep -q 'Requires=rocknix-guest-root-ensure.service' "${wifi_unit}" || fail "guest Wi-Fi unblock service must require root ensure"
+grep -q 'After=.*rocknix-guest-root-ensure.service' "${wifi_unit}" || fail "guest Wi-Fi unblock service must run after root ensure"
+grep -q 'After=.*rocknix-guest.service' "${wifi_unit}" || fail "guest Wi-Fi unblock service must run after guest starts"
+grep -q 'ConditionKernelCommandLine=!rocknix.safe=1' "${wifi_unit}" || fail "guest Wi-Fi unblock service must be guarded by rocknix.safe=1"
+grep -q 'ConditionPathExists=!/flash/rocknix.no-nspawn' "${wifi_unit}" || fail "guest Wi-Fi unblock service must be guarded by sticky recovery flag"
 grep -q 'Before=rocknix-guest-promote.service' "${wifi_unit}" || fail "guest Wi-Fi unblock service must run before promotion"
 grep -q 'ExecStart=/usr/bin/rocknix-guest-wifi-unblock --guest-radio' "${wifi_unit}" || fail "guest Wi-Fi unblock service has wrong ExecStart"
 grep -q 'TimeoutStartSec=3min' "${wifi_unit}" || fail "guest Wi-Fi unblock service must have a bounded startup timeout"
@@ -229,7 +259,11 @@ grep -q 'guest Wi-Fi radio enabled' "${PKG_DIR}/scripts/rocknix-guest-wifi-unblo
 grep -q 'ROCKNIX_GUEST_RFKILL_CACHE' "${PKG_DIR}/scripts/rocknix-guest-wifi-unblock" || fail "Wi-Fi unblock helper must allow rfkill cache override for tests"
 
 promote_unit="${PKG_DIR}/system.d/rocknix-guest-promote.service"
-grep -q 'After=rocknix-guest.service' "${promote_unit}" || fail "guest promotion must run after guest boot"
+grep -q 'Requires=rocknix-guest-root-ensure.service' "${promote_unit}" || fail "guest promotion must require root ensure"
+grep -q 'After=.*rocknix-guest-root-ensure.service' "${promote_unit}" || fail "guest promotion must run after root ensure"
+grep -q 'After=.*rocknix-guest.service' "${promote_unit}" || fail "guest promotion must run after guest boot"
+grep -q 'ConditionKernelCommandLine=!rocknix.safe=1' "${promote_unit}" || fail "guest promotion must be guarded by rocknix.safe=1"
+grep -q 'ConditionPathExists=!/flash/rocknix.no-nspawn' "${promote_unit}" || fail "guest promotion must be guarded by sticky recovery flag"
 grep -q 'ExecStart=/usr/bin/rocknix-guest-promote' "${promote_unit}" || fail "guest promotion unit has wrong ExecStart"
 grep -q 'WantedBy=rocknix-main-space.target' "${promote_unit}" || fail "guest promotion must be wanted by main-space target"
 grep -q 'TimeoutStartSec=60min' "${promote_unit}" || fail "guest promotion needs a long timeout for Nix builds"
@@ -426,7 +460,9 @@ grep -q '/flash/rocknix.no-nspawn' "${PKG_DIR}/scripts/rocknix-recovery-toggle" 
 grep -q 'rocknix.safe=1' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle missing cmdline escape"
 grep -q 'rocknix-main-space.target' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle missing normal target"
 grep -q 'RECOVERY_TARGET="multi-user.target"' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle must route minimal-host recovery to multi-user.target"
-grep -q 'systemctl set-default' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle must switch default target"
+grep -q 'early generator should select' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle must be audit-only for early generator selection"
+! grep -q 'systemctl set-default' "${PKG_DIR}/scripts/rocknix-recovery-toggle" || fail "recovery toggle must not mutate persistent default.target during boot"
+grep -q 'systemctl set-default during boot' "${PKG_DIR}/system.d/rocknix-recovery-toggle.service" || fail "recovery toggle unit must document that late set-default is not authoritative"
 
 grep -q 'resolv.conf.guest-owned' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing resolv.conf ownership marker"
 grep -q '/storage/.guest' "${PKG_DIR}/scripts/rocknix-guest-prep" || fail "prep helper missing guest writable area"
@@ -471,6 +507,101 @@ run_prep_profile_fixture() {
   rm -rf "${tmp_dir}"
 }
 run_prep_profile_fixture
+
+create_bootable_seed_fixture() {
+  root="$1"
+  mkdir -p \
+    "${root}/nix/var/nix/profiles/per-user/root" \
+    "${root}/nix/store/selected-system" \
+    "${root}/etc" \
+    "${root}/sbin"
+  : > "${root}/nix/store/selected-system/init"
+  chmod 0755 "${root}/nix/store/selected-system/init"
+  ln -s /nix/store/selected-system "${root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system-1-link"
+  ln -s rocknix-guest-system-1-link "${root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system"
+  ln -s /nix/store/selected-system/init "${root}/init"
+  ln -s /nix/store/selected-system/init "${root}/sbin/init"
+  printf 'revision=test\nsha256=test\n' > "${root}/.rocknix-guest-rootfs-seed"
+}
+
+run_root_ensure_fixture() {
+  tmp_dir=$(mktemp -d)
+  seed_root="${tmp_dir}/seed"
+  machines_root="${tmp_dir}/storage/machines"
+  guest_root="${machines_root}/rocknix-guest"
+  lock_file="${tmp_dir}/run/lock/rocknix-guest-root.lock"
+  bin_dir="${tmp_dir}/bin"
+  mkdir -p "${seed_root}" "${machines_root}" "${bin_dir}"
+  create_bootable_seed_fixture "${seed_root}"
+
+  cat > "${bin_dir}/systemctl" <<'EOF'
+#!/bin/sh
+exit 3
+EOF
+  chmod 0755 "${bin_dir}/systemctl"
+
+  ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_GUEST_ROOTFS_SEED="${seed_root}" \
+    ROCKNIX_GUEST_MACHINES_ROOT="${machines_root}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_ROOT_LOCK="${lock_file}" \
+    "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null
+  [ -d "${guest_root}/nix" ] || fail "root ensure fixture: missing root was not seeded"
+  [ -f "${guest_root}/etc/rocknix-guest-root-seed-complete" ] || fail "root ensure fixture: completion marker missing"
+  [ "$(readlink "${guest_root}/init")" = "/nix/store/selected-system/init" ] || fail "root ensure fixture: /init link was not preserved"
+
+  before=$(find "${guest_root}" -type f | wc -l)
+  ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_GUEST_ROOTFS_SEED="${seed_root}" \
+    ROCKNIX_GUEST_MACHINES_ROOT="${machines_root}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_ROOT_LOCK="${lock_file}" \
+    "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null
+  after=$(find "${guest_root}" -type f | wc -l)
+  [ "${before}" = "${after}" ] || fail "root ensure fixture: valid root should not be recopied"
+
+  rm -rf "${guest_root}"
+  stale_tmp="${guest_root}.tmp.stale"
+  mkdir -p "${stale_tmp}"
+  : > "${stale_tmp}/.rocknix-guest-rootfs-seed-in-progress"
+  mkdir -p "${guest_root}"
+  ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_GUEST_ROOTFS_SEED="${seed_root}" \
+    ROCKNIX_GUEST_MACHINES_ROOT="${machines_root}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_ROOT_LOCK="${lock_file}" \
+    "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null
+  [ -f "${guest_root}/etc/rocknix-guest-root-seed-complete" ] || fail "root ensure fixture: empty root was not seeded"
+  [ ! -e "${stale_tmp}" ] || fail "root ensure fixture: helper-owned stale temp was not cleaned"
+
+  rm -rf "${guest_root}"
+  mkdir -p "${guest_root}/etc"
+  printf 'user-data\n' > "${guest_root}/etc/not-a-guest-root"
+  if ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_GUEST_ROOTFS_SEED="${seed_root}" \
+    ROCKNIX_GUEST_MACHINES_ROOT="${machines_root}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_ROOT_LOCK="${lock_file}" \
+    "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null 2>&1; then
+    fail "root ensure fixture: non-empty invalid root should fail closed"
+  fi
+  [ -f "${guest_root}/etc/not-a-guest-root" ] || fail "root ensure fixture: invalid root data was overwritten"
+
+  rm -rf "${guest_root}"
+  rm -f "${seed_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system"
+  if ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_GUEST_ROOTFS_SEED="${seed_root}" \
+    ROCKNIX_GUEST_MACHINES_ROOT="${machines_root}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_ROOT_LOCK="${lock_file}" \
+    "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null 2>&1; then
+    fail "root ensure fixture: invalid seed should fail before creating root"
+  fi
+  [ ! -e "${guest_root}" ] || fail "root ensure fixture: invalid seed created authoritative root"
+
+  rm -rf "${tmp_dir}"
+}
+run_root_ensure_fixture
 
 grep -q 'inputplumber/by-hidden' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" || fail "udev stage must scrub InputPlumber-hidden devices"
 grep -q 'SYS_SOUND_DIR' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" || fail "udev stage must allow fixture-controlled sound sysfs"
@@ -520,6 +651,74 @@ grep -q 'check_host_ssh_responsive' "${PKG_DIR}/scripts/rocknix-guest-soak" || f
 grep -q 'ROCKNIX_REQUIRE_HOST_ESSWAY' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper must allow SSH-first recovery without host essway"
 grep -q 'check_resolv_owned' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing resolv ownership check"
 grep -q 'check_selected_system_profile' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing selected system profile check"
+
+run_target_generator_fixture() {
+  generator="${REPO_ROOT}/packages/sysutils/busybox/scripts/libreelec-target-generator"
+  [ -f "${generator}" ] || fail "missing target generator"
+  sh -n "${generator}" || fail "target generator syntax failed"
+  grep -q 'rocknix-main-space.target' "${generator}" || fail "target generator missing SM8550 main-space selection"
+  grep -q 'rocknix.safe=1' "${generator}" || fail "target generator missing rocknix.safe=1 selection"
+  grep -q 'rocknix.no-nspawn' "${generator}" || fail "target generator missing sticky recovery flag selection"
+
+  tmp_dir=$(mktemp -d)
+  early_dir="${tmp_dir}/early"
+  storage_dir="${tmp_dir}/storage"
+  flash_dir="${tmp_dir}/flash"
+  systemd_dir="${tmp_dir}/systemd"
+  cmdline="${tmp_dir}/cmdline"
+  mkdir -p "${early_dir}" "${storage_dir}/.cache" "${storage_dir}/.restore" "${flash_dir}" "${systemd_dir}"
+  for target in rocknix-main-space.target multi-user.target fs-resize.target factory-reset.target backup-restore.target textmode.target installer.target; do
+    : > "${systemd_dir}/${target}"
+  done
+
+  run_generator() {
+    rm -f "${early_dir}/default.target"
+    LIBREELEC_TARGET_GENERATOR_CMDLINE="${cmdline}" \
+      LIBREELEC_TARGET_GENERATOR_STORAGE="${storage_dir}" \
+      LIBREELEC_TARGET_GENERATOR_FLASH="${flash_dir}" \
+      LIBREELEC_TARGET_GENERATOR_SYSTEMD_DIR="${systemd_dir}" \
+      LIBREELEC_TARGET_GENERATOR_KMSG="${tmp_dir}/kmsg" \
+      "${generator}" ignored "${early_dir}"
+    readlink "${early_dir}/default.target" 2>/dev/null | sed 's|.*/||'
+  }
+
+  printf '\n' > "${cmdline}"
+  [ "$(run_generator)" = "rocknix-main-space.target" ] || fail "target generator fixture: normal boot should select main-space"
+
+  printf 'quiet rocknix.safe=1\n' > "${cmdline}"
+  [ "$(run_generator)" = "multi-user.target" ] || fail "target generator fixture: rocknix.safe=1 should select recovery"
+
+  printf '\n' > "${cmdline}"
+  : > "${flash_dir}/rocknix.no-nspawn"
+  [ "$(run_generator)" = "multi-user.target" ] || fail "target generator fixture: sticky flag should select recovery"
+  rm -f "${flash_dir}/rocknix.no-nspawn"
+
+  : > "${storage_dir}/.please_resize_me"
+  printf 'rocknix.safe=1\n' > "${cmdline}"
+  [ "$(run_generator)" = "fs-resize.target" ] || fail "target generator fixture: resize must beat SM8550 recovery"
+  rm -f "${storage_dir}/.please_resize_me"
+
+  : > "${storage_dir}/.cache/reset_hard"
+  printf '\n' > "${cmdline}"
+  [ "$(run_generator)" = "factory-reset.target" ] || fail "target generator fixture: factory reset must beat main-space"
+  rm -f "${storage_dir}/.cache/reset_hard"
+
+  : > "${storage_dir}/.restore/backup.tar"
+  [ "$(run_generator)" = "backup-restore.target" ] || fail "target generator fixture: backup restore must beat main-space"
+  rm -f "${storage_dir}/.restore/backup.tar"
+
+  printf 'textmode\n' > "${cmdline}"
+  [ "$(run_generator)" = "textmode.target" ] || fail "target generator fixture: textmode must beat main-space"
+
+  rm -f "${systemd_dir}/rocknix-main-space.target"
+  rm -f "${early_dir}/default.target"
+  printf '\n' > "${cmdline}"
+  result=$(run_generator || true)
+  [ -z "${result}" ] || fail "target generator fixture: non-SM8550 target availability must preserve existing behavior"
+
+  rm -rf "${tmp_dir}"
+}
+run_target_generator_fixture
 
 # Device gates: only SM8550 ships the guest substrate.
 SYSTEMD_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/systemd/package.mk"
