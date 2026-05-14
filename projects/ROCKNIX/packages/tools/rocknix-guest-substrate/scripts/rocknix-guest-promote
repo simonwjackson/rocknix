@@ -197,13 +197,21 @@ nsenter -t "${inner_pid}" -m -u -i -n -p sh -c '
   exit 1
 ' || fail "guest NetworkManager did not become active"
 
+# Build target: the by-compatible dispatch entry point in rocknix-nix-guest.
+# It reads /proc/device-tree/compatible at eval time (visible inside the
+# guest namespace because systemd-nspawn shares the host DT) and selects
+# the matching profile from deviceProfileByCompatible. Requires --impure
+# because the eval depends on a path outside the Nix store. See
+# docs/contracts/layer14-main-space-contract.md in rocknix-nix-guest for
+# the device-addition workflow; the host substrate must not maintain a
+# parallel device list.
 log "building packaged guest inside running guest namespace"
 nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "
   set -eu
   export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin
   cd /storage/.guest/rocknix-nix-guest-packaged
-  /run/current-system/sw/bin/nix build --extra-experimental-features \"nix-command flakes\" \
-    .#nixosConfigurations.rocknix-guest-main-space.config.system.build.toplevel \
+  /run/current-system/sw/bin/nix build --impure --extra-experimental-features \"nix-command flakes\" \
+    .#nixosConfigurations.rocknix-guest-main-space-by-compatible.config.system.build.toplevel \
     --print-out-paths
   system_path=\"\$(/run/current-system/sw/bin/readlink -f result)\"
   [ -n \"\${system_path}\" ]

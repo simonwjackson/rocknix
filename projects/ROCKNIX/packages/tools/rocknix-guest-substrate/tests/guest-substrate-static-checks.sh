@@ -179,6 +179,12 @@ grep -q 'ExecStart=/usr/bin/rocknix-guest-promote' "${promote_unit}" || fail "gu
 grep -q 'WantedBy=rocknix-main-space.target' "${promote_unit}" || fail "guest promotion must be wanted by main-space target"
 grep -q 'TimeoutStartSec=60min' "${promote_unit}" || fail "guest promotion needs a long timeout for Nix builds"
 grep -q 'nix build' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must build packaged guest configuration"
+grep -q 'rocknix-guest-main-space-by-compatible' "${PKG_DIR}/scripts/rocknix-guest-promote" \
+  || fail "guest promotion must build the by-compatible dispatch entry point so per-device profiles are picked from /proc/device-tree/compatible (rocknix-nix-guest)"
+! grep -qE '\.#nixosConfigurations\.rocknix-guest-main-space\.' "${PKG_DIR}/scripts/rocknix-guest-promote" \
+  || fail "guest promotion must not target the legacy Thor-aliased rocknix-guest-main-space attribute; use rocknix-guest-main-space-by-compatible"
+grep -q 'nix build --impure' "${PKG_DIR}/scripts/rocknix-guest-promote" \
+  || fail "guest promotion must pass --impure (by-compatible dispatch reads /proc/device-tree/compatible at eval time)"
 grep -q 'ROCKNIX_GUEST_SYSTEM_PROFILE' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must honor selected profile override"
 grep -q "nix-env -p '\${SELECTED_PROFILE_GUEST}' --set" "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must update selected guest system profile"
 grep -q "nix-env -p '\${LEGACY_PROFILE_GUEST}' --set" "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must mirror legacy guest system profile"
