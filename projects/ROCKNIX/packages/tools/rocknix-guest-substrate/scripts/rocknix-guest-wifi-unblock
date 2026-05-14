@@ -71,27 +71,27 @@ set_guest_wifi_radio_on() {
     sleep 1
   done
 
-  if nsenter -t "${inner_pid}" -m -u -i -n -p sh -c '
-    set -eu
-    export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin
+  i=0
+  while [ "${i}" -lt 90 ]; do
+    if nsenter -t "${inner_pid}" -m -u -i -n -p sh -c '
+      set -eu
+      export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin
 
-    rfkill_unblocked() {
-      command -v rfkill >/dev/null 2>&1 || return 0
-      ! rfkill list 2>/dev/null | grep -A2 -i "Wireless LAN" | grep -q "Soft blocked: yes"
-    }
+      rfkill_unblocked() {
+        command -v rfkill >/dev/null 2>&1 || return 0
+        ! rfkill list 2>/dev/null | grep -A2 -i "Wireless LAN" | grep -q "Soft blocked: yes"
+      }
 
-    nm_wifi_enabled() {
-      command -v nmcli >/dev/null 2>&1 || return 1
-      [ "$(nmcli -t -f WIFI general 2>/dev/null || true)" = "enabled" ]
-    }
+      nm_wifi_enabled() {
+        command -v nmcli >/dev/null 2>&1 || return 1
+        [ "$(nmcli -t -f WIFI general 2>/dev/null || true)" = "enabled" ]
+      }
 
-    iwd_wifi_powered() {
-      command -v iwctl >/dev/null 2>&1 || return 1
-      iwctl device wlan0 show 2>/dev/null | grep -q "Powered[[:space:]]*on"
-    }
+      iwd_wifi_powered() {
+        command -v iwctl >/dev/null 2>&1 || return 1
+        iwctl device wlan0 show 2>/dev/null | grep -q "Powered[[:space:]]*on"
+      }
 
-    i=0
-    while [ "${i}" -lt 90 ]; do
       if command -v rfkill >/dev/null 2>&1; then
         rfkill unblock wifi 2>/dev/null || rfkill unblock wlan 2>/dev/null || true
       fi
@@ -102,19 +102,17 @@ set_guest_wifi_radio_on() {
         iwctl device wlan0 set-property Powered on >/dev/null 2>&1 || true
       fi
 
-      if rfkill_unblocked && { nm_wifi_enabled || iwd_wifi_powered; }; then
-        exit 0
-      fi
+      rfkill_unblocked && { nm_wifi_enabled || iwd_wifi_powered; }
+    '; then
+      log "guest Wi-Fi radio enabled"
+      return 0
+    fi
 
-      i=$((i + 1))
-      sleep 1
-    done
-    exit 75
-  '; then
-    log "guest Wi-Fi radio enabled"
-  else
-    log "guest Wi-Fi radio could not be confirmed; leaving host Wi-Fi unblocked"
-  fi
+    i=$((i + 1))
+    sleep 1
+  done
+
+  log "guest Wi-Fi radio could not be confirmed; leaving host Wi-Fi unblocked"
 }
 
 unblock_host_wifi
