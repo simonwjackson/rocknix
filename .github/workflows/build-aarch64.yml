@@ -103,6 +103,21 @@ jobs:
             output.log
             ./build.ROCKNIX-${{ inputs.DEVICE }}.aarch64/.threads/logs/
 
+      - name: Verify SM8550 SYSTEM budget
+        if: ${{ inputs.DEVICE == 'SM8550' }}
+        run: |
+          set -euo pipefail
+          budget_mib="$(sed -n 's/.*SM8550_FLASH_PARTITION_BUDGET_MIB:-\([0-9][0-9]*\).*/\1/p' projects/ROCKNIX/devices/SM8550/options | head -1)"
+          budget_mib="${budget_mib:-1900}"
+          system_file="$(ls target/ROCKNIX-*.system | head -1)"
+          test -f "${system_file}"
+          system_bytes="$(stat -c %s "${system_file}")"
+          budget_bytes="$((budget_mib * 1024 * 1024))"
+          if [ "${system_bytes}" -gt "${budget_bytes}" ]; then
+            echo "${system_file} exceeds SM8550 SYSTEM budget: ${system_bytes} > ${budget_bytes}" >&2
+            exit 1
+          fi
+
       - name: Get date
         run: echo "DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
 

@@ -48,6 +48,10 @@
   # For maximum cross compatbility
     PREFER_GLES="no"
 
+  # Existing Odin2/Thor System partitions are 2GB. Keep CI comfortably below
+  # that ceiling so update tarballs and full images remain installable.
+    SM8550_FLASH_PARTITION_BUDGET_MIB="${SM8550_FLASH_PARTITION_BUDGET_MIB:-1900}"
+
   # Experimental thin-host switch for the SM8550 Nix main-space build.
   # When enabled, ROCKNIX keeps the boot/update/recovery/container substrate
   # and lets the NixOS guest own the product UX. The image package uses this

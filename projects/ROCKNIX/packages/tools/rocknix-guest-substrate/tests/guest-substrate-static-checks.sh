@@ -827,6 +827,18 @@ grep -q 'guest-substrate package/script/unit/test changes require CLEAN_GUEST_SU
   || fail "image-only workflow must reject guest-substrate changes when package clean is disabled"
 ! grep -q 'clean rocknix-guest-substrate || true' "${IMAGE_ONLY_WORKFLOW}" \
   || fail "image-only workflow must not mask guest-substrate clean failures"
+grep -q 'Verify SM8550 host and seed artifacts' "${WORKFLOW_DIR}/build-aarch64-image.yml" \
+  || fail "build-aarch64-image workflow must verify SM8550 host and seed artifacts before upload"
+grep -q 'Verify SM8550 host and seed artifacts' "${IMAGE_ONLY_WORKFLOW}" \
+  || fail "image-only workflow must verify SM8550 host and seed artifacts before upload"
+grep -q 'Verify SM8550 SYSTEM budget' "${WORKFLOW_DIR}/build-aarch64.yml" \
+  || fail "build-aarch64 workflow must verify SM8550 SYSTEM budget before upload"
+grep -q '/target/seed/.*\\.tar\\.zst' "${WORKFLOW_DIR}/build-aarch64-image.yml" \
+  || fail "build-aarch64-image workflow must require SM8550 update tar seed payload"
+grep -q '/target/seed/.*\\.tar\\.zst' "${IMAGE_ONLY_WORKFLOW}" \
+  || fail "image-only workflow must require SM8550 update tar seed payload"
+grep -q 'scripts/(local-image-build|image|mkimage)' "${IMAGE_ONLY_WORKFLOW}" \
+  || fail "image-only workflow allowlist must account for image layout script changes"
 
 # Foreground local builds pipe through tee; the build command status must win.
 grep -q '\${PIPESTATUS\[0\]}' "${LOCAL_IMAGE_BUILD}" || fail "local-image-build foreground path must capture the left side of the tee pipeline"
@@ -837,6 +849,8 @@ grep -q '\[ "\${DEVICE}" = "SM8550" \] && PKG_DEPENDS_TARGET+=" rocknix-guest-su
   || fail "image package must gate rocknix-guest-substrate on DEVICE=SM8550"
 grep -q 'SM8550_MINIMAL_HOST' "${SM8550_OPTIONS}" \
   || fail "SM8550 options must expose the minimal-host switch"
+grep -q 'SM8550_FLASH_PARTITION_BUDGET_MIB' "${SM8550_OPTIONS}" \
+  || fail "SM8550 options must declare a SYSTEM image size budget"
 grep -q '\[ "\${BASE_ONLY}" = "true" \] || \[ "\${SM8550_MINIMAL_HOST:-no}" = "yes" \]' "${IMAGE_PKG}" \
   || fail "image package must use minimal-host path to skip product UX metas"
 grep -q 'SM8550 minimal host pulled forbidden payload' "${IMAGE_PKG}" \

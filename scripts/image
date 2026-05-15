@@ -253,6 +253,15 @@ rm -rf ${FAKEROOT_SCRIPT}
 # Set permissions
 chmod 0644 ${TARGET_IMG}/${IMAGE_NAME}.system
 
+if [ "${DEVICE}" = "SM8550" ] && [ -n "${SM8550_FLASH_PARTITION_BUDGET_MIB:-}" ]; then
+  SYSTEM_BYTES=$(stat -c %s "${TARGET_IMG}/${IMAGE_NAME}.system")
+  SYSTEM_BUDGET_BYTES=$((SM8550_FLASH_PARTITION_BUDGET_MIB * 1024 * 1024))
+  if [ "${SYSTEM_BYTES}" -gt "${SYSTEM_BUDGET_BYTES}" ]; then
+    echo "SM8550 SYSTEM image exceeds ${SM8550_FLASH_PARTITION_BUDGET_MIB}MiB budget: ${SYSTEM_BYTES} bytes" >&2
+    exit 1
+  fi
+fi
+
 if [ "${1}" = "release" -o "${1}" = "mkimage" -o "${1}" = "noobs" ]; then
 
   RELEASE_DIR="target/${IMAGE_NAME}"
