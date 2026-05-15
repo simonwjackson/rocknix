@@ -871,10 +871,101 @@ grep -q 'rocknix-guest-rootfs-seed' "${IMAGE_SCRIPT}" || fail "image script must
 grep -q 'target/seed' "${IMAGE_SCRIPT}" || fail "image script must place guest rootfs seed payload under target/seed"
 grep -q 'stage_guest_rootfs_seed_update' "${INIT_SCRIPT}" || fail "init update path must stage guest rootfs seed payloads"
 grep -q 'guest-rootfs-seed.manifest' "${INIT_SCRIPT}" || fail "init update path must read guest rootfs seed manifest from mounted SYSTEM"
-grep -q '/storage/.guest/seed' "${INIT_SCRIPT}" || fail "init update path must hoist guest rootfs seed to persistent storage seam"
+grep -q 'ROCKNIX_UPDATE_STORAGE_ROOT:-/storage' "${INIT_SCRIPT}" || fail "init update path must hoist guest rootfs seed to persistent storage seam"
 grep -q 'seed_sha256' "${INIT_SCRIPT}" || fail "init update path must verify guest rootfs seed sha256"
 grep -q 'seed_compatible' "${INIT_SCRIPT}" || fail "init update path must reject wrong-device guest rootfs seeds"
 assert_order "${INIT_SCRIPT}" 'stage_guest_rootfs_seed_update' 'update_file "System"' "init must stage guest seed before writing SYSTEM"
+
+run_init_seed_staging_fixture() {
+  tmp_dir=$(mktemp -d)
+  helper="${tmp_dir}/seed-helper.sh"
+  update_dir="${tmp_dir}/update-target"
+  system_root="${tmp_dir}/mounted-system"
+  storage_root="${tmp_dir}/storage"
+  compatible_file="${tmp_dir}/compatible"
+  seed_payload="${update_dir}/seed/fixture.tar.zst"
+  mkdir -p "${update_dir}/seed" "${system_root}/usr/lib/rocknix-guest-substrate" "${storage_root}" \
+    "$(dirname "${compatible_file}")"
+  printf 'ayn,odin2portal\000qcom,sm8550\000' > "${compatible_file}"
+  printf 'seed\n' > "${seed_payload}"
+  seed_sha="$(sha256sum "${seed_payload}" | awk '{print $1}')"
+  seed_size="$(stat -c %s "${seed_payload}")"
+  cat > "${system_root}/usr/lib/rocknix-guest-substrate/guest-rootfs-seed.manifest" <<EOF
+seed_archive=fixture.tar.zst
+seed_sha256=${seed_sha}
+seed_size=${seed_size}
+seed_compatible=ayn,odin2portal
+EOF
+
+  {
+    printf '%s\n' '#!/bin/sh' 'set -eu' \
+      'StartProgress() { :; }' \
+      'StopProgress() { :; }' \
+      'UPDATE_DIR="${ROCKNIX_TEST_UPDATE_DIR}"' \
+      'UPDATE_FILENAME="${ROCKNIX_TEST_UPDATE_FILENAME}"'
+    awk '/^read_seed_manifest_value\(\)/ { copy=1 } /^display_versions\(\)/ { copy=0 } copy { print }' "${INIT_SCRIPT}"
+    cat <<'EOF'
+run_case() {
+  stage_guest_rootfs_seed_update
+}
+run_case "$@"
+EOF
+  } > "${helper}"
+  chmod 0755 "${helper}"
+
+  ROCKNIX_TEST_UPDATE_DIR="${update_dir}" \
+    ROCKNIX_TEST_UPDATE_FILENAME="update.tar" \
+    ROCKNIX_UPDATE_SYSTEM_ROOT="${system_root}" \
+    ROCKNIX_UPDATE_STORAGE_ROOT="${storage_root}" \
+    ROCKNIX_UPDATE_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
+    "${helper}"
+  cmp "${seed_payload}" "${storage_root}/.guest/seed/fixture.tar.zst" \
+    || fail "init seed staging fixture: staged payload does not match source"
+
+  rm -f "${storage_root}/.guest/seed/fixture.tar.zst"
+  printf 'bad\n' >> "${seed_payload}"
+  if ROCKNIX_TEST_UPDATE_DIR="${update_dir}" \
+    ROCKNIX_TEST_UPDATE_FILENAME="update.tar" \
+    ROCKNIX_UPDATE_SYSTEM_ROOT="${system_root}" \
+    ROCKNIX_UPDATE_STORAGE_ROOT="${storage_root}" \
+    ROCKNIX_UPDATE_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
+    "${helper}" >/dev/null 2>&1; then
+    fail "init seed staging fixture: sha mismatch should fail"
+  fi
+  [ ! -e "${storage_root}/.guest/seed/fixture.tar.zst.tmp" ] \
+    || fail "init seed staging fixture: sha mismatch left tmp seed"
+
+  printf 'seed\n' > "${seed_payload}"
+  printf 'ayn,thor\000' > "${compatible_file}"
+  if ROCKNIX_TEST_UPDATE_DIR="${update_dir}" \
+    ROCKNIX_TEST_UPDATE_FILENAME="update.tar" \
+    ROCKNIX_UPDATE_SYSTEM_ROOT="${system_root}" \
+    ROCKNIX_UPDATE_STORAGE_ROOT="${storage_root}" \
+    ROCKNIX_UPDATE_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
+    "${helper}" >/dev/null 2>&1; then
+    fail "init seed staging fixture: compatible mismatch should fail"
+  fi
+
+  printf 'ayn,odin2portal\000' > "${compatible_file}"
+  rm -f "${seed_payload}"
+  if ROCKNIX_TEST_UPDATE_DIR="${update_dir}" \
+    ROCKNIX_TEST_UPDATE_FILENAME="update.tar" \
+    ROCKNIX_UPDATE_SYSTEM_ROOT="${system_root}" \
+    ROCKNIX_UPDATE_STORAGE_ROOT="${storage_root}" \
+    ROCKNIX_UPDATE_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
+    "${helper}" >/dev/null 2>&1; then
+    fail "init seed staging fixture: missing tar seed should fail"
+  fi
+  ROCKNIX_TEST_UPDATE_DIR="${update_dir}" \
+    ROCKNIX_TEST_UPDATE_FILENAME="update.img.gz" \
+    ROCKNIX_UPDATE_SYSTEM_ROOT="${system_root}" \
+    ROCKNIX_UPDATE_STORAGE_ROOT="${storage_root}" \
+    ROCKNIX_UPDATE_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
+    "${helper}" >/dev/null
+
+  rm -rf "${tmp_dir}"
+}
+run_init_seed_staging_fixture
 
 # Build-integrity gates must run before expensive/artifact-producing paths.
 grep -q '^  validate-build-integrity:' "${BUILD_NIGHTLY_WORKFLOW}" || fail "Build workflow missing build-integrity validation job"

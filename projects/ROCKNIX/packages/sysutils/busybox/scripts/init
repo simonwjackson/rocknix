@@ -382,7 +382,10 @@ read_seed_manifest_value() {
 }
 
 stage_guest_rootfs_seed_update() {
-  local manifest="/update/usr/lib/rocknix-guest-substrate/guest-rootfs-seed.manifest"
+  local system_root="${ROCKNIX_UPDATE_SYSTEM_ROOT:-/update}"
+  local storage_root="${ROCKNIX_UPDATE_STORAGE_ROOT:-/storage}"
+  local compatible_file="${ROCKNIX_UPDATE_DEVICE_COMPATIBLE_FILE:-/proc/device-tree/compatible}"
+  local manifest="${system_root}/usr/lib/rocknix-guest-substrate/guest-rootfs-seed.manifest"
   local seed_archive seed_sha seed_size seed_compatible seed_source seed_target seed_tmp storage_free actual_sha device_compatible expected_compatible matched
 
   [ -f "${manifest}" ] || return 0
@@ -396,8 +399,8 @@ stage_guest_rootfs_seed_update() {
   [ -n "${seed_compatible}" ] || { echo "Guest rootfs seed manifest is missing seed_compatible"; return 1; }
 
   matched="no"
-  if [ -r /proc/device-tree/compatible ]; then
-    for device_compatible in $(tr '\000' '\n' < /proc/device-tree/compatible | sed '/^$/d'); do
+  if [ -r "${compatible_file}" ]; then
+    for device_compatible in $(tr '\000' '\n' < "${compatible_file}" | sed '/^$/d'); do
       for expected_compatible in ${seed_compatible}; do
         [ "${device_compatible}" = "${expected_compatible}" ] && matched="yes"
       done
@@ -417,7 +420,7 @@ stage_guest_rootfs_seed_update() {
   fi
 
   [ -n "${seed_size}" ] || seed_size="$(stat -Lt "${seed_source}" | awk '{print $2}')"
-  storage_free="$(df /storage/ | awk '/[0-9]%/{print $4}')"
+  storage_free="$(df "${storage_root}/" | awk '/[0-9]%/{print $4}')"
   storage_free=$(( storage_free * 1024 ))
   if [ "${storage_free}" -lt "${seed_size}" ]; then
     echo "Not enough free /storage space to stage guest rootfs seed."
@@ -425,8 +428,8 @@ stage_guest_rootfs_seed_update() {
     return 1
   fi
 
-  mkdir -p /storage/.guest/seed || return 1
-  seed_target="/storage/.guest/seed/${seed_archive}"
+  mkdir -p "${storage_root}/.guest/seed" || return 1
+  seed_target="${storage_root}/.guest/seed/${seed_archive}"
   seed_tmp="${seed_target}.tmp"
   rm -f "${seed_tmp}"
 
