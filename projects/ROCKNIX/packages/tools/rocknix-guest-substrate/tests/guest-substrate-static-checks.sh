@@ -128,7 +128,10 @@ grep -q 'PKG_NIX_GUEST_ROOTFS_SEED_URL=' "${PKG_DIR}/package.mk" || fail "packag
 grep -q 'PKG_NIX_GUEST_ROOTFS_SEED_SHA256=' "${PKG_DIR}/package.mk" || fail "package.mk missing bootable rootfs seed SHA256 contract"
 grep -q 'bootable guest rootfs seed URL/SHA256 are not configured' "${PKG_DIR}/package.mk" || fail "package.mk must fail closed while rootfs seed URL/SHA are placeholders"
 grep -q 'guest-rootfs-seed' "${PKG_DIR}/package.mk" || fail "package.mk must stage bootable rootfs seed separately from guest source"
+grep -q 'guest-rootfs-seed.tar.zst' "${PKG_DIR}/package.mk" || fail "package.mk must install the compressed rootfs seed archive, not an expanded copy"
+grep -q -- '--output - "${seed_url}" >> "${seed_tarball}.tmp"' "${PKG_DIR}/package.mk" || fail "package.mk must reassemble split seed assets without storing duplicate part files"
 grep -q '.rocknix-guest-rootfs-seed' "${PKG_DIR}/package.mk" || fail "package.mk must write rootfs seed contract marker"
+! grep -q 'cp -PR "${seed_extract}/."' "${PKG_DIR}/package.mk" || fail "package.mk must not duplicate the expanded rootfs seed during build"
 
 # Storage + guest service wiring. Host root /nix was retired: the guest
 # system store lives under /storage/machines/rocknix-guest/nix and is resolved
@@ -168,6 +171,8 @@ grep -q 'ConditionKernelCommandLine=!rocknix.safe=1' "${ensure_unit}" || fail "r
 grep -q 'ConditionPathExists=!/flash/rocknix.no-nspawn' "${ensure_unit}" || fail "root ensure unit must be guarded by sticky recovery flag"
 grep -q '/run/lock/rocknix-guest-root.lock' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must use root-owned mutation lock"
 grep -q 'guest-rootfs-seed' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must seed from packaged bootable rootfs"
+grep -q 'ROCKNIX_GUEST_ROOTFS_SEED_ARCHIVE' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must support compressed rootfs seed archives"
+grep -q 'extract_seed_archive' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must extract compressed rootfs seed archives on first boot"
 grep -q 'rocknix-guest-root-seed-complete' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must write seed completion marker"
 grep -q 'guest root mutation lock is held' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must fail closed on concurrent mutation"
 grep -q 'is a symlink' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must reject symlinked storage paths"

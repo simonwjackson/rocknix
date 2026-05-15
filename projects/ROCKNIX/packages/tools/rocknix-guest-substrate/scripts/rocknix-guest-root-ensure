@@ -14,6 +14,8 @@ PATH="${ROCKNIX_GUEST_HOST_PATH:-/usr/bin:/usr/sbin:/bin:/sbin}"
 GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
 MACHINES_ROOT="${ROCKNIX_GUEST_MACHINES_ROOT:-/storage/machines}"
 SEED_ROOT="${ROCKNIX_GUEST_ROOTFS_SEED:-/usr/lib/rocknix-guest-substrate/guest-rootfs-seed}"
+SEED_ARCHIVE="${ROCKNIX_GUEST_ROOTFS_SEED_ARCHIVE:-/usr/lib/rocknix-guest-substrate/guest-rootfs-seed.tar.zst}"
+SEED_ARCHIVE_MARKER="${ROCKNIX_GUEST_ROOTFS_SEED_ARCHIVE_MARKER:-/usr/lib/rocknix-guest-substrate/guest-rootfs-seed.tar.zst.rocknix-guest-rootfs-seed}"
 SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
 LOCK_FILE="${ROCKNIX_GUEST_ROOT_LOCK:-/run/lock/rocknix-guest-root.lock}"
 GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
@@ -174,8 +176,24 @@ preflight_storage_capacity() {
   df -Pi "${MACHINES_ROOT}" >/dev/null 2>&1 || true
 }
 
+extract_seed_archive() {
+  archive="$1"
+  destination="$2"
+
+  case "${archive}" in
+    *.tar.zst)
+      if tar --help 2>/dev/null | grep -q -- '--zstd'; then
+        tar --zstd -xf "${archive}" -C "${destination}" || fail "extract from seed archive failed"
+      else
+        command -v zstd >/dev/null 2>&1 || fail "zstd is required to extract seed archive: ${archive}"
+        zstd -dc "${archive}" | tar -xf - -C "${destination}" || fail "extract from seed archive failed"
+      fi
+      ;;
+    *) fail "unsupported seed archive format: ${archive}" ;;
+  esac
+}
+
 seed_guest_root() {
-  validate_rootfs "${SEED_ROOT}" yes
   preflight_storage_capacity
   cleanup_stale_helper_temps
 
@@ -184,15 +202,25 @@ seed_guest_root() {
   mkdir -p "${tmp_root}"
   : > "${tmp_root}/${SEED_IN_PROGRESS_MARKER}"
 
-  log "seeding guest root from ${SEED_ROOT} to ${tmp_root}"
-  cp -PR "${SEED_ROOT}/." "${tmp_root}/" || fail "copy from seed payload failed"
+  if [ -d "${SEED_ROOT}" ]; then
+    validate_rootfs "${SEED_ROOT}" yes
+    log "seeding guest root from ${SEED_ROOT} to ${tmp_root}"
+    cp -PR "${SEED_ROOT}/." "${tmp_root}/" || fail "copy from seed payload failed"
+  elif [ -f "${SEED_ARCHIVE}" ]; then
+    [ -r "${SEED_ARCHIVE_MARKER}" ] || fail "seed archive marker missing: ${SEED_ARCHIVE_MARKER}"
+    log "seeding guest root from ${SEED_ARCHIVE} to ${tmp_root}"
+    extract_seed_archive "${SEED_ARCHIVE}" "${tmp_root}"
+    cp "${SEED_ARCHIVE_MARKER}" "${tmp_root}/${SEED_CONTRACT_MARKER}" || fail "copy seed archive marker failed"
+  else
+    fail "no packaged guest rootfs seed found: ${SEED_ROOT} or ${SEED_ARCHIVE}"
+  fi
   validate_rootfs "${tmp_root}" yes
 
   mkdir -p "${tmp_root}/etc"
   {
     printf 'seeded_at=%s\n' "$(date -u +%FT%TZ 2>/dev/null || true)"
-    if [ -r "${SEED_ROOT}/${SEED_CONTRACT_MARKER}" ]; then
-      sed 's/^/seed_/' "${SEED_ROOT}/${SEED_CONTRACT_MARKER}" 2>/dev/null || true
+    if [ -r "${tmp_root}/${SEED_CONTRACT_MARKER}" ]; then
+      sed 's/^/seed_/' "${tmp_root}/${SEED_CONTRACT_MARKER}" 2>/dev/null || true
     fi
   } > "${tmp_root}/${SEED_COMPLETE_MARKER}"
   rm -f "${tmp_root}/${SEED_IN_PROGRESS_MARKER}"

@@ -126,16 +126,12 @@ post_install() {
     mkdir -p "$(dirname "${seed_tarball}")"
     echo "rocknix-guest-substrate: fetching bootable guest rootfs seed ${PKG_NIX_GUEST_ROOTFS_SEED_REV}"
     if [ -n "${PKG_NIX_GUEST_ROOTFS_SEED_URLS}" ]; then
-      rm -f "${seed_tarball}.tmp" "${seed_tarball}.tmp".part-*
-      part_index=0
+      rm -f "${seed_tarball}.tmp"
+      : > "${seed_tarball}.tmp"
       for seed_url in ${PKG_NIX_GUEST_ROOTFS_SEED_URLS}; do
-        printf -v part_path '%s.tmp.part-%02d' "${seed_tarball}" "${part_index}"
         curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
-             --output "${part_path}" "${seed_url}"
-        part_index=$((part_index + 1))
+             --output - "${seed_url}" >> "${seed_tarball}.tmp"
       done
-      cat "${seed_tarball}.tmp".part-* > "${seed_tarball}.tmp"
-      rm -f "${seed_tarball}.tmp".part-*
     else
       curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
            --output "${seed_tarball}.tmp" "${PKG_NIX_GUEST_ROOTFS_SEED_URL}"
@@ -159,42 +155,14 @@ post_install() {
     exit 1
   fi
 
-  seed_extract="${PKG_BUILD}/.rocknix-guest-rootfs-seed"
-  rm -rf "${seed_extract}"
-  mkdir -p "${seed_extract}"
-  case "${seed_tarball}" in
-    *.tar.zst) tar --zstd -xf "${seed_tarball}" -C "${seed_extract}" ;;
-    *.tar.gz|*.tgz) tar -xzf "${seed_tarball}" -C "${seed_extract}" ;;
-    *.tar) tar -xf "${seed_tarball}" -C "${seed_extract}" ;;
-    *) echo "rocknix-guest-substrate: unsupported rootfs seed archive format: ${seed_tarball}" >&2; exit 1 ;;
-  esac
-
-  [ -d "${seed_extract}/nix" ] || { echo "rocknix-guest-substrate: rootfs seed missing /nix" >&2; exit 1; }
-  [ -d "${seed_extract}/etc" ] || { echo "rocknix-guest-substrate: rootfs seed missing /etc" >&2; exit 1; }
-  [ -d "${seed_extract}/sbin" ] || { echo "rocknix-guest-substrate: rootfs seed missing /sbin" >&2; exit 1; }
-  seed_profile="${seed_extract}/nix/var/nix/profiles/per-user/root/rocknix-guest-system"
-  [ -L "${seed_profile}" ] || { echo "rocknix-guest-substrate: rootfs seed missing selected rocknix-guest-system profile" >&2; exit 1; }
-  seed_profile_target="$(readlink "${seed_profile}" 2>/dev/null || true)"
-  case "${seed_profile_target}" in
-    /nix/*) seed_system="${seed_profile_target}" ;;
-    '') echo "rocknix-guest-substrate: rootfs seed selected profile is empty" >&2; exit 1 ;;
-    *) seed_system="$(readlink "$(dirname "${seed_profile}")/${seed_profile_target}" 2>/dev/null || true)" ;;
-  esac
-  case "${seed_system}" in
-    /nix/*) : ;;
-    *) echo "rocknix-guest-substrate: rootfs seed selected profile does not resolve under /nix" >&2; exit 1 ;;
-  esac
-  [ -x "${seed_extract}${seed_system}/init" ] || { echo "rocknix-guest-substrate: rootfs seed selected profile init is not executable: ${seed_system}/init" >&2; exit 1; }
-  [ -L "${seed_extract}/init" ] || { echo "rocknix-guest-substrate: rootfs seed missing /init symlink" >&2; exit 1; }
-  [ -L "${seed_extract}/sbin/init" ] || { echo "rocknix-guest-substrate: rootfs seed missing /sbin/init symlink" >&2; exit 1; }
-
-  mkdir -p "${substrate_lib}/guest-rootfs-seed"
-  cp -PR "${seed_extract}/." "${substrate_lib}/guest-rootfs-seed/"
+  mkdir -p "${substrate_lib}"
+  cp "${seed_tarball}" "${substrate_lib}/guest-rootfs-seed.tar.zst"
   {
     printf 'revision=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_REV}"
     printf 'sha256=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_SHA256}"
     printf 'source=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_URL:-${PKG_NIX_GUEST_ROOTFS_SEED_URLS}}"
-  } > "${substrate_lib}/guest-rootfs-seed/.rocknix-guest-rootfs-seed"
+    printf 'archive=%s\n' 'guest-rootfs-seed.tar.zst'
+  } > "${substrate_lib}/guest-rootfs-seed.tar.zst.rocknix-guest-rootfs-seed"
 
   # Contract docs are owned by rocknix-nix-guest under docs/contracts/.
   # Copy the two that the host ships on-image from the fetched tarball.
