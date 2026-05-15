@@ -128,6 +128,7 @@ jobs:
         run: echo "DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
 
       - uses: actions/upload-artifact@v7
+        if: ${{ inputs.DEVICE != 'SM8550' }}
         with:
           name: ROCKNIX-base-image-${{ inputs.DEVICE }}-${{ env.DATE }}
           path: |
