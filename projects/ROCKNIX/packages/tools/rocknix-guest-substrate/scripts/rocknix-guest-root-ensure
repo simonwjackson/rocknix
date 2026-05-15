@@ -112,6 +112,42 @@ resolve_system_profile_for_root() {
   printf '%s\n' "${desired_system}"
 }
 
+system_from_init_link_for_root() {
+  root="$1"
+
+  for init_path in "${root}/init" "${root}/sbin/init"; do
+    [ -L "${init_path}" ] || continue
+    init_target=$(readlink "${init_path}" 2>/dev/null || true)
+    case "${init_target}" in
+      /nix/*/init)
+        desired_system="${init_target%/init}"
+        [ -d "${root}${desired_system}" ] || continue
+        [ -x "${root}${desired_system}/init" ] || continue
+        printf '%s\n' "${desired_system}"
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+ensure_selected_profile_for_root() {
+  root="$1"
+  profile_guest_path="$2"
+  profile_path=$(profile_host_path_for_root "${root}" "${profile_guest_path}")
+
+  [ -L "${profile_path}" ] && return 0
+  [ ! -e "${profile_path}" ] || return 0
+
+  desired_system=$(system_from_init_link_for_root "${root}" || true)
+  [ -n "${desired_system}" ] || return 0
+
+  mkdir -p "$(dirname "${profile_path}")" || fail "failed to create guest profile directory: ${profile_path}"
+  ln -s "${desired_system}" "${profile_path}" || fail "failed to synthesize guest selected profile: ${profile_path} -> ${desired_system}"
+  log "synthesized missing guest selected profile from init link: ${profile_guest_path} -> ${desired_system}"
+}
+
 validate_init_links_for_root() {
   root="$1"
   desired_system="$2"
@@ -142,6 +178,7 @@ validate_rootfs() {
     [ -f "${root}/${SEED_CONTRACT_MARKER}" ] || fail "seed contract marker missing: ${root}/${SEED_CONTRACT_MARKER}"
   fi
 
+  ensure_selected_profile_for_root "${root}" "${SELECTED_PROFILE_GUEST}"
   selected_system=$(resolve_system_profile_for_root "${root}" "${SELECTED_PROFILE_GUEST}" || true)
   [ -n "${selected_system}" ] || fail "no valid selected guest system profile found at ${SELECTED_PROFILE_GUEST} under ${root}"
   validate_init_links_for_root "${root}" "${selected_system}"

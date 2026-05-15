@@ -710,6 +710,19 @@ EOF
 
   rm -rf "${guest_root}"
   rm -f "${seed_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system"
+  ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_GUEST_ROOTFS_SEED="${seed_root}" \
+    ROCKNIX_GUEST_MACHINES_ROOT="${machines_root}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_ROOT_LOCK="${lock_file}" \
+    "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null
+  [ -L "${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system" ] \
+    || fail "root ensure fixture: seed without selected profile was not repaired from init link"
+  [ "$(readlink "${guest_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system")" = "/nix/store/selected-system" ] \
+    || fail "root ensure fixture: synthesized selected profile points at the wrong system"
+
+  rm -rf "${guest_root}"
+  rm -f "${seed_root}/init" "${seed_root}/sbin/init" "${seed_root}/nix/var/nix/profiles/per-user/root/rocknix-guest-system"
   if ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
     ROCKNIX_GUEST_ROOTFS_SEED="${seed_root}" \
     ROCKNIX_GUEST_MACHINES_ROOT="${machines_root}" \
