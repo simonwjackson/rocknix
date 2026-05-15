@@ -1,7 +1,7 @@
 ---
 title: fix: Move SM8550 guest seeds out of SYSTEM for offline installs
 type: fix
-status: active
+status: completed
 date: 2026-05-15
 ---
 
