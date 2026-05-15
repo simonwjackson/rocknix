@@ -112,8 +112,11 @@ jobs:
             echo "unable to parse SM8550_FLASH_PARTITION_BUDGET_MIB" >&2
             exit 1
           fi
-          system_file="$(ls target/ROCKNIX-*.system | head -1)"
-          test -f "${system_file}"
+          system_file="$(find target -maxdepth 1 -name 'ROCKNIX-*.system' | head -1)"
+          if [ -z "${system_file}" ]; then
+            echo "No standalone SYSTEM artifact in base aarch64 build; scripts/image enforces the budget during build."
+            exit 0
+          fi
           system_bytes="$(stat -c %s "${system_file}")"
           budget_bytes="$((budget_mib * 1024 * 1024))"
           if [ "${system_bytes}" -gt "${budget_bytes}" ]; then
