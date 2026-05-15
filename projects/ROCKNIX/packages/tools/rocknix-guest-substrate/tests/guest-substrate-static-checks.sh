@@ -789,7 +789,7 @@ INIT_SCRIPT="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/busybox/scripts/ini
 [ -f "${LOCAL_IMAGE_BUILD}" ] || fail "missing local image build wrapper"
 [ -f "${IMAGE_SCRIPT}" ] || fail "missing image script"
 [ -f "${INIT_SCRIPT}" ] || fail "missing init script"
-sh -n "${IMAGE_SCRIPT}" || fail "image script syntax failed"
+bash -n "${IMAGE_SCRIPT}" || fail "image script syntax failed"
 sh -n "${INIT_SCRIPT}" || fail "init script syntax failed"
 
 # SM8550 seed payload must stay outside SYSTEM and be hoisted before SYSTEM writes.
