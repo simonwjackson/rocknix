@@ -384,7 +384,9 @@ reseed_guest_root() {
   build_seed_candidate "${tmp_root}"
 
   if [ -e "${previous_root}" ]; then
-    [ -f "${previous_root}/${SEED_COMPLETE_MARKER}" ] || fail "previous guest root exists and is not helper-owned: ${previous_root}"
+    if ! ( validate_rootfs "${previous_root}" no ) && [ ! -f "${previous_root}/${SEED_COMPLETE_MARKER}" ]; then
+      fail "previous guest root exists and is neither valid nor helper-owned: ${previous_root}"
+    fi
     rm -rf "${previous_root}" || fail "failed to remove previous guest root: ${previous_root}"
   fi
 

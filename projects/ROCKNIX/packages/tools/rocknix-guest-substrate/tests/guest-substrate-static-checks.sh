@@ -667,6 +667,18 @@ EOF
   [ -f "${guest_root}.previous/etc/old-root" ] || fail "root ensure fixture: reseed did not preserve previous root"
   [ ! -e "${reseed_flag}" ] || fail "root ensure fixture: reseed flag was not cleared"
 
+  : > "${reseed_flag}"
+  ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_GUEST_ROOTFS_SEED_DIR="${seed_stage_dir}" \
+    ROCKNIX_GUEST_ROOTFS_SEED_MANIFEST="${seed_manifest}" \
+    ROCKNIX_GUEST_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
+    ROCKNIX_GUEST_RESEED_FLAG="${reseed_flag}" \
+    ROCKNIX_GUEST_MACHINES_ROOT="${machines_root}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_ROOT_LOCK="${lock_file}" \
+    "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null
+  [ ! -e "${reseed_flag}" ] || fail "root ensure fixture: second reseed after legacy previous did not clear flag"
+
   rm -rf "${guest_root}" "${guest_root}.previous"
   mkdir -p "${guest_root}/etc"
   printf 'damaged-root\n' > "${guest_root}/etc/not-a-guest-root"
