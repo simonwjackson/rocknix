@@ -169,18 +169,23 @@ jobs:
             echo "unable to parse SM8550_FLASH_PARTITION_BUDGET_MIB" >&2
             exit 1
           fi
-          system_file="$(ls target/ROCKNIX-*.system | head -1)"
-          test -f "${system_file}"
-          system_bytes="$(stat -c %s "${system_file}")"
           budget_bytes="$((budget_mib * 1024 * 1024))"
-          if [ "${system_bytes}" -gt "${budget_bytes}" ]; then
-            echo "${system_file} exceeds SM8550 SYSTEM budget: ${system_bytes} > ${budget_bytes}" >&2
+          update_tar="$(find target -maxdepth 1 -name 'ROCKNIX-*.tar' | head -1)"
+          if [ -z "${update_tar}" ]; then
+            echo "no SM8550 update tar found" >&2
             exit 1
           fi
-          for update_tar in target/ROCKNIX-*.tar; do
-            tar -tf "${update_tar}" | grep -q '/target/SYSTEM$'
-            tar -tf "${update_tar}" | grep -q '/target/seed/.*\.tar\.zst$'
-          done
+          system_bytes="$(tar -tvf "${update_tar}" | awk '$NF ~ /(^|\/)target\/SYSTEM$/ { print $3; exit }')"
+          if [ -z "${system_bytes}" ]; then
+            echo "${update_tar} does not contain target/SYSTEM" >&2
+            exit 1
+          fi
+          if [ "${system_bytes}" -gt "${budget_bytes}" ]; then
+            echo "${update_tar} target/SYSTEM exceeds SM8550 SYSTEM budget: ${system_bytes} > ${budget_bytes}" >&2
+            exit 1
+          fi
+          tar -tf "${update_tar}" | grep -Eq '(^|/)target/SYSTEM$'
+          tar -tf "${update_tar}" | grep -Eq '(^|/)target/seed/.*\.tar\.zst$'
           for image in target/ROCKNIX-*.img.gz; do
             gzip -t "${image}"
           done
