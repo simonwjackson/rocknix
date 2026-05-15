@@ -375,6 +375,64 @@ check_is_compatible() {
   return 0
 }
 
+read_seed_manifest_value() {
+  local manifest="$1"
+  local key="$2"
+  sed -n "s/^${key}=//p" "${manifest}" 2>/dev/null | sed -n '1p'
+}
+
+stage_guest_rootfs_seed_update() {
+  local manifest="/update/usr/lib/rocknix-guest-substrate/guest-rootfs-seed.manifest"
+  local seed_archive seed_sha seed_size seed_source seed_target seed_tmp storage_free actual_sha
+
+  [ -f "${manifest}" ] || return 0
+
+  seed_archive="$(read_seed_manifest_value "${manifest}" seed_archive)"
+  seed_sha="$(read_seed_manifest_value "${manifest}" seed_sha256)"
+  seed_size="$(read_seed_manifest_value "${manifest}" seed_size)"
+  [ -n "${seed_archive}" ] || { echo "Guest rootfs seed manifest is missing seed_archive"; return 1; }
+  [ -n "${seed_sha}" ] || { echo "Guest rootfs seed manifest is missing seed_sha256"; return 1; }
+
+  seed_source="${UPDATE_DIR}/seed/${seed_archive}"
+  if [ ! -f "${seed_source}" ]; then
+    case "${UPDATE_FILENAME}" in
+      *.tar) echo "Missing guest rootfs seed payload in update tar: target/seed/${seed_archive}"; return 1 ;;
+      *) echo "Guest rootfs seed payload not present in image update; skipping seed staging"; return 0 ;;
+    esac
+  fi
+
+  [ -n "${seed_size}" ] || seed_size="$(stat -Lt "${seed_source}" | awk '{print $2}')"
+  storage_free="$(df /storage/ | awk '/[0-9]%/{print $4}')"
+  storage_free=$(( storage_free * 1024 ))
+  if [ "${storage_free}" -lt "${seed_size}" ]; then
+    echo "Not enough free /storage space to stage guest rootfs seed."
+    echo "Need ${seed_size} bytes free while the update archive is still present; have ${storage_free}."
+    return 1
+  fi
+
+  mkdir -p /storage/.guest/seed || return 1
+  seed_target="/storage/.guest/seed/${seed_archive}"
+  seed_tmp="${seed_target}.tmp"
+  rm -f "${seed_tmp}"
+
+  StartProgress spinner "Staging guest rootfs seed... "
+    cp "${seed_source}" "${seed_tmp}"
+    actual_sha="$(sha256sum "${seed_tmp}" | awk '{print $1}')"
+  if [ "${actual_sha}" = "${seed_sha}" ]; then
+    mv "${seed_tmp}" "${seed_target}"
+    sync "${seed_target}" 2>/dev/null || sync
+    StopProgress "OK"
+    return 0
+  fi
+
+  rm -f "${seed_tmp}"
+  StopProgress "FAILED"
+  echo "Guest rootfs seed SHA256 mismatch."
+  echo "  expected: ${seed_sha}"
+  echo "  actual:   ${actual_sha}"
+  return 1
+}
+
 display_versions() {
   local old_project_version new_project_version
 
@@ -1077,6 +1135,12 @@ check_update() {
       StartProgress countdown "Normal startup in 60s... " 60 "NOW"
       return 0
     fi
+  fi
+
+  if ! stage_guest_rootfs_seed_update; then
+    do_cleanup
+    StartProgress countdown "Normal startup in 60s... " 60 "NOW"
+    return 0
   fi
 
   # get sizes

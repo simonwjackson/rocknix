@@ -294,6 +294,13 @@ if [ "${1}" = "release" -o "${1}" = "mkimage" -o "${1}" = "noobs" ]; then
   cp ${TARGET_IMG}/${IMAGE_NAME}.system ${RELEASE_DIR}/target/SYSTEM
   cp ${TARGET_IMG}/${IMAGE_NAME}.kernel ${RELEASE_DIR}/target/KERNEL
 
+  # SM8550 carries the NixOS guest rootfs seed as an offline tier-2 update
+  # payload outside SYSTEM. The host image contains only the tiny manifest.
+  if [ "${DEVICE}" = "SM8550" ] && [ -d "${BUILD}/rocknix-guest-rootfs-seed" ]; then
+    mkdir -p ${RELEASE_DIR}/target/seed
+    cp -PR "${BUILD}/rocknix-guest-rootfs-seed/." ${RELEASE_DIR}/target/seed/
+  fi
+
   # Create md5sum's
   (
     cd ${RELEASE_DIR}
