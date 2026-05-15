@@ -173,7 +173,11 @@ refuse_if_guest_active() {
 cleanup_helper_temp() {
   tmp_root="$1"
   if [ -e "${tmp_root}" ]; then
-    [ -f "${tmp_root}/${SEED_IN_PROGRESS_MARKER}" ] || fail "unowned temp root exists; refusing cleanup: ${tmp_root}"
+    if [ ! -f "${tmp_root}/${SEED_IN_PROGRESS_MARKER}" ]; then
+      if ! is_empty_dir "${tmp_root}" && [ ! -f "${tmp_root}/${SEED_COMPLETE_MARKER}" ]; then
+        fail "unowned temp root exists; refusing cleanup: ${tmp_root}"
+      fi
+    fi
     rm -rf "${tmp_root}"
   fi
 }
@@ -213,19 +217,24 @@ load_seed_manifest() {
   MANIFEST_LOADED=1
 }
 
-first_device_compatible() {
+device_compatibles() {
   if [ -n "${DEVICE_COMPATIBLE}" ]; then
     printf '%s\n' "${DEVICE_COMPATIBLE}"
     return 0
   fi
   [ -r "${DEVICE_COMPATIBLE_FILE}" ] || fail "device compatible file missing: ${DEVICE_COMPATIBLE_FILE}"
-  tr '\000' '\n' < "${DEVICE_COMPATIBLE_FILE}" | sed -n '/./{p;q;}'
+  tr '\000' '\n' < "${DEVICE_COMPATIBLE_FILE}" | sed '/^$/d'
+}
+
+first_device_compatible() {
+  device_compatibles | sed -n '1p'
 }
 
 compatible_matches_seed() {
-  device_compatible="$1"
-  for expected in ${EXPECTED_SEED_COMPATIBLE}; do
-    [ "${device_compatible}" = "${expected}" ] && return 0
+  for device_compatible in $(device_compatibles); do
+    for expected in ${EXPECTED_SEED_COMPATIBLE}; do
+      [ "${device_compatible}" = "${expected}" ] && return 0
+    done
   done
   return 1
 }
@@ -267,7 +276,7 @@ resolve_seed_archive() {
   load_seed_manifest
   device_compatible="$(first_device_compatible)"
   [ -n "${device_compatible}" ] || fail "empty device compatible string from ${DEVICE_COMPATIBLE_FILE}"
-  compatible_matches_seed "${device_compatible}" || fail "seed is for compatible ${EXPECTED_SEED_COMPATIBLE}, not ${device_compatible}"
+  compatible_matches_seed || fail "seed is for compatible ${EXPECTED_SEED_COMPATIBLE}, not $(device_compatibles | tr '\n' ' ')"
 
   archive="${SEED_DIR}/${EXPECTED_SEED_ARCHIVE}"
   [ -f "${archive}" ] || fail "matching guest rootfs seed archive missing: ${archive}"
@@ -386,15 +395,30 @@ reseed_guest_root() {
   fi
 
   sync "${MACHINES_ROOT}" 2>/dev/null || sync
-  validate_rootfs "${GUEST_ROOT}" no
+  if ! ( validate_rootfs "${GUEST_ROOT}" no ); then
+    failed_root="${GUEST_ROOT}.failed-reseed.$$"
+    mv "${GUEST_ROOT}" "${failed_root}" 2>/dev/null || true
+    mv "${previous_root}" "${GUEST_ROOT}" 2>/dev/null || true
+    fail "reseeded guest root failed validation; restored previous root and left failed candidate at ${failed_root}"
+  fi
   clear_reseed_flag
   log "reseeded guest root is valid: ${GUEST_ROOT}; previous root retained at ${previous_root}"
+}
+
+recover_previous_root_if_needed() {
+  previous_root="${GUEST_ROOT}.previous"
+  if [ ! -d "${GUEST_ROOT}" ] && [ -d "${previous_root}" ]; then
+    log "guest root missing but previous root exists; restoring ${previous_root}"
+    mv "${previous_root}" "${GUEST_ROOT}" || fail "failed to restore previous guest root: ${previous_root}"
+    validate_rootfs "${GUEST_ROOT}" no
+  fi
 }
 
 main() {
   acquire_lock
   ensure_safe_storage_paths
   refuse_if_guest_active
+  recover_previous_root_if_needed
 
   if [ -d "${GUEST_ROOT}" ]; then
     if is_empty_dir "${GUEST_ROOT}"; then
@@ -404,12 +428,12 @@ main() {
       exit 0
     fi
 
-    validate_rootfs "${GUEST_ROOT}" no
     if reseed_requested; then
-      log "reseed requested by ${RESEED_FLAG}; replacing valid guest root"
+      log "reseed requested by ${RESEED_FLAG}; replacing guest root"
       reseed_guest_root
       exit 0
     fi
+    validate_rootfs "${GUEST_ROOT}" no
     if [ ! -f "${GUEST_ROOT}/${SEED_COMPLETE_MARKER}" ]; then
       log "guest root is valid without seed completion marker; treating as legacy-approved root"
     else

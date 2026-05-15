@@ -622,6 +622,68 @@ EOF
   grep -q 'compatible=ayn,odin2portal' "${guest_root}/.rocknix-guest-rootfs-seed" || fail "root ensure fixture: archive seed compatible marker missing"
 
   rm -rf "${guest_root}"
+  sed 's/seed_compatible=ayn,odin2portal/seed_compatible=ayn,thor/' "${seed_manifest}" > "${seed_manifest}.bad-compatible"
+  if ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_GUEST_ROOTFS_SEED_DIR="${seed_stage_dir}" \
+    ROCKNIX_GUEST_ROOTFS_SEED_MANIFEST="${seed_manifest}.bad-compatible" \
+    ROCKNIX_GUEST_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
+    ROCKNIX_GUEST_MACHINES_ROOT="${machines_root}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_ROOT_LOCK="${lock_file}" \
+    "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null 2>&1; then
+    fail "root ensure fixture: incompatible staged seed should fail closed"
+  fi
+  [ ! -e "${guest_root}" ] || fail "root ensure fixture: incompatible staged seed created authoritative root"
+
+  sed "s/seed_sha256=${seed_sha}/seed_sha256=0000000000000000000000000000000000000000000000000000000000000000/" "${seed_manifest}" > "${seed_manifest}.bad-sha"
+  if ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_GUEST_ROOTFS_SEED_DIR="${seed_stage_dir}" \
+    ROCKNIX_GUEST_ROOTFS_SEED_MANIFEST="${seed_manifest}.bad-sha" \
+    ROCKNIX_GUEST_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
+    ROCKNIX_GUEST_MACHINES_ROOT="${machines_root}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_ROOT_LOCK="${lock_file}" \
+    "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null 2>&1; then
+    fail "root ensure fixture: sha-mismatched staged seed should fail closed"
+  fi
+  [ ! -e "${guest_root}" ] || fail "root ensure fixture: sha-mismatched staged seed created authoritative root"
+
+  rm -rf "${guest_root}" "${guest_root}.previous"
+  create_bootable_seed_fixture "${guest_root}"
+  printf 'old-root\n' > "${guest_root}/etc/old-root"
+  reseed_flag="${tmp_dir}/flash/rocknix.reseed-guest"
+  mkdir -p "$(dirname "${reseed_flag}")"
+  : > "${reseed_flag}"
+  ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_GUEST_ROOTFS_SEED_DIR="${seed_stage_dir}" \
+    ROCKNIX_GUEST_ROOTFS_SEED_MANIFEST="${seed_manifest}" \
+    ROCKNIX_GUEST_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
+    ROCKNIX_GUEST_RESEED_FLAG="${reseed_flag}" \
+    ROCKNIX_GUEST_MACHINES_ROOT="${machines_root}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_ROOT_LOCK="${lock_file}" \
+    "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null
+  [ ! -f "${guest_root}/etc/old-root" ] || fail "root ensure fixture: reseed did not replace active root"
+  [ -f "${guest_root}.previous/etc/old-root" ] || fail "root ensure fixture: reseed did not preserve previous root"
+  [ ! -e "${reseed_flag}" ] || fail "root ensure fixture: reseed flag was not cleared"
+
+  rm -rf "${guest_root}" "${guest_root}.previous"
+  mkdir -p "${guest_root}/etc"
+  printf 'damaged-root\n' > "${guest_root}/etc/not-a-guest-root"
+  : > "${reseed_flag}"
+  ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_GUEST_ROOTFS_SEED_DIR="${seed_stage_dir}" \
+    ROCKNIX_GUEST_ROOTFS_SEED_MANIFEST="${seed_manifest}" \
+    ROCKNIX_GUEST_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
+    ROCKNIX_GUEST_RESEED_FLAG="${reseed_flag}" \
+    ROCKNIX_GUEST_MACHINES_ROOT="${machines_root}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_ROOT_LOCK="${lock_file}" \
+    "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null
+  [ -d "${guest_root}/nix" ] || fail "root ensure fixture: reseed flag did not recover damaged root"
+  [ -f "${guest_root}.previous/etc/not-a-guest-root" ] || fail "root ensure fixture: damaged root was not preserved as previous"
+
+  rm -rf "${guest_root}" "${guest_root}.previous"
   mkdir -p "${guest_root}/etc"
   printf 'user-data\n' > "${guest_root}/etc/not-a-guest-root"
   if ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
@@ -799,6 +861,7 @@ grep -q 'stage_guest_rootfs_seed_update' "${INIT_SCRIPT}" || fail "init update p
 grep -q 'guest-rootfs-seed.manifest' "${INIT_SCRIPT}" || fail "init update path must read guest rootfs seed manifest from mounted SYSTEM"
 grep -q '/storage/.guest/seed' "${INIT_SCRIPT}" || fail "init update path must hoist guest rootfs seed to persistent storage seam"
 grep -q 'seed_sha256' "${INIT_SCRIPT}" || fail "init update path must verify guest rootfs seed sha256"
+grep -q 'seed_compatible' "${INIT_SCRIPT}" || fail "init update path must reject wrong-device guest rootfs seeds"
 assert_order "${INIT_SCRIPT}" 'stage_guest_rootfs_seed_update' 'update_file "System"' "init must stage guest seed before writing SYSTEM"
 
 # Build-integrity gates must run before expensive/artifact-producing paths.
