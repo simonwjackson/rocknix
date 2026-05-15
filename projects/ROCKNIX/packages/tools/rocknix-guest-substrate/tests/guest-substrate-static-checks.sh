@@ -999,9 +999,9 @@ grep -q 'Verify SM8550 host and seed artifacts' "${IMAGE_ONLY_WORKFLOW}" \
   || fail "image-only workflow must verify SM8550 host and seed artifacts before upload"
 grep -q 'Verify SM8550 SYSTEM budget' "${WORKFLOW_DIR}/build-aarch64.yml" \
   || fail "build-aarch64 workflow must verify SM8550 SYSTEM budget before upload"
-grep -q '/target/seed/.*\\.tar\\.zst' "${WORKFLOW_DIR}/build-aarch64-image.yml" \
+grep -q 'target/seed/.*\\.tar\\.zst' "${WORKFLOW_DIR}/build-aarch64-image.yml" \
   || fail "build-aarch64-image workflow must require SM8550 update tar seed payload"
-grep -q '/target/seed/.*\\.tar\\.zst' "${IMAGE_ONLY_WORKFLOW}" \
+grep -q 'target/seed/.*\\.tar\\.zst' "${IMAGE_ONLY_WORKFLOW}" \
   || fail "image-only workflow must require SM8550 update tar seed payload"
 grep -q 'scripts/(local-image-build|image|mkimage)' "${IMAGE_ONLY_WORKFLOW}" \
   || fail "image-only workflow allowlist must account for image layout script changes"
