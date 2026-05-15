@@ -30,6 +30,9 @@ PKG_NIX_GUEST_URL="https://github.com/simonwjackson/rocknix-nix-guest/archive/${
 # placeholders unset only while developing the substrate; post_install fails
 # closed until a real URL and SHA256 are provided.
 PKG_NIX_GUEST_ROOTFS_SEED_REV="${PKG_NIX_GUEST_REV}"
+PKG_NIX_GUEST_ROOTFS_SEED_DEVICE="odin2portal"
+PKG_NIX_GUEST_ROOTFS_SEED_COMPATIBLE="ayn,odin2portal"
+PKG_NIX_GUEST_ROOTFS_SEED_ARCHIVE="rocknix-guest-rootfs-odin2portal-4fb6d8f14bae.tar.zst"
 PKG_NIX_GUEST_ROOTFS_SEED_SHA256="dc05c42344496c6f0fa66aa7514845cc6ab32a2d61881eb9341843aad39bcdde"
 PKG_NIX_GUEST_ROOTFS_SEED_URL=""
 PKG_NIX_GUEST_ROOTFS_SEED_URLS="https://github.com/simonwjackson/rocknix-nix-guest/releases/download/rootfs-seed-odin2portal-4fb6d8f14bae/rocknix-guest-rootfs-odin2portal-4fb6d8f14bae.tar.zst.part-00 https://github.com/simonwjackson/rocknix-nix-guest/releases/download/rootfs-seed-odin2portal-4fb6d8f14bae/rocknix-guest-rootfs-odin2portal-4fb6d8f14bae.tar.zst.part-01"
@@ -121,7 +124,7 @@ post_install() {
     exit 1
   fi
 
-  seed_tarball="${SOURCES}/rocknix-nix-guest/rocknix-guest-rootfs-seed-${PKG_NIX_GUEST_ROOTFS_SEED_REV}.tar.zst"
+  seed_tarball="${SOURCES}/rocknix-nix-guest/${PKG_NIX_GUEST_ROOTFS_SEED_ARCHIVE}"
   if [ ! -f "${seed_tarball}" ]; then
     mkdir -p "$(dirname "${seed_tarball}")"
     echo "rocknix-guest-substrate: fetching bootable guest rootfs seed ${PKG_NIX_GUEST_ROOTFS_SEED_REV}"
@@ -155,14 +158,25 @@ post_install() {
     exit 1
   fi
 
+  seed_size="$(stat -c %s "${seed_tarball}")"
   mkdir -p "${substrate_lib}"
-  cp "${seed_tarball}" "${substrate_lib}/guest-rootfs-seed.tar.zst"
   {
-    printf 'revision=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_REV}"
-    printf 'sha256=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_SHA256}"
-    printf 'source=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_URL:-${PKG_NIX_GUEST_ROOTFS_SEED_URLS}}"
-    printf 'archive=%s\n' 'guest-rootfs-seed.tar.zst'
-  } > "${substrate_lib}/guest-rootfs-seed.tar.zst.rocknix-guest-rootfs-seed"
+    printf 'seed_manifest_version=%s\n' '1'
+    printf 'seed_device=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_DEVICE}"
+    printf 'seed_compatible=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_COMPATIBLE}"
+    printf 'seed_revision=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_REV}"
+    printf 'seed_archive=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_ARCHIVE}"
+    printf 'seed_sha256=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_SHA256}"
+    printf 'seed_size=%s\n' "${seed_size}"
+    printf 'seed_source_urls=%s\n' "${PKG_NIX_GUEST_ROOTFS_SEED_URL:-${PKG_NIX_GUEST_ROOTFS_SEED_URLS}}"
+  } > "${substrate_lib}/guest-rootfs-seed.manifest"
+
+  # Keep the multi-GB rootfs seed outside ${INSTALL}/SYSTEM. scripts/image
+  # picks this staging directory up for SM8550 update tarballs under target/seed/.
+  seed_release_dir="${BUILD}/rocknix-guest-rootfs-seed"
+  rm -rf "${seed_release_dir}"
+  mkdir -p "${seed_release_dir}"
+  cp "${seed_tarball}" "${seed_release_dir}/${PKG_NIX_GUEST_ROOTFS_SEED_ARCHIVE}"
 
   # Contract docs are owned by rocknix-nix-guest under docs/contracts/.
   # Copy the two that the host ships on-image from the fetched tarball.

@@ -18,6 +18,10 @@ APPLIED_REV_FILE="${ROCKNIX_GUEST_APPLIED_REV_FILE:-${GUEST_ROOT}/etc/rocknix-gu
 APPLIED_SYSTEM_FILE="${ROCKNIX_GUEST_APPLIED_SYSTEM_FILE:-${GUEST_ROOT}/etc/rocknix-guest-system-path}"
 MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}"
 IMPORT_PROVENANCE_FILE="${ROCKNIX_GUEST_IMPORT_PROVENANCE:-/storage/.guest/rocknix-guest-generation-import-candidate}"
+SEED_MANIFEST="${ROCKNIX_GUEST_ROOTFS_SEED_MANIFEST:-/usr/lib/rocknix-guest-substrate/guest-rootfs-seed.manifest}"
+SEED_DIR="${ROCKNIX_GUEST_ROOTFS_SEED_DIR:-/storage/.guest/seed}"
+SEED_COMPLETE_FILE="${ROCKNIX_GUEST_SEED_COMPLETE_FILE:-${GUEST_ROOT}/etc/rocknix-guest-root-seed-complete}"
+RESEED_FLAG="${ROCKNIX_GUEST_RESEED_FLAG:-/flash/rocknix.reseed-guest}"
 PROOF_MARKER_REL="${ROCKNIX_GUEST_PROOF_MARKER_REL:-etc/rocknix-stage10-proof-marker}"
 ALLOW_TRANSITION="${ROCKNIX_GUEST_AUDIT_ALLOW_TRANSITION:-0}"
 QUIET=0
@@ -56,6 +60,14 @@ read_first_line() {
   file="$1"
   if [ -r "${file}" ]; then
     sed -n '1p' "${file}" | tr -d '[:space:]'
+  fi
+}
+
+read_key_value() {
+  file="$1"
+  key="$2"
+  if [ -r "${file}" ]; then
+    sed -n "s/^${key}=//p" "${file}" | sed -n '1p'
   fi
 }
 
@@ -115,6 +127,25 @@ import_candidate=""
 if [ -r "${IMPORT_PROVENANCE_FILE}" ]; then
   import_candidate="$(sed -n 's/^system=//p' "${IMPORT_PROVENANCE_FILE}" | head -1 | tr -d '[:space:]')"
 fi
+seed_expected_revision="$(read_key_value "${SEED_MANIFEST}" seed_revision)"
+seed_expected_archive="$(read_key_value "${SEED_MANIFEST}" seed_archive)"
+seed_expected_sha="$(read_key_value "${SEED_MANIFEST}" seed_sha256)"
+seed_complete_revision="$(read_key_value "${SEED_COMPLETE_FILE}" seed_revision)"
+seed_staged_state="unknown"
+if [ -n "${seed_expected_archive}" ]; then
+  seed_staged_path="${SEED_DIR}/${seed_expected_archive}"
+  if [ -f "${seed_staged_path}" ]; then
+    seed_staged_state="present"
+    if [ -n "${seed_expected_sha}" ]; then
+      seed_actual_sha="$(sha256sum "${seed_staged_path}" 2>/dev/null | awk '{print $1}')"
+      [ "${seed_actual_sha}" = "${seed_expected_sha}" ] || seed_staged_state="sha-mismatch"
+    fi
+  else
+    seed_staged_state="missing"
+  fi
+fi
+reseed_state="absent"
+[ -e "${RESEED_FLAG}" ] && reseed_state="present"
 
 log "selected=${selected_system:-none}"
 log "running=${running_system:-none}"
@@ -124,6 +155,10 @@ log "applied_rev=${applied_rev:-none}"
 log "applied_system=${applied_system:-none}"
 log "manual_generation_hold=${hold_state}"
 log "import_candidate=${import_candidate:-none}"
+log "seed_expected_revision=${seed_expected_revision:-none}"
+log "seed_complete_revision=${seed_complete_revision:-none}"
+log "seed_staged=${seed_staged_state}"
+log "reseed_flag=${reseed_state}"
 
 [ -n "${selected_system}" ] || fail "selected guest profile is missing or invalid"
 expected_init="${selected_system}/init"

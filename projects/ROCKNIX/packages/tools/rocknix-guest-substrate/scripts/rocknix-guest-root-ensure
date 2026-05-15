@@ -13,9 +13,14 @@ PATH="${ROCKNIX_GUEST_HOST_PATH:-/usr/bin:/usr/sbin:/bin:/sbin}"
 
 GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
 MACHINES_ROOT="${ROCKNIX_GUEST_MACHINES_ROOT:-/storage/machines}"
-SEED_ROOT="${ROCKNIX_GUEST_ROOTFS_SEED:-/usr/lib/rocknix-guest-substrate/guest-rootfs-seed}"
-SEED_ARCHIVE="${ROCKNIX_GUEST_ROOTFS_SEED_ARCHIVE:-/usr/lib/rocknix-guest-substrate/guest-rootfs-seed.tar.zst}"
-SEED_ARCHIVE_MARKER="${ROCKNIX_GUEST_ROOTFS_SEED_ARCHIVE_MARKER:-/usr/lib/rocknix-guest-substrate/guest-rootfs-seed.tar.zst.rocknix-guest-rootfs-seed}"
+SEED_DIR="${ROCKNIX_GUEST_ROOTFS_SEED_DIR:-/storage/.guest/seed}"
+SEED_MANIFEST="${ROCKNIX_GUEST_ROOTFS_SEED_MANIFEST:-/usr/lib/rocknix-guest-substrate/guest-rootfs-seed.manifest}"
+SEED_ROOT="${ROCKNIX_GUEST_ROOTFS_SEED:-}"
+SEED_ARCHIVE="${ROCKNIX_GUEST_ROOTFS_SEED_ARCHIVE:-}"
+SEED_ARCHIVE_MARKER="${ROCKNIX_GUEST_ROOTFS_SEED_ARCHIVE_MARKER:-}"
+DEVICE_COMPATIBLE="${ROCKNIX_GUEST_DEVICE_COMPATIBLE:-}"
+DEVICE_COMPATIBLE_FILE="${ROCKNIX_GUEST_DEVICE_COMPATIBLE_FILE:-/proc/device-tree/compatible}"
+RESEED_FLAG="${ROCKNIX_GUEST_RESEED_FLAG:-/flash/rocknix.reseed-guest}"
 SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
 LOCK_FILE="${ROCKNIX_GUEST_ROOT_LOCK:-/run/lock/rocknix-guest-root.lock}"
 GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
@@ -23,6 +28,15 @@ SEED_CONTRACT_MARKER=".rocknix-guest-rootfs-seed"
 SEED_IN_PROGRESS_MARKER=".rocknix-guest-rootfs-seed-in-progress"
 SEED_COMPLETE_MARKER="etc/rocknix-guest-root-seed-complete"
 LOG_TAG="rocknix-guest-root-ensure"
+
+MANIFEST_LOADED=0
+EXPECTED_SEED_DEVICE=""
+EXPECTED_SEED_COMPATIBLE=""
+EXPECTED_SEED_REVISION=""
+EXPECTED_SEED_ARCHIVE=""
+EXPECTED_SEED_SHA256=""
+EXPECTED_SEED_SIZE=""
+EXPECTED_SEED_SOURCE_URLS=""
 
 log() {
   printf '%s: %s\n' "${LOG_TAG}" "$*"
@@ -176,6 +190,91 @@ preflight_storage_capacity() {
   df -Pi "${MACHINES_ROOT}" >/dev/null 2>&1 || true
 }
 
+manifest_value() {
+  key="$1"
+  sed -n "s/^${key}=//p" "${SEED_MANIFEST}" 2>/dev/null | sed -n '1p'
+}
+
+load_seed_manifest() {
+  [ "${MANIFEST_LOADED}" = "1" ] && return 0
+  [ -r "${SEED_MANIFEST}" ] || fail "seed manifest missing: ${SEED_MANIFEST}"
+
+  EXPECTED_SEED_DEVICE="$(manifest_value seed_device)"
+  EXPECTED_SEED_COMPATIBLE="$(manifest_value seed_compatible)"
+  EXPECTED_SEED_REVISION="$(manifest_value seed_revision)"
+  EXPECTED_SEED_ARCHIVE="$(manifest_value seed_archive)"
+  EXPECTED_SEED_SHA256="$(manifest_value seed_sha256)"
+  EXPECTED_SEED_SIZE="$(manifest_value seed_size)"
+  EXPECTED_SEED_SOURCE_URLS="$(manifest_value seed_source_urls)"
+
+  [ -n "${EXPECTED_SEED_COMPATIBLE}" ] || fail "seed manifest missing seed_compatible: ${SEED_MANIFEST}"
+  [ -n "${EXPECTED_SEED_ARCHIVE}" ] || fail "seed manifest missing seed_archive: ${SEED_MANIFEST}"
+  [ -n "${EXPECTED_SEED_SHA256}" ] || fail "seed manifest missing seed_sha256: ${SEED_MANIFEST}"
+  MANIFEST_LOADED=1
+}
+
+first_device_compatible() {
+  if [ -n "${DEVICE_COMPATIBLE}" ]; then
+    printf '%s\n' "${DEVICE_COMPATIBLE}"
+    return 0
+  fi
+  [ -r "${DEVICE_COMPATIBLE_FILE}" ] || fail "device compatible file missing: ${DEVICE_COMPATIBLE_FILE}"
+  tr '\000' '\n' < "${DEVICE_COMPATIBLE_FILE}" | sed -n '/./{p;q;}'
+}
+
+compatible_matches_seed() {
+  device_compatible="$1"
+  for expected in ${EXPECTED_SEED_COMPATIBLE}; do
+    [ "${device_compatible}" = "${expected}" ] && return 0
+  done
+  return 1
+}
+
+verify_seed_archive_sha() {
+  archive="$1"
+  expected_sha="$2"
+  [ -n "${expected_sha}" ] || fail "missing expected seed sha256 for ${archive}"
+  actual_sha="$(sha256sum "${archive}" | awk '{print $1}')"
+  if [ "${actual_sha}" != "${expected_sha}" ]; then
+    fail "seed archive SHA256 mismatch: expected=${expected_sha} actual=${actual_sha} archive=${archive}"
+  fi
+}
+
+write_seed_contract_marker() {
+  marker="$1"
+  {
+    [ -n "${EXPECTED_SEED_REVISION}" ] && printf 'revision=%s\n' "${EXPECTED_SEED_REVISION}"
+    [ -n "${EXPECTED_SEED_DEVICE}" ] && printf 'device=%s\n' "${EXPECTED_SEED_DEVICE}"
+    [ -n "${EXPECTED_SEED_COMPATIBLE}" ] && printf 'compatible=%s\n' "${EXPECTED_SEED_COMPATIBLE}"
+    [ -n "${EXPECTED_SEED_SHA256}" ] && printf 'sha256=%s\n' "${EXPECTED_SEED_SHA256}"
+    [ -n "${EXPECTED_SEED_SIZE}" ] && printf 'size=%s\n' "${EXPECTED_SEED_SIZE}"
+    [ -n "${EXPECTED_SEED_ARCHIVE}" ] && printf 'archive=%s\n' "${EXPECTED_SEED_ARCHIVE}"
+    [ -n "${EXPECTED_SEED_SOURCE_URLS}" ] && printf 'source=%s\n' "${EXPECTED_SEED_SOURCE_URLS}"
+  } > "${marker}"
+}
+
+resolve_seed_archive() {
+  if [ -n "${SEED_ARCHIVE}" ]; then
+    [ -f "${SEED_ARCHIVE}" ] || fail "configured seed archive missing: ${SEED_ARCHIVE}"
+    if [ -r "${SEED_MANIFEST}" ]; then
+      load_seed_manifest
+      verify_seed_archive_sha "${SEED_ARCHIVE}" "${EXPECTED_SEED_SHA256}"
+    fi
+    printf '%s\n' "${SEED_ARCHIVE}"
+    return 0
+  fi
+
+  load_seed_manifest
+  device_compatible="$(first_device_compatible)"
+  [ -n "${device_compatible}" ] || fail "empty device compatible string from ${DEVICE_COMPATIBLE_FILE}"
+  compatible_matches_seed "${device_compatible}" || fail "seed is for compatible ${EXPECTED_SEED_COMPATIBLE}, not ${device_compatible}"
+
+  archive="${SEED_DIR}/${EXPECTED_SEED_ARCHIVE}"
+  [ -f "${archive}" ] || fail "matching guest rootfs seed archive missing: ${archive}"
+  verify_seed_archive_sha "${archive}" "${EXPECTED_SEED_SHA256}"
+  printf '%s\n' "${archive}"
+}
+
 extract_seed_archive() {
   archive="$1"
   destination="$2"
@@ -193,27 +292,38 @@ extract_seed_archive() {
   esac
 }
 
-seed_guest_root() {
+populate_seed_candidate() {
+  tmp_root="$1"
+
+  if [ -n "${SEED_ROOT}" ] && [ -d "${SEED_ROOT}" ]; then
+    validate_rootfs "${SEED_ROOT}" yes
+    log "seeding guest root from ${SEED_ROOT} to ${tmp_root}"
+    cp -PR "${SEED_ROOT}/." "${tmp_root}/" || fail "copy from seed payload failed"
+    return 0
+  fi
+
+  archive="$(resolve_seed_archive)"
+  log "seeding guest root from ${archive} to ${tmp_root}"
+  extract_seed_archive "${archive}" "${tmp_root}"
+
+  if [ -n "${SEED_ARCHIVE_MARKER}" ] && [ -r "${SEED_ARCHIVE_MARKER}" ]; then
+    cp "${SEED_ARCHIVE_MARKER}" "${tmp_root}/${SEED_CONTRACT_MARKER}" || fail "copy seed archive marker failed"
+  else
+    load_seed_manifest
+    write_seed_contract_marker "${tmp_root}/${SEED_CONTRACT_MARKER}"
+  fi
+}
+
+build_seed_candidate() {
+  tmp_root="$1"
+
   preflight_storage_capacity
   cleanup_stale_helper_temps
-
-  tmp_root="${GUEST_ROOT}.tmp.$$"
   cleanup_helper_temp "${tmp_root}"
   mkdir -p "${tmp_root}"
   : > "${tmp_root}/${SEED_IN_PROGRESS_MARKER}"
 
-  if [ -d "${SEED_ROOT}" ]; then
-    validate_rootfs "${SEED_ROOT}" yes
-    log "seeding guest root from ${SEED_ROOT} to ${tmp_root}"
-    cp -PR "${SEED_ROOT}/." "${tmp_root}/" || fail "copy from seed payload failed"
-  elif [ -f "${SEED_ARCHIVE}" ]; then
-    [ -r "${SEED_ARCHIVE_MARKER}" ] || fail "seed archive marker missing: ${SEED_ARCHIVE_MARKER}"
-    log "seeding guest root from ${SEED_ARCHIVE} to ${tmp_root}"
-    extract_seed_archive "${SEED_ARCHIVE}" "${tmp_root}"
-    cp "${SEED_ARCHIVE_MARKER}" "${tmp_root}/${SEED_CONTRACT_MARKER}" || fail "copy seed archive marker failed"
-  else
-    fail "no packaged guest rootfs seed found: ${SEED_ROOT} or ${SEED_ARCHIVE}"
-  fi
+  populate_seed_candidate "${tmp_root}"
   validate_rootfs "${tmp_root}" yes
 
   mkdir -p "${tmp_root}/etc"
@@ -225,6 +335,10 @@ seed_guest_root() {
   } > "${tmp_root}/${SEED_COMPLETE_MARKER}"
   rm -f "${tmp_root}/${SEED_IN_PROGRESS_MARKER}"
   sync "${tmp_root}" 2>/dev/null || sync
+}
+
+activate_seed_candidate() {
+  tmp_root="$1"
 
   if [ -d "${GUEST_ROOT}" ]; then
     is_empty_dir "${GUEST_ROOT}" || fail "guest root became non-empty during seeding: ${GUEST_ROOT}"
@@ -237,6 +351,46 @@ seed_guest_root() {
   log "seeded guest root is valid: ${GUEST_ROOT}"
 }
 
+seed_guest_root() {
+  tmp_root="${GUEST_ROOT}.tmp.$$"
+  build_seed_candidate "${tmp_root}"
+  activate_seed_candidate "${tmp_root}"
+}
+
+reseed_requested() {
+  [ "${ROCKNIX_GUEST_FORCE_RESEED:-0}" = "1" ] || [ -e "${RESEED_FLAG}" ]
+}
+
+clear_reseed_flag() {
+  [ -e "${RESEED_FLAG}" ] || return 0
+  rm -f "${RESEED_FLAG}" || fail "failed to clear reseed flag: ${RESEED_FLAG}"
+}
+
+reseed_guest_root() {
+  [ -d "${GUEST_ROOT}" ] || fail "cannot reseed missing guest root through reseed path: ${GUEST_ROOT}"
+  is_empty_dir "${GUEST_ROOT}" && fail "cannot reseed empty guest root through reseed path: ${GUEST_ROOT}"
+
+  tmp_root="${GUEST_ROOT}.tmp.$$"
+  previous_root="${GUEST_ROOT}.previous"
+  build_seed_candidate "${tmp_root}"
+
+  if [ -e "${previous_root}" ]; then
+    [ -f "${previous_root}/${SEED_COMPLETE_MARKER}" ] || fail "previous guest root exists and is not helper-owned: ${previous_root}"
+    rm -rf "${previous_root}" || fail "failed to remove previous guest root: ${previous_root}"
+  fi
+
+  mv "${GUEST_ROOT}" "${previous_root}" || fail "failed to move old guest root aside: ${GUEST_ROOT} -> ${previous_root}"
+  if ! mv "${tmp_root}" "${GUEST_ROOT}"; then
+    mv "${previous_root}" "${GUEST_ROOT}" 2>/dev/null || true
+    fail "failed to activate reseeded guest root"
+  fi
+
+  sync "${MACHINES_ROOT}" 2>/dev/null || sync
+  validate_rootfs "${GUEST_ROOT}" no
+  clear_reseed_flag
+  log "reseeded guest root is valid: ${GUEST_ROOT}; previous root retained at ${previous_root}"
+}
+
 main() {
   acquire_lock
   ensure_safe_storage_paths
@@ -246,10 +400,16 @@ main() {
     if is_empty_dir "${GUEST_ROOT}"; then
       log "guest root exists but is empty; seeding"
       seed_guest_root
+      clear_reseed_flag
       exit 0
     fi
 
     validate_rootfs "${GUEST_ROOT}" no
+    if reseed_requested; then
+      log "reseed requested by ${RESEED_FLAG}; replacing valid guest root"
+      reseed_guest_root
+      exit 0
+    fi
     if [ ! -f "${GUEST_ROOT}/${SEED_COMPLETE_MARKER}" ]; then
       log "guest root is valid without seed completion marker; treating as legacy-approved root"
     else
@@ -260,6 +420,7 @@ main() {
 
   log "guest root missing; seeding"
   seed_guest_root
+  clear_reseed_flag
 }
 
 main "$@"

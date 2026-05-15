@@ -126,11 +126,13 @@ grep -q 'docs/contracts/HOW-TO-FALL-BACK.md' "${PKG_DIR}/package.mk" || fail "pa
 grep -q 'SM8550_MINIMAL_HOST=yes' "${PKG_DIR}/package.mk" || fail "package.mk must document minimal-host fallback mode when enabled"
 grep -q 'PKG_NIX_GUEST_ROOTFS_SEED_URL=' "${PKG_DIR}/package.mk" || fail "package.mk missing bootable rootfs seed URL contract"
 grep -q 'PKG_NIX_GUEST_ROOTFS_SEED_SHA256=' "${PKG_DIR}/package.mk" || fail "package.mk missing bootable rootfs seed SHA256 contract"
+grep -q 'PKG_NIX_GUEST_ROOTFS_SEED_COMPATIBLE=' "${PKG_DIR}/package.mk" || fail "package.mk missing bootable rootfs seed compatible contract"
+grep -q 'PKG_NIX_GUEST_ROOTFS_SEED_ARCHIVE=' "${PKG_DIR}/package.mk" || fail "package.mk missing bootable rootfs seed archive filename contract"
 grep -q 'bootable guest rootfs seed URL/SHA256 are not configured' "${PKG_DIR}/package.mk" || fail "package.mk must fail closed while rootfs seed URL/SHA are placeholders"
-grep -q 'guest-rootfs-seed' "${PKG_DIR}/package.mk" || fail "package.mk must stage bootable rootfs seed separately from guest source"
-grep -q 'guest-rootfs-seed.tar.zst' "${PKG_DIR}/package.mk" || fail "package.mk must install the compressed rootfs seed archive, not an expanded copy"
+grep -q 'guest-rootfs-seed.manifest' "${PKG_DIR}/package.mk" || fail "package.mk must install a rootfs seed manifest"
+grep -q 'seed_release_dir="${BUILD}/rocknix-guest-rootfs-seed"' "${PKG_DIR}/package.mk" || fail "package.mk must stage rootfs seed outside SYSTEM for image packaging"
 grep -q -- '--output - "${seed_url}" >> "${seed_tarball}.tmp"' "${PKG_DIR}/package.mk" || fail "package.mk must reassemble split seed assets without storing duplicate part files"
-grep -q '.rocknix-guest-rootfs-seed' "${PKG_DIR}/package.mk" || fail "package.mk must write rootfs seed contract marker"
+! grep -q 'cp "${seed_tarball}" "${substrate_lib}' "${PKG_DIR}/package.mk" || fail "package.mk must not copy the rootfs seed archive into SYSTEM"
 ! grep -q 'cp -PR "${seed_extract}/."' "${PKG_DIR}/package.mk" || fail "package.mk must not duplicate the expanded rootfs seed during build"
 
 # Storage + guest service wiring. Host root /nix was retired: the guest
@@ -170,10 +172,14 @@ grep -q 'RequiresMountsFor=/storage /flash' "${ensure_unit}" || fail "root ensur
 grep -q 'ConditionKernelCommandLine=!rocknix.safe=1' "${ensure_unit}" || fail "root ensure unit must be guarded by rocknix.safe=1"
 grep -q 'ConditionPathExists=!/flash/rocknix.no-nspawn' "${ensure_unit}" || fail "root ensure unit must be guarded by sticky recovery flag"
 grep -q '/run/lock/rocknix-guest-root.lock' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must use root-owned mutation lock"
-grep -q 'guest-rootfs-seed' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must seed from packaged bootable rootfs"
-grep -q 'ROCKNIX_GUEST_ROOTFS_SEED_ARCHIVE' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must support compressed rootfs seed archives"
+grep -q 'guest-rootfs-seed.manifest' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must read packaged rootfs seed manifest"
+grep -q 'ROCKNIX_GUEST_ROOTFS_SEED_DIR' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must support local /storage seed staging directory"
+grep -q 'ROCKNIX_GUEST_ROOTFS_SEED_ARCHIVE' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must support compressed rootfs seed archive overrides"
+grep -q 'verify_seed_archive_sha' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must verify staged seed archive sha256"
+grep -q 'first_device_compatible' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must select staged seed by compatible string"
 grep -q 'extract_seed_archive' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must extract compressed rootfs seed archives on first boot"
 grep -q 'rocknix-guest-root-seed-complete' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must write seed completion marker"
+grep -q 'rocknix.reseed-guest' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must expose explicit reseed flag"
 grep -q 'guest root mutation lock is held' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must fail closed on concurrent mutation"
 grep -q 'is a symlink' "${PKG_DIR}/scripts/rocknix-guest-root-ensure" || fail "root ensure helper must reject symlinked storage paths"
 
@@ -315,6 +321,9 @@ grep -q 'selected/running differ before recording generation A' "${PKG_DIR}/scri
 ! grep -q "LEGACY_PROFILE_GUEST" "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must not write retired legacy system profile"
 grep -q 'rocknix-stage10-proof-marker' "${PKG_DIR}/scripts/rocknix-guest-activation-audit" || fail "activation audit must report B proof marker"
 grep -q 'running_guest_has_file' "${PKG_DIR}/scripts/rocknix-guest-activation-audit" || fail "activation audit must verify proof marker from live guest namespace"
+grep -q 'seed_expected_revision' "${PKG_DIR}/scripts/rocknix-guest-activation-audit" || fail "activation audit must report seed manifest revision"
+grep -q 'seed_staged=' "${PKG_DIR}/scripts/rocknix-guest-activation-audit" || fail "activation audit must report staged seed state"
+grep -q 'reseed_flag=' "${PKG_DIR}/scripts/rocknix-guest-activation-audit" || fail "activation audit must report reseed flag state"
 grep -q 'never repair' "${PKG_DIR}/scripts/rocknix-guest-activation-audit" || fail "activation audit must document read-only behavior"
 grep -q 'rocknix-guest-activation-audit' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper must reuse activation audit when installed"
 
@@ -578,6 +587,39 @@ EOF
     "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null
   [ -f "${guest_root}/etc/rocknix-guest-root-seed-complete" ] || fail "root ensure fixture: empty root was not seeded"
   [ ! -e "${stale_tmp}" ] || fail "root ensure fixture: helper-owned stale temp was not cleaned"
+
+  rm -rf "${guest_root}"
+  archive_seed_root="${tmp_dir}/archive-seed"
+  seed_stage_dir="${tmp_dir}/storage/.guest/seed"
+  seed_manifest="${tmp_dir}/guest-rootfs-seed.manifest"
+  compatible_file="${tmp_dir}/compatible"
+  mkdir -p "${seed_stage_dir}"
+  create_bootable_seed_fixture "${archive_seed_root}"
+  seed_archive="${seed_stage_dir}/fixture-rootfs.tar.zst"
+  tar --zstd -cf "${seed_archive}" -C "${archive_seed_root}" .
+  seed_sha="$(sha256sum "${seed_archive}" | awk '{print $1}')"
+  seed_size="$(stat -c %s "${seed_archive}")"
+  {
+    printf 'seed_manifest_version=1\n'
+    printf 'seed_device=odin2portal\n'
+    printf 'seed_compatible=ayn,odin2portal\n'
+    printf 'seed_revision=test-archive\n'
+    printf 'seed_archive=fixture-rootfs.tar.zst\n'
+    printf 'seed_sha256=%s\n' "${seed_sha}"
+    printf 'seed_size=%s\n' "${seed_size}"
+    printf 'seed_source_urls=fixture\n'
+  } > "${seed_manifest}"
+  printf 'ayn,odin2portal\000qcom,sm8550\000' > "${compatible_file}"
+  ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_GUEST_ROOTFS_SEED_DIR="${seed_stage_dir}" \
+    ROCKNIX_GUEST_ROOTFS_SEED_MANIFEST="${seed_manifest}" \
+    ROCKNIX_GUEST_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
+    ROCKNIX_GUEST_MACHINES_ROOT="${machines_root}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_ROOT_LOCK="${lock_file}" \
+    "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null
+  [ -f "${guest_root}/.rocknix-guest-rootfs-seed" ] || fail "root ensure fixture: archive seed contract marker missing"
+  grep -q 'compatible=ayn,odin2portal' "${guest_root}/.rocknix-guest-rootfs-seed" || fail "root ensure fixture: archive seed compatible marker missing"
 
   rm -rf "${guest_root}"
   mkdir -p "${guest_root}/etc"
