@@ -33,6 +33,19 @@ emit_device_allow() {
   printf '%s\n' "$1" >> "${DEVICE_ALLOW_FILE}"
 }
 
+ensure_tun_device() {
+  modprobe tun 2>/dev/null || true
+  mkdir -p /dev/net
+  if [ ! -c /dev/net/tun ]; then
+    mknod /dev/net/tun c 10 200 || true
+  fi
+  [ -c /dev/net/tun ] || {
+    log "FAIL: /dev/net/tun is missing and could not be created"
+    exit 1
+  }
+  chmod 0666 /dev/net/tun 2>/dev/null || true
+}
+
 block_root_for() {
   name=$1
   if [ -e "/sys/class/block/${name}/partition" ]; then
@@ -144,6 +157,8 @@ emit_safe_block_binds() {
 mkdir -p "${RUN_DIR}"
 : > "${ARGS_FILE}"
 : > "${DEVICE_ALLOW_FILE}"
+
+ensure_tun_device
 
 emit_arg "--machine=rocknix-guest"
 emit_arg "--directory=/storage/machines/rocknix-guest"

@@ -240,6 +240,8 @@ grep -q 'has_candidate_media_member' "${PKG_DIR}/scripts/rocknix-guest-start" ||
 ! grep -q 'blkid' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must not depend on blkid before runtime DeviceAllow is applied"
 grep -q 'is_host_mounted_root' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must guard against host-mounted block roots"
 grep -q 'systemctl set-property' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must apply exact runtime DeviceAllow entries"
+grep -q 'ensure_tun_device' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must create /dev/net/tun before nspawn bind"
+grep -q 'mknod /dev/net/tun c 10 200' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must know the Linux tun char device number"
 grep -q 'emit_device_allow "DeviceAllow=/dev/${member} rw"' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must allow discovered block nodes exactly"
 ! grep -q 'DeviceAllow=block-sd' "${guest_unit}" || fail "guest unit must not use broad sd block allow"
 ! grep -q 'DeviceAllow=block-mmc' "${guest_unit}" || fail "guest unit must not use broad mmc block allow"

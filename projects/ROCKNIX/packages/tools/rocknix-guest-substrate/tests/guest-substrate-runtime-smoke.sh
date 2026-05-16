@@ -135,6 +135,8 @@ if grep -q 'blkid' "${SCRIPT_ROOT}/rocknix-guest-start"; then
 fi
 check_grep 'is_host_mounted_root' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must guard host-mounted block roots"
 check_grep 'systemctl set-property' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must apply exact runtime DeviceAllow entries"
+check_grep 'ensure_tun_device' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must create /dev/net/tun before nspawn bind"
+check_grep 'mknod /dev/net/tun c 10 200' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must know the Linux tun char device number"
 if grep -q 'DeviceAllow=block-sd' "${guest_unit}"; then
   fail "guest unit must not use broad block DeviceAllow classes"
 fi
