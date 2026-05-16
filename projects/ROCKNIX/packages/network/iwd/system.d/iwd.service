@@ -7,6 +7,7 @@ Wants=dbus.service network.target
 
 [Service]
 Environment=STATE_DIRECTORY=/storage/.cache/iwd
+Environment=DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
 Type=dbus
 BusName=net.connman.iwd
 ExecStart=/usr/lib/iwd

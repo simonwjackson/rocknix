@@ -1085,6 +1085,8 @@ grep -q 'After=dbus.service network-pre.target' "${IWD_UNIT}" \
   || fail "iwd service must wait for D-Bus before initializing"
 grep -q 'Wants=dbus.service network.target' "${IWD_UNIT}" \
   || fail "iwd service must pull D-Bus in with the recovery network target"
+grep -q 'DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket' "${IWD_UNIT}" \
+  || fail "iwd service must use systemd's /run D-Bus socket path under tmpfs /var"
 ! sed -n '/if \[ "${SM8550_MINIMAL_HOST:-no}" = "yes" \]/,/else/p' "${NETWORK_PKG}" \
   | grep '^  PKG_DEPENDS_TARGET=' \
   | grep -Eq 'tailscale|wireguard-tools|zerotier-one|miniupnpc|speedtest-cli' \
