@@ -137,8 +137,7 @@ makeinstall_target() {
         -i ${INSTALL}/usr/lib/rocknix/fs-resize
 
   mkdir -p ${INSTALL}/usr/lib/systemd/system-generators/
-    find_file_path scripts/libreelec-target-generator
-    cp ${FOUND_PATH} ${INSTALL}/usr/lib/systemd/system-generators/
+    cp ${PKG_DIR}/scripts/libreelec-target-generator ${INSTALL}/usr/lib/systemd/system-generators/
 
   mkdir -p ${INSTALL}/etc
     cp ${PKG_DIR}/config/profile ${INSTALL}/etc

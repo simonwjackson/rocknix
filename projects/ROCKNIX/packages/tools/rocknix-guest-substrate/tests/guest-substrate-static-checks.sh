@@ -895,6 +895,7 @@ IMAGE_ONLY_WORKFLOW="${WORKFLOW_DIR}/build-image-only.yml"
 LOCAL_IMAGE_BUILD="${REPO_ROOT}/scripts/local-image-build"
 IMAGE_SCRIPT="${REPO_ROOT}/scripts/image"
 INIT_SCRIPT="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/busybox/scripts/init"
+TARGET_GENERATOR="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/busybox/scripts/libreelec-target-generator"
 ROCKNIX_BUSYBOX_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/busybox/package.mk"
 [ -f "${SYSTEMD_PKG}" ] || fail "missing ROCKNIX systemd package.mk"
 [ -f "${IWD_UNIT}" ] || fail "missing ROCKNIX iwd service unit"
@@ -906,8 +907,10 @@ ROCKNIX_BUSYBOX_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/busybox/pac
 [ -f "${LOCAL_IMAGE_BUILD}" ] || fail "missing local image build wrapper"
 [ -f "${IMAGE_SCRIPT}" ] || fail "missing image script"
 [ -f "${INIT_SCRIPT}" ] || fail "missing init script"
+[ -x "${TARGET_GENERATOR}" ] || fail "missing executable ROCKNIX target generator"
 bash -n "${IMAGE_SCRIPT}" || fail "image script syntax failed"
 sh -n "${INIT_SCRIPT}" || fail "init script syntax failed"
+sh -n "${TARGET_GENERATOR}" || fail "target generator syntax failed"
 grep -q 'system-generators' "${ROCKNIX_BUSYBOX_PKG}" \
   || fail "ROCKNIX busybox package must install the target generator"
 grep -q 'libreelec-target-generator' "${ROCKNIX_BUSYBOX_PKG}" \
