@@ -25,6 +25,7 @@ GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
 STAGED_SOURCE="${ROCKNIX_GUEST_STAGED_SOURCE:-/storage/.guest/rocknix-nix-guest-packaged}"
 APPLIED_REV_FILE="${ROCKNIX_GUEST_APPLIED_REV_FILE:-${GUEST_ROOT}/etc/rocknix-guest-revision}"
 APPLIED_SYSTEM_FILE="${ROCKNIX_GUEST_APPLIED_SYSTEM_FILE:-${GUEST_ROOT}/etc/rocknix-guest-system-path}"
+SEED_CONTRACT_MARKER="${ROCKNIX_GUEST_SEED_CONTRACT_MARKER:-${GUEST_ROOT}/.rocknix-guest-rootfs-seed}"
 PROMOTE_SYSTEM_PATH_FILE="${ROCKNIX_GUEST_PROMOTE_SYSTEM_PATH:-/storage/.guest/rocknix-guest-promote-system-path}"
 MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}"
 SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
@@ -91,6 +92,12 @@ guest_system_path_valid() {
   esac
 }
 
+seed_contract_value() {
+  key="$1"
+  [ -r "${SEED_CONTRACT_MARKER}" ] || return 0
+  sed -n "s/^${key}=//p" "${SEED_CONTRACT_MARKER}" 2>/dev/null | sed -n '1p'
+}
+
 manual_generation_hold_active() {
   [ -e "${MANUAL_HOLD_FILE}" ]
 }
@@ -142,6 +149,14 @@ if [ "${current_rev}" = "${wanted_rev}" ]; then
   fi
 
   fail "guest revision marker matches ${wanted_rev}, but selected profile is missing or invalid; refusing to use applied markers as source of truth"
+fi
+
+seed_rev="$(seed_contract_value revision)"
+if [ -z "${current_rev}" ] && [ "${seed_rev}" = "${wanted_rev}" ] && [ -n "${current_system}" ] && guest_system_path_valid "${current_system}"; then
+  printf '%s\n' "${wanted_rev}" > "${APPLIED_REV_FILE}"
+  printf '%s\n' "${current_system}" > "${APPLIED_SYSTEM_FILE}"
+  log "packaged guest revision ${wanted_rev} is already booted from matching offline seed; selected profile is ${current_system}"
+  exit 0
 fi
 
 log "promoting guest revision ${wanted_rev} (current: ${current_rev:-none})"

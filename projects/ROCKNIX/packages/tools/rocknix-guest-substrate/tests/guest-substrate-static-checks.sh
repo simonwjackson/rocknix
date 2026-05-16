@@ -294,6 +294,8 @@ grep -q "nix-env -p '\${SELECTED_PROFILE_GUEST}' --set" "${PKG_DIR}/scripts/rock
 grep -q 'systemctl restart --no-block "${GUEST_SERVICE}"' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must restart guest after profile update"
 grep -q 'rocknix-guest-revision' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must track applied guest revision"
 grep -q 'rocknix-guest-system-path' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must track applied guest system path"
+grep -q '.rocknix-guest-rootfs-seed' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must inspect offline seed contract marker"
+grep -q 'already booted from matching offline seed' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not rebuild matching offline seed revisions"
 grep -q 'resolve_guest_system_profile' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must inspect persistent guest system profile"
 grep -q 'guest_system_path_valid' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must verify applied system path has an executable init"
 ! grep -q 'system profile drifted' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not repair selected-profile drift from marker state"
@@ -403,6 +405,26 @@ EOF
     "${PKG_DIR}/scripts/rocknix-guest-promote" >/dev/null
   [ ! -s "${nsenter_log}" ] || fail "promote fixture: already-applied path should not enter guest"
   [ ! -s "${systemctl_log}" ] || fail "promote fixture: already-applied path should not restart guest"
+
+  rm -f "${guest_root}/etc/rocknix-guest-revision" "${guest_root}/etc/rocknix-guest-system-path"
+  printf 'revision=rev-a\n' > "${guest_root}/.rocknix-guest-rootfs-seed"
+  : > "${nsenter_log}"
+  : > "${systemctl_log}"
+  ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_TEST_NSENTER_LOG="${nsenter_log}" \
+    ROCKNIX_TEST_SYSTEMCTL_LOG="${systemctl_log}" \
+    ROCKNIX_GUEST_ROOT="${guest_root}" \
+    ROCKNIX_GUEST_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
+    ROCKNIX_GUEST_SOURCE="${guest_source}" \
+    ROCKNIX_GUEST_REV_FILE="${guest_rev}" \
+    ROCKNIX_GUEST_STAGED_SOURCE="${staged_source}" \
+    "${PKG_DIR}/scripts/rocknix-guest-promote" >/dev/null
+  [ ! -s "${nsenter_log}" ] || fail "promote fixture: matching seed path should not enter guest"
+  [ ! -s "${systemctl_log}" ] || fail "promote fixture: matching seed path should not restart guest"
+  [ "$(sed -n '1p' "${guest_root}/etc/rocknix-guest-revision")" = "rev-a" ] \
+    || fail "promote fixture: matching seed path did not write revision marker"
+  [ "$(sed -n '1p' "${guest_root}/etc/rocknix-guest-system-path")" = "/nix/store/applied-system" ] \
+    || fail "promote fixture: matching seed path did not write system marker"
 
   set_profile "${selected_profile}" "rocknix-guest-system-1-link" "/nix/store/old-system"
   : > "${nsenter_log}"
