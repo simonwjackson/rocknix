@@ -868,6 +868,7 @@ IMAGE_ONLY_WORKFLOW="${WORKFLOW_DIR}/build-image-only.yml"
 LOCAL_IMAGE_BUILD="${REPO_ROOT}/scripts/local-image-build"
 IMAGE_SCRIPT="${REPO_ROOT}/scripts/image"
 INIT_SCRIPT="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/busybox/scripts/init"
+ROCKNIX_BUSYBOX_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/busybox/package.mk"
 [ -f "${SYSTEMD_PKG}" ] || fail "missing ROCKNIX systemd package.mk"
 [ -f "${OPENSSH_PKG}" ] || fail "missing ROCKNIX openssh package.mk"
 [ -f "${BUILD_NIGHTLY_WORKFLOW}" ] || fail "missing Build workflow"
@@ -877,6 +878,10 @@ INIT_SCRIPT="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/busybox/scripts/ini
 [ -f "${INIT_SCRIPT}" ] || fail "missing init script"
 bash -n "${IMAGE_SCRIPT}" || fail "image script syntax failed"
 sh -n "${INIT_SCRIPT}" || fail "init script syntax failed"
+grep -q 'system-generators' "${ROCKNIX_BUSYBOX_PKG}" \
+  || fail "ROCKNIX busybox package must install the target generator"
+grep -q 'libreelec-target-generator' "${ROCKNIX_BUSYBOX_PKG}" \
+  || fail "ROCKNIX busybox package must ship libreelec-target-generator for SM8550 main-space selection"
 
 # SM8550 seed payload must stay outside SYSTEM and be hoisted before SYSTEM writes.
 grep -q 'rocknix-guest-rootfs-seed' "${IMAGE_SCRIPT}" || fail "image script must include staged guest rootfs seed payloads"
