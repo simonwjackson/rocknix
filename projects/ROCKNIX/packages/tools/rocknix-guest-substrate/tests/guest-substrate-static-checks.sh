@@ -861,7 +861,6 @@ IMAGE_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk"
 NETWORK_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/virtual/network/package.mk"
 IWD_PKG="${REPO_ROOT}/packages/network/iwd/package.mk"
 OPENSSH_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/network/openssh/package.mk"
-CONNMAN_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/network/connman/package.mk"
 QUIRKS_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/hardware/quirks/package.mk"
 WORKFLOW_DIR="${REPO_ROOT}/.github/workflows"
 BUILD_NIGHTLY_WORKFLOW="${WORKFLOW_DIR}/build-nightly.yml"
@@ -1063,16 +1062,14 @@ grep -q '090-ui_service' "${QUIRKS_PKG}" \
   || fail "SM8550 minimal host must remove host UI service quirk"
 grep -q '091-ui_shader' "${QUIRKS_PKG}" \
   || fail "SM8550 minimal host must remove host UI shader quirk"
-grep -q 'Minimal SM8550 host keeps only what the recovery/update substrate needs' "${NETWORK_PKG}" \
-  || fail "ROCKNIX network meta must document the minimal-host dependency set"
-grep -q 'PKG_DEPENDS_TARGET="toolchain connman iwd netbase ethtool openssh iw wireless-regdb rsync nss-mdns"' "${NETWORK_PKG}" \
-  || fail "ROCKNIX network meta must have a minimal-host dependency set"
-grep -q 'Wi-Fi authentication/control moves to the NixOS guest' "${NETWORK_PKG}" \
-  || fail "ROCKNIX network meta must document guest-owned Wi-Fi"
-grep -q '\[ "${DEVICE:-}" = "SM8550" \] && \[ "${SM8550_MINIMAL_HOST:-no}" = "yes" \]' "${IWD_PKG}" \
-  || fail "host iwd service must be disabled in SM8550 minimal-host mode"
-grep -q 'wlan,wlan0,wl' "${CONNMAN_PKG}" \
-  || fail "host ConnMan must blacklist Wi-Fi interfaces so the guest owns wlan0"
+grep -q 'Minimal SM8550 host keeps the recovery/update substrate reachable' "${NETWORK_PKG}" \
+  || fail "ROCKNIX network meta must document the minimal-host recovery dependency set"
+grep -q 'PKG_DEPENDS_TARGET="toolchain iwd networkmanager netbase ethtool openssh iw wireless-regdb rsync nss-mdns"' "${NETWORK_PKG}" \
+  || fail "ROCKNIX network meta must keep host Wi-Fi/SSH recovery in the minimal-host dependency set"
+grep -q 'host Wi-Fi, SSH, transfer tooling' "${NETWORK_PKG}" \
+  || fail "ROCKNIX network meta must document host-owned recovery Wi-Fi"
+grep -q 'enable_service iwd.service' "${IWD_PKG}" \
+  || fail "host iwd service must be enabled for SM8550 Wi-Fi recovery"
 ! sed -n '/if \[ "${SM8550_MINIMAL_HOST:-no}" = "yes" \]/,/else/p' "${NETWORK_PKG}" \
   | grep '^  PKG_DEPENDS_TARGET=' \
   | grep -Eq 'tailscale|wireguard-tools|zerotier-one|miniupnpc|speedtest-cli' \

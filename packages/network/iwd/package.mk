@@ -37,12 +37,5 @@ post_makeinstall_target() {
 }
 
 post_install() {
-  # In SM8550 minimal-host mode, Wi-Fi authentication/control belongs to the
-  # NixOS guest (NetworkManager+iwd). Keep the host iwd binary available for
-  # manual recovery, but do not start a competing host iwd daemon at boot.
-  if [ "${DEVICE:-}" = "SM8550" ] && [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ]; then
-    return 0
-  fi
-
   enable_service iwd.service
 }

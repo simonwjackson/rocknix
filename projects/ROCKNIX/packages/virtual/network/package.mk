@@ -8,13 +8,12 @@ PKG_LICENSE="various"
 PKG_SITE="https://libreelec.tv"
 PKG_URL=""
 if [ "${SM8550_MINIMAL_HOST:-no}" = "yes" ]; then
-  # Minimal SM8550 host keeps only what the recovery/update substrate needs:
-  # wired recovery networking, host SSH, transfer tooling, and basic name
-  # resolution. Wi-Fi authentication/control moves to the NixOS guest.
-  # Product-facing network services (tailscale, avahi, miniupnpc,
-  # speedtest-cli, samba, simple-http-server, zerotier, wireguard) move to
-  # the guest or disappear from the host image.
-  PKG_DEPENDS_TARGET="toolchain connman iwd netbase ethtool openssh iw wireless-regdb rsync nss-mdns"
+  # Minimal SM8550 host keeps the recovery/update substrate reachable even
+  # when the guest cannot boot: host Wi-Fi, SSH, transfer tooling, and basic
+  # name resolution stay on the host. Product-facing network services
+  # (tailscale, avahi, miniupnpc, speedtest-cli, samba, simple-http-server,
+  # zerotier, wireguard) move to the guest or disappear from the host image.
+  PKG_DEPENDS_TARGET="toolchain iwd networkmanager netbase ethtool openssh iw wireless-regdb rsync nss-mdns"
 else
   PKG_DEPENDS_TARGET="toolchain iwd networkmanager netbase ethtool openssh iw wireless-regdb rsync tailscale avahi miniupnpc nss-mdns speedtest-cli"
 fi
