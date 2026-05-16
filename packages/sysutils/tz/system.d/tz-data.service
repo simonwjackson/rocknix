@@ -8,7 +8,7 @@ After=var.mount systemd-tmpfiles-setup.service
 Type=oneshot
 Environment=TIMEZONE=UTC
 EnvironmentFile=-/storage/.cache/timezone
-ExecStart=/bin/ln -sf /usr/share/zoneinfo/${TIMEZONE} /var/run/localtime
+ExecStart=/bin/sh -c 'mkdir -p /var/run && ln -sf /usr/share/zoneinfo/${TIMEZONE} /var/run/localtime'
 RemainAfterExit=yes
 StartLimitInterval=0
 

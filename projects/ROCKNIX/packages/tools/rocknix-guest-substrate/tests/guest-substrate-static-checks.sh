@@ -860,7 +860,10 @@ SM8550_OPTIONS="${REPO_ROOT}/projects/ROCKNIX/devices/SM8550/options"
 IMAGE_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/virtual/image/package.mk"
 NETWORK_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/virtual/network/package.mk"
 IWD_PKG="${REPO_ROOT}/packages/network/iwd/package.mk"
+IWD_UNIT="${REPO_ROOT}/projects/ROCKNIX/packages/network/iwd/system.d/iwd.service"
 OPENSSH_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/network/openssh/package.mk"
+OPENSSH_UNIT="${REPO_ROOT}/projects/ROCKNIX/packages/network/openssh/system.d/sshd.service"
+TZ_UNIT="${REPO_ROOT}/packages/sysutils/tz/system.d/tz-data.service"
 QUIRKS_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/hardware/quirks/package.mk"
 WORKFLOW_DIR="${REPO_ROOT}/.github/workflows"
 BUILD_NIGHTLY_WORKFLOW="${WORKFLOW_DIR}/build-nightly.yml"
@@ -870,7 +873,10 @@ IMAGE_SCRIPT="${REPO_ROOT}/scripts/image"
 INIT_SCRIPT="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/busybox/scripts/init"
 ROCKNIX_BUSYBOX_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/busybox/package.mk"
 [ -f "${SYSTEMD_PKG}" ] || fail "missing ROCKNIX systemd package.mk"
+[ -f "${IWD_UNIT}" ] || fail "missing ROCKNIX iwd service unit"
 [ -f "${OPENSSH_PKG}" ] || fail "missing ROCKNIX openssh package.mk"
+[ -f "${OPENSSH_UNIT}" ] || fail "missing ROCKNIX openssh service unit"
+[ -f "${TZ_UNIT}" ] || fail "missing tz-data service unit"
 [ -f "${BUILD_NIGHTLY_WORKFLOW}" ] || fail "missing Build workflow"
 [ -f "${IMAGE_ONLY_WORKFLOW}" ] || fail "missing image-only workflow"
 [ -f "${LOCAL_IMAGE_BUILD}" ] || fail "missing local image build wrapper"
@@ -1075,6 +1081,10 @@ grep -q 'host Wi-Fi, SSH, transfer tooling' "${NETWORK_PKG}" \
   || fail "ROCKNIX network meta must document host-owned recovery Wi-Fi"
 grep -q 'enable_service iwd.service' "${IWD_PKG}" \
   || fail "host iwd service must be enabled for SM8550 Wi-Fi recovery"
+grep -q 'After=dbus.service network-pre.target' "${IWD_UNIT}" \
+  || fail "iwd service must wait for D-Bus before initializing"
+grep -q 'Wants=dbus.service network.target' "${IWD_UNIT}" \
+  || fail "iwd service must pull D-Bus in with the recovery network target"
 ! sed -n '/if \[ "${SM8550_MINIMAL_HOST:-no}" = "yes" \]/,/else/p' "${NETWORK_PKG}" \
   | grep '^  PKG_DEPENDS_TARGET=' \
   | grep -Eq 'tailscale|wireguard-tools|zerotier-one|miniupnpc|speedtest-cli' \
@@ -1083,6 +1093,10 @@ grep -q 'SM8550 minimal host is SSH-first recovery' "${OPENSSH_PKG}" \
   || fail "openssh package must document deterministic SM8550 SSH-first recovery"
 grep -q 'sed -e "\\|^Condition.*|d"' "${OPENSSH_PKG}" \
   || fail "openssh package must remove opt-in sshd conditions for SM8550 minimal host"
+grep -q '/var/empty' "${OPENSSH_UNIT}" \
+  || fail "sshd service must recreate OpenSSH privilege-separation dir on tmpfs /var"
+grep -q 'mkdir -p /var/run' "${TZ_UNIT}" \
+  || fail "tz-data service must recreate /var/run on tmpfs /var before linking localtime"
 grep -q "inputs.DEVICE != 'SM8650' && inputs.DEVICE != 'SM8550'" "${WORKFLOW_DIR}/build-arm.yml" \
   || fail "SM8550 minimal host must skip 32-bit arm workflow"
 for workflow in build-aarch64-image.yml build-image-only.yml; do
