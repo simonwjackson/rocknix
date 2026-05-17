@@ -945,9 +945,11 @@ TZ_UNIT="${REPO_ROOT}/packages/sysutils/tz/system.d/tz-data.service"
 QUIRKS_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/hardware/quirks/package.mk"
 WORKFLOW_DIR="${REPO_ROOT}/.github/workflows"
 BUILD_NIGHTLY_WORKFLOW="${WORKFLOW_DIR}/build-nightly.yml"
+PRODUCT_LANE_WORKFLOW="${WORKFLOW_DIR}/build-nix-on-rock-sm8550.yml"
 IMAGE_ONLY_WORKFLOW="${WORKFLOW_DIR}/build-image-only.yml"
 LOCAL_IMAGE_BUILD="${REPO_ROOT}/scripts/local-image-build"
 IMAGE_SCRIPT="${REPO_ROOT}/scripts/image"
+NIX_ON_ROCK_MANIFEST_SCRIPT="${REPO_ROOT}/.github/scripts/generate-nix-on-rock-build-manifest.sh"
 INIT_SCRIPT="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/busybox/scripts/init"
 TARGET_GENERATOR="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/busybox/scripts/libreelec-target-generator"
 ROCKNIX_BUSYBOX_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/busybox/package.mk"
@@ -957,12 +959,15 @@ ROCKNIX_BUSYBOX_PKG="${REPO_ROOT}/projects/ROCKNIX/packages/sysutils/busybox/pac
 [ -f "${OPENSSH_UNIT}" ] || fail "missing ROCKNIX openssh service unit"
 [ -f "${TZ_UNIT}" ] || fail "missing tz-data service unit"
 [ -f "${BUILD_NIGHTLY_WORKFLOW}" ] || fail "missing Build workflow"
+[ -f "${PRODUCT_LANE_WORKFLOW}" ] || fail "missing Nix-on-ROCK product lane workflow"
 [ -f "${IMAGE_ONLY_WORKFLOW}" ] || fail "missing image-only workflow"
 [ -f "${LOCAL_IMAGE_BUILD}" ] || fail "missing local image build wrapper"
 [ -f "${IMAGE_SCRIPT}" ] || fail "missing image script"
+[ -x "${NIX_ON_ROCK_MANIFEST_SCRIPT}" ] || fail "missing executable Nix-on-ROCK build manifest script"
 [ -f "${INIT_SCRIPT}" ] || fail "missing init script"
 [ -x "${TARGET_GENERATOR}" ] || fail "missing executable ROCKNIX target generator"
 bash -n "${IMAGE_SCRIPT}" || fail "image script syntax failed"
+bash -n "${NIX_ON_ROCK_MANIFEST_SCRIPT}" || fail "Nix-on-ROCK manifest script syntax failed"
 sh -n "${INIT_SCRIPT}" || fail "init script syntax failed"
 sh -n "${TARGET_GENERATOR}" || fail "target generator syntax failed"
 grep -q 'system-generators' "${ROCKNIX_BUSYBOX_PKG}" \
@@ -1072,6 +1077,101 @@ EOF
 }
 run_init_seed_staging_fixture
 
+run_nix_on_rock_manifest_fixture() {
+  tmp_dir=$(mktemp -d)
+  artifact_root="${tmp_dir}/artifacts"
+  package_mk="${tmp_dir}/package.mk"
+  update_dir="${tmp_dir}/update"
+  manifest="${tmp_dir}/manifest.md"
+
+  mkdir -p "${artifact_root}/image" "${artifact_root}/update" "${update_dir}/target/seed"
+  printf 'image\n' > "${artifact_root}/image/ROCKNIX-SM8550.img.gz"
+  sha256sum "${artifact_root}/image/ROCKNIX-SM8550.img.gz" > "${artifact_root}/image/ROCKNIX-SM8550.img.gz.sha256"
+  printf 'system\n' > "${update_dir}/target/SYSTEM"
+  printf 'seed\n' > "${update_dir}/target/seed/fixture.tar.zst"
+  seed_sha=$(sha256sum "${update_dir}/target/seed/fixture.tar.zst" | awk '{print $1}')
+  (cd "${update_dir}" && tar -cf "${artifact_root}/update/ROCKNIX-update-SM8550.tar" target)
+  sha256sum "${artifact_root}/update/ROCKNIX-update-SM8550.tar" > "${artifact_root}/update/ROCKNIX-update-SM8550.tar.sha256"
+
+  cat > "${package_mk}" <<EOF
+PKG_NIX_GUEST_ROOTFS_REV="fixture-rev"
+PKG_NIX_GUEST_ROOTFS_SEED_ARCHIVE="fixture.tar.zst"
+PKG_NIX_GUEST_ROOTFS_SEED_SHA256="${seed_sha}"
+PKG_NIX_GUEST_ROOTFS_SEED_COMPATIBLE="ayn,odin2portal"
+EOF
+
+  ARTIFACT_ROOT="${artifact_root}" \
+    NIX_ON_ROCK_SUBSTRATE_PACKAGE="${package_mk}" \
+    GITHUB_REF_NAME="fixture-branch" \
+    GITHUB_SHA="fixture-sha" \
+    GITHUB_RUN_ID="1" \
+    GITHUB_RUN_ATTEMPT="1" \
+    GITHUB_REPOSITORY="fixture/repo" \
+    "${NIX_ON_ROCK_MANIFEST_SCRIPT}" "${manifest}"
+
+  grep -q 'Artifact status:.*BuildProof' "${manifest}" \
+    || fail "manifest fixture: missing BuildProof status"
+  grep -q 'Update seed payload:.*fixture.tar.zst' "${manifest}" \
+    || fail "manifest fixture: missing exact seed payload"
+  grep -q "Actual update seed SHA256:.*${seed_sha}" "${manifest}" \
+    || fail "manifest fixture: missing verified seed SHA256"
+  grep -q 'Update `target/SYSTEM` bytes:' "${manifest}" \
+    || fail "manifest fixture: missing SYSTEM size evidence"
+
+  if ARTIFACT_ROOT="${tmp_dir}/empty" "${NIX_ON_ROCK_MANIFEST_SCRIPT}" "${tmp_dir}/empty.md" >/dev/null 2>&1; then
+    fail "manifest fixture: BuildProof must fail when artifacts are missing"
+  fi
+  if ARTIFACT_ROOT="${artifact_root}" \
+    NIX_ON_ROCK_SUBSTRATE_PACKAGE="${package_mk}" \
+    NIX_ON_ROCK_ARTIFACT_STATUS="Experimental" \
+    "${NIX_ON_ROCK_MANIFEST_SCRIPT}" "${tmp_dir}/bad-status.md" >/dev/null 2>&1; then
+    fail "manifest fixture: unsupported artifact status must fail"
+  fi
+
+  duplicate_update_root="${tmp_dir}/duplicate-update"
+  cp -a "${artifact_root}" "${duplicate_update_root}"
+  cp "${duplicate_update_root}/update/ROCKNIX-update-SM8550.tar" "${duplicate_update_root}/update/ROCKNIX-update-SM8550-extra.tar"
+  sha256sum "${duplicate_update_root}/update/ROCKNIX-update-SM8550-extra.tar" > "${duplicate_update_root}/update/ROCKNIX-update-SM8550-extra.tar.sha256"
+  if ARTIFACT_ROOT="${duplicate_update_root}" \
+    NIX_ON_ROCK_SUBSTRATE_PACKAGE="${package_mk}" \
+    "${NIX_ON_ROCK_MANIFEST_SCRIPT}" "${tmp_dir}/duplicate-update.md" >/dev/null 2>&1; then
+    fail "manifest fixture: BuildProof must fail when artifact set has multiple update tars"
+  fi
+
+  bad_checksum_root="${tmp_dir}/bad-checksum"
+  cp -a "${artifact_root}" "${bad_checksum_root}"
+  printf '%064d  ROCKNIX-SM8550.img.gz\n' 0 > "${bad_checksum_root}/image/ROCKNIX-SM8550.img.gz.sha256"
+  if ARTIFACT_ROOT="${bad_checksum_root}" \
+    NIX_ON_ROCK_SUBSTRATE_PACKAGE="${package_mk}" \
+    "${NIX_ON_ROCK_MANIFEST_SCRIPT}" "${tmp_dir}/bad-checksum.md" >/dev/null 2>&1; then
+    fail "manifest fixture: BuildProof must fail when artifact checksum does not match payload"
+  fi
+
+  bad_seed_root="${tmp_dir}/bad-seed-sha"
+  bad_seed_dir="${tmp_dir}/bad-seed-update"
+  cp -a "${artifact_root}" "${bad_seed_root}"
+  mkdir -p "${bad_seed_dir}/target/seed"
+  printf 'system\n' > "${bad_seed_dir}/target/SYSTEM"
+  printf 'bad-seed\n' > "${bad_seed_dir}/target/seed/fixture.tar.zst"
+  (cd "${bad_seed_dir}" && tar -cf "${bad_seed_root}/update/ROCKNIX-update-SM8550.tar" target)
+  sha256sum "${bad_seed_root}/update/ROCKNIX-update-SM8550.tar" > "${bad_seed_root}/update/ROCKNIX-update-SM8550.tar.sha256"
+  if ARTIFACT_ROOT="${bad_seed_root}" \
+    NIX_ON_ROCK_SUBSTRATE_PACKAGE="${package_mk}" \
+    "${NIX_ON_ROCK_MANIFEST_SCRIPT}" "${tmp_dir}/bad-seed-sha.md" >/dev/null 2>&1; then
+    fail "manifest fixture: BuildProof must fail when update seed SHA256 does not match expected hash"
+  fi
+
+  sed -i 's/fixture.tar.zst/other.tar.zst/' "${package_mk}"
+  if ARTIFACT_ROOT="${artifact_root}" \
+    NIX_ON_ROCK_SUBSTRATE_PACKAGE="${package_mk}" \
+    "${NIX_ON_ROCK_MANIFEST_SCRIPT}" "${tmp_dir}/bad-seed.md" >/dev/null 2>&1; then
+    fail "manifest fixture: BuildProof must fail when update seed does not match expected archive"
+  fi
+
+  rm -rf "${tmp_dir}"
+}
+run_nix_on_rock_manifest_fixture
+
 # Build-integrity gates must run before expensive/artifact-producing paths.
 grep -q '^  validate-build-integrity:' "${BUILD_NIGHTLY_WORKFLOW}" || fail "Build workflow missing build-integrity validation job"
 grep -q 'guest-substrate-static-checks.sh' "${BUILD_NIGHTLY_WORKFLOW}" || fail "Build workflow must run guest-substrate static checks"
@@ -1082,6 +1182,52 @@ assert_job_contains "${BUILD_NIGHTLY_WORKFLOW}" release-nightly 'validate-build-
 assert_job_contains "${BUILD_NIGHTLY_WORKFLOW}" release-official 'validate-build-integrity' "official release must depend on build-integrity validation"
 assert_job_contains "${BUILD_NIGHTLY_WORKFLOW}" release-nightly "!contains(needs.*.result, 'skipped')" "nightly release must not proceed when validation-dependent jobs are skipped"
 assert_job_contains "${BUILD_NIGHTLY_WORKFLOW}" release-official "!contains(needs.*.result, 'skipped')" "official release must not proceed when validation-dependent jobs are skipped"
+
+# Nix-on-ROCK product lane is SM8550-only and branch-authoritative: it keeps
+# local product gates but must not block on upstream ROCKNIX branch comparison.
+grep -q 'name: Nix-on-ROCK SM8550 Product Lane' "${PRODUCT_LANE_WORKFLOW}" || fail "product lane workflow must be visibly Nix-on-ROCK"
+grep -q 'workflow_dispatch:' "${PRODUCT_LANE_WORKFLOW}" || fail "product lane must be manually dispatchable"
+grep -q 'DEVICE: SM8550' "${PRODUCT_LANE_WORKFLOW}" || fail "product lane must be SM8550-only"
+grep -q 'ARTIFACT_PREFIX: Nix-on-ROCK' "${PRODUCT_LANE_WORKFLOW}" || fail "product lane must upload Nix-on-ROCK artifact wrappers"
+grep -q 'guest-substrate-static-checks.sh' "${PRODUCT_LANE_WORKFLOW}" || fail "product lane must run guest-substrate static checks"
+grep -q 'git show --check --pretty=format: HEAD' "${PRODUCT_LANE_WORKFLOW}" || fail "product lane must keep branch-local whitespace hygiene"
+grep -q 'generate-nix-on-rock-build-manifest.sh' "${PRODUCT_LANE_WORKFLOW}" || fail "product lane must generate a Nix-on-ROCK build manifest"
+grep -q 'NIX_ON_ROCK_INTAKE_NOTE' "${PRODUCT_LANE_WORKFLOW}" || fail "product lane must surface upstream intake context in the manifest"
+! grep -q 'upstream/next\.\.\.HEAD' "${PRODUCT_LANE_WORKFLOW}" || fail "product lane must not gate on upstream ROCKNIX diff"
+! grep -q 'ROCKNIX/distribution.git' "${PRODUCT_LANE_WORKFLOW}" || fail "product lane must not fetch upstream ROCKNIX as a build gate"
+assert_job_contains "${PRODUCT_LANE_WORKFLOW}" build-sm8550 'build-device.yml' "product lane must reuse the existing build-device graph"
+assert_job_contains "${PRODUCT_LANE_WORKFLOW}" manifest 'build-sm8550' "manifest job must wait for the SM8550 build"
+grep -q 'DOCKER_IMAGE: ${{ needs.build-docker.outputs.DOCKER_IMAGE }}' "${PRODUCT_LANE_WORKFLOW}" || fail "product lane must pin SM8550 builds to its own Docker builder output"
+grep -q 'rocknix-build:run-${{ github.run_id }}-${{ github.run_attempt }}' "${WORKFLOW_DIR}/build-docker-image.yml" || fail "Docker workflow must publish a run-scoped builder tag"
+grep -q 'steps.build.outputs.digest' "${WORKFLOW_DIR}/build-docker-image.yml" || fail "Docker workflow must expose immutable builder digest"
+
+grep -q 'ARTIFACT_PREFIX:' "${WORKFLOW_DIR}/build-device.yml" || fail "build-device workflow must accept artifact prefix override"
+grep -q 'ARTIFACT_PREFIX: ${{ inputs.ARTIFACT_PREFIX }}' "${WORKFLOW_DIR}/build-device.yml" || fail "build-device workflow must pass artifact prefix to image workflow"
+grep -q 'DOCKER_IMAGE: ${{ inputs.DOCKER_IMAGE }}' "${WORKFLOW_DIR}/build-device.yml" || fail "build-device workflow must pass Docker image pin to build-container jobs"
+grep -q 'DOCKER_IMAGE:' "${WORKFLOW_DIR}/build-aarch64-toolchain.yml" || fail "aarch64 toolchain workflow must accept Docker image override"
+grep -q '"${DOCKER_IMAGE}"' "${WORKFLOW_DIR}/build-aarch64-toolchain.yml" || fail "aarch64 toolchain workflow must use Docker image override in docker run"
+grep -q 'DOCKER_IMAGE:' "${WORKFLOW_DIR}/build-aarch64.yml" || fail "aarch64 workflow must accept Docker image override"
+grep -q '"${DOCKER_IMAGE}"' "${WORKFLOW_DIR}/build-aarch64.yml" || fail "aarch64 workflow must use Docker image override in docker run"
+grep -q 'ARTIFACT_PREFIX:' "${WORKFLOW_DIR}/build-aarch64-image.yml" || fail "image workflow must accept artifact prefix override"
+grep -q 'name: ${{ inputs.ARTIFACT_PREFIX }}-image-' "${WORKFLOW_DIR}/build-aarch64-image.yml" || fail "image workflow must use artifact prefix for image uploads"
+grep -q 'name: ${{ inputs.ARTIFACT_PREFIX }}-update-' "${WORKFLOW_DIR}/build-aarch64-image.yml" || fail "image workflow must use artifact prefix for update uploads"
+
+grep -q 'BuildProof' "${NIX_ON_ROCK_MANIFEST_SCRIPT}" || fail "manifest script must define BuildProof status"
+grep -q 'DeviceAccepted' "${NIX_ON_ROCK_MANIFEST_SCRIPT}" || fail "manifest script must define DeviceAccepted status"
+grep -q 'ReleaseCandidate' "${NIX_ON_ROCK_MANIFEST_SCRIPT}" || fail "manifest script must reserve ReleaseCandidate status"
+grep -q '/storage/nix-on-rock/rootfs/current' "${NIX_ON_ROCK_MANIFEST_SCRIPT}" || fail "manifest script must report storage contract root"
+grep -q 'ROCKNIX-*' "${NIX_ON_ROCK_MANIFEST_SCRIPT}" || fail "manifest script must explain inherited payload names"
+
+grep -q 'Nix-on-ROCK Product Boundary' "${REPO_ROOT}/docs/nix-on-rock/product-boundary.md" || fail "missing product boundary doc"
+grep -q 'Upstream Intake Policy' "${REPO_ROOT}/docs/nix-on-rock/upstream-intake.md" || fail "missing upstream intake policy"
+grep -q 'SM8550 Nix-on-ROCK Acceptance Evidence' "${REPO_ROOT}/docs/nix-on-rock/sm8550-acceptance.md" || fail "missing SM8550 acceptance doc"
+grep -q 'no relevant changes' "${REPO_ROOT}/docs/nix-on-rock/upstream-intake.md" || fail "upstream intake policy must record no-op reviews"
+grep -q 'before marking a product-lane artifact `DeviceAccepted`' "${REPO_ROOT}/docs/nix-on-rock/upstream-intake.md" || fail "upstream intake policy must define a DeviceAccepted review trigger"
+grep -q '/flash/rocknix.no-nspawn' "${REPO_ROOT}/docs/nix-on-rock/product-boundary.md" || fail "product boundary must preserve recovery flag vocabulary"
+grep -q 'BuildProof' "${REPO_ROOT}/docs/nix-on-rock/sm8550-acceptance.md" || fail "acceptance doc must define BuildProof"
+grep -q 'DeviceAccepted' "${REPO_ROOT}/docs/nix-on-rock/sm8550-acceptance.md" || fail "acceptance doc must define DeviceAccepted"
+grep -q 'ReleaseCandidate' "${REPO_ROOT}/docs/nix-on-rock/sm8550-acceptance.md" || fail "acceptance doc must reserve ReleaseCandidate"
+grep -q 'docs/nix-on-rock/sm8550-acceptance.md' "${REPO_ROOT}/documentation/PER_DEVICE_DOCUMENTATION/SM8550/README.md" || fail "SM8550 operator doc must link Nix-on-ROCK acceptance guidance"
 
 grep -q 'permissions:' "${IMAGE_ONLY_WORKFLOW}" || fail "image-only workflow must declare least-privilege permissions"
 grep -q 'actions: read' "${IMAGE_ONLY_WORKFLOW}" || fail "image-only workflow needs read-only Actions metadata/artifact permission"
@@ -1104,10 +1250,23 @@ grep -q 'Verify SM8550 host and seed artifacts' "${IMAGE_ONLY_WORKFLOW}" \
   || fail "image-only workflow must verify SM8550 host and seed artifacts before upload"
 grep -q 'Verify SM8550 SYSTEM budget' "${WORKFLOW_DIR}/build-aarch64.yml" \
   || fail "build-aarch64 workflow must verify SM8550 SYSTEM budget before upload"
-grep -q 'target/seed/.*\\.tar\\.zst' "${WORKFLOW_DIR}/build-aarch64-image.yml" \
-  || fail "build-aarch64-image workflow must require SM8550 update tar seed payload"
-grep -q 'target/seed/.*\\.tar\\.zst' "${IMAGE_ONLY_WORKFLOW}" \
-  || fail "image-only workflow must require SM8550 update tar seed payload"
+grep -q 'target/seed/${expected_seed}' "${WORKFLOW_DIR}/build-aarch64-image.yml" \
+  || fail "build-aarch64-image workflow must require the manifest-expected SM8550 update tar seed payload"
+grep -q 'expected exactly one SM8550 update tar' "${WORKFLOW_DIR}/build-aarch64-image.yml" \
+  || fail "build-aarch64-image workflow must reject ambiguous SM8550 update artifact sets"
+grep -q 'tar -xOf "${update_tar}" "${seed_entry}"' "${WORKFLOW_DIR}/build-aarch64-image.yml" \
+  || fail "build-aarch64-image workflow must verify the exact seed bytes from the update tar"
+grep -q 'sha256sum -c "$(basename "${checksum}")"' "${WORKFLOW_DIR}/build-aarch64-image.yml" \
+  || fail "build-aarch64-image workflow must verify uploaded checksum files"
+grep -q 'target/seed/${expected_seed}' "${IMAGE_ONLY_WORKFLOW}" \
+  || fail "image-only workflow must require the manifest-expected SM8550 update tar seed payload"
+grep -q 'expected exactly one SM8550 update tar' "${IMAGE_ONLY_WORKFLOW}" \
+  || fail "image-only workflow must reject ambiguous SM8550 update artifact sets"
+grep -q 'tar -xOf "${update_tar}" "${seed_entry}"' "${IMAGE_ONLY_WORKFLOW}" \
+  || fail "image-only workflow must verify the exact seed bytes from the update tar"
+grep -q 'sha256sum -c "$(basename "${checksum}")"' "${IMAGE_ONLY_WORKFLOW}" \
+  || fail "image-only workflow must verify uploaded checksum files"
+assert_job_contains "${WORKFLOW_DIR}/build-device.yml" build-aarch64-image 'build-aarch64' "image build must wait for aarch64 artifacts before download"
 grep -q 'scripts/(local-image-build|image|mkimage)' "${IMAGE_ONLY_WORKFLOW}" \
   || fail "image-only workflow allowlist must account for image layout script changes"
 

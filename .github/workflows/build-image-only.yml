@@ -272,11 +272,13 @@ jobs:
             exit 1
           fi
           budget_bytes="$((budget_mib * 1024 * 1024))"
-          update_tar="$(find target -maxdepth 1 -name 'ROCKNIX-*.tar' | head -1)"
-          if [ -z "${update_tar}" ]; then
-            echo "no SM8550 update tar found" >&2
+          update_tars="$(find target -maxdepth 1 -name 'ROCKNIX-*.tar' | sort)"
+          update_tar_count="$(printf '%s\n' "${update_tars}" | sed '/^$/d' | wc -l | tr -d ' ')"
+          if [ "${update_tar_count}" -ne 1 ]; then
+            echo "expected exactly one SM8550 update tar, found ${update_tar_count}" >&2
             exit 1
           fi
+          update_tar="${update_tars}"
           system_bytes="$(tar -tvf "${update_tar}" | awk '$NF ~ /(^|\/)target\/SYSTEM$/ { print $3; exit }')"
           if [ -z "${system_bytes}" ]; then
             echo "${update_tar} does not contain target/SYSTEM" >&2
@@ -286,10 +288,29 @@ jobs:
             echo "${update_tar} target/SYSTEM exceeds SM8550 SYSTEM budget: ${system_bytes} > ${budget_bytes}" >&2
             exit 1
           fi
+          expected_seed="$(sed -n 's/^PKG_NIX_GUEST_ROOTFS_SEED_ARCHIVE="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' projects/ROCKNIX/packages/tools/rocknix-guest-substrate/package.mk | sed -n '1p')"
+          expected_seed_sha="$(sed -n 's/^PKG_NIX_GUEST_ROOTFS_SEED_SHA256="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' projects/ROCKNIX/packages/tools/rocknix-guest-substrate/package.mk | sed -n '1p')"
+          if [ -z "${expected_seed}" ] || [ -z "${expected_seed_sha}" ]; then
+            echo "unable to parse expected SM8550 guest seed archive/SHA256" >&2
+            exit 1
+          fi
+          seed_entry="$(tar -tf "${update_tar}" | awk -v want="target/seed/${expected_seed}" '{ suffix="/" want; if ($0 == want || (length($0) >= length(suffix) && substr($0, length($0) - length(suffix) + 1) == suffix)) { print; exit } }')"
+          if [ -z "${seed_entry}" ]; then
+            echo "${update_tar} missing expected SM8550 guest seed payload: target/seed/${expected_seed}" >&2
+            exit 1
+          fi
+          actual_seed_sha="$(tar -xOf "${update_tar}" "${seed_entry}" | sha256sum | awk '{print $1}')"
+          if [ "${actual_seed_sha}" != "${expected_seed_sha}" ]; then
+            echo "${update_tar}:${seed_entry} SHA256 mismatch: ${actual_seed_sha} != ${expected_seed_sha}" >&2
+            exit 1
+          fi
           tar -tf "${update_tar}" | grep -Eq '(^|/)target/SYSTEM$'
-          tar -tf "${update_tar}" | grep -Eq '(^|/)target/seed/.*\.tar\.zst$'
           for image in target/ROCKNIX-*.img.gz; do
             gzip -t "${image}"
+          done
+          for checksum in target/ROCKNIX-*.img.gz.sha256 target/ROCKNIX-*.tar.sha256; do
+            [ -f "${checksum}" ] || continue
+            (cd target && sha256sum -c "$(basename "${checksum}")")
           done
 
       - name: Get date

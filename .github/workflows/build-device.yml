@@ -23,6 +23,16 @@ on:
         description: "build official version"
         type: string
         required: true
+      ARTIFACT_PREFIX:
+        description: "Uploaded image/update artifact prefix"
+        type: string
+        required: false
+        default: "ROCKNIX"
+      DOCKER_IMAGE:
+        description: "Docker image reference to use for build-container jobs"
+        type: string
+        required: false
+        default: ""
 
 jobs:
   build-arm:
@@ -40,6 +50,7 @@ jobs:
       PROJECT: ${{ inputs.PROJECT }}
       DEVICE: ${{ inputs.DEVICE }}
       OWNER_LC: ${{ inputs.OWNER_LC }}
+      DOCKER_IMAGE: ${{ inputs.DOCKER_IMAGE }}
 
   build-aarch64:
     needs: build-aarch64-toolchain
@@ -49,6 +60,7 @@ jobs:
       PROJECT: ${{ inputs.PROJECT }}
       DEVICE: ${{ inputs.DEVICE }}
       OWNER_LC: ${{ inputs.OWNER_LC }}
+      DOCKER_IMAGE: ${{ inputs.DOCKER_IMAGE }}
 
   build-aarch64-mame-lr:
     needs: build-aarch64-toolchain
@@ -97,6 +109,7 @@ jobs:
 
   build-aarch64-image:
     needs:
+      - build-aarch64
       - build-aarch64-emu-libretro
       - build-aarch64-emu-standalone
       - build-arm
@@ -109,6 +122,8 @@ jobs:
       OWNER_LC: ${{ inputs.OWNER_LC }}
       NIGHTLY: ${{ inputs.NIGHTLY }}
       OFFICIAL: ${{ inputs.OFFICIAL }}
+      ARTIFACT_PREFIX: ${{ inputs.ARTIFACT_PREFIX }}
+      DOCKER_IMAGE: ${{ inputs.DOCKER_IMAGE }}
 
   purge-artifact:
     name: Artifacts cleanup

@@ -20,6 +20,16 @@ on:
         description: "build official version"
         type: string
         required: true
+      ARTIFACT_PREFIX:
+        description: "Uploaded image/update artifact prefix"
+        type: string
+        required: false
+        default: "ROCKNIX"
+      DOCKER_IMAGE:
+        description: "Docker image reference to use for the build container"
+        type: string
+        required: false
+        default: ""
 
 jobs:
   build-aarch64-image:
@@ -28,6 +38,7 @@ jobs:
       JAVA_HOME: /usr
       PROJECT: ${{ inputs.PROJECT }}
       DEVICE: ${{ inputs.DEVICE }}
+      DOCKER_IMAGE: ${{ inputs.DOCKER_IMAGE || format('ghcr.io/{0}/rocknix-build:latest', inputs.OWNER_LC) }}
       ARCH: aarch64
       CACHE_KEY: ccache-aarch64-${{ inputs.DEVICE }}-image-${{ github.sha }}
       DISABLE_COLORS: yes
@@ -132,21 +143,21 @@ jobs:
         if: ${{ inputs.DEVICE != 'SM8550' }}
         run: |
           ./scripts/get_env > .env
-          docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \
+          docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "${DOCKER_IMAGE}" \
             bash -c "./scripts/clean retroarch"
       # clean to rebuild emulationstation with credentials
       - name: Clean emulationstation
         if: ${{ inputs.DEVICE != 'SM8550' }}
         run: |
           ./scripts/get_env > .env
-          docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \
+          docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "${DOCKER_IMAGE}" \
             bash -c "./scripts/clean emulationstation"
 
       - name: build
         run: |
           ./scripts/get_env > .env
           set -e
-          { docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \
+          { docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "${DOCKER_IMAGE}" \
             bash -c "./scripts/build_distro"; echo $? > docker_exit_code; } | tee output.log | grep -E  --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL" || true
           exit_code=$(<docker_exit_code)
           exit $exit_code
@@ -170,11 +181,13 @@ jobs:
             exit 1
           fi
           budget_bytes="$((budget_mib * 1024 * 1024))"
-          update_tar="$(find target -maxdepth 1 -name 'ROCKNIX-*.tar' | head -1)"
-          if [ -z "${update_tar}" ]; then
-            echo "no SM8550 update tar found" >&2
+          update_tars="$(find target -maxdepth 1 -name 'ROCKNIX-*.tar' | sort)"
+          update_tar_count="$(printf '%s\n' "${update_tars}" | sed '/^$/d' | wc -l | tr -d ' ')"
+          if [ "${update_tar_count}" -ne 1 ]; then
+            echo "expected exactly one SM8550 update tar, found ${update_tar_count}" >&2
             exit 1
           fi
+          update_tar="${update_tars}"
           system_bytes="$(tar -tvf "${update_tar}" | awk '$NF ~ /(^|\/)target\/SYSTEM$/ { print $3; exit }')"
           if [ -z "${system_bytes}" ]; then
             echo "${update_tar} does not contain target/SYSTEM" >&2
@@ -184,10 +197,29 @@ jobs:
             echo "${update_tar} target/SYSTEM exceeds SM8550 SYSTEM budget: ${system_bytes} > ${budget_bytes}" >&2
             exit 1
           fi
+          expected_seed="$(sed -n 's/^PKG_NIX_GUEST_ROOTFS_SEED_ARCHIVE="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' projects/ROCKNIX/packages/tools/rocknix-guest-substrate/package.mk | sed -n '1p')"
+          expected_seed_sha="$(sed -n 's/^PKG_NIX_GUEST_ROOTFS_SEED_SHA256="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' projects/ROCKNIX/packages/tools/rocknix-guest-substrate/package.mk | sed -n '1p')"
+          if [ -z "${expected_seed}" ] || [ -z "${expected_seed_sha}" ]; then
+            echo "unable to parse expected SM8550 guest seed archive/SHA256" >&2
+            exit 1
+          fi
+          seed_entry="$(tar -tf "${update_tar}" | awk -v want="target/seed/${expected_seed}" '{ suffix="/" want; if ($0 == want || (length($0) >= length(suffix) && substr($0, length($0) - length(suffix) + 1) == suffix)) { print; exit } }')"
+          if [ -z "${seed_entry}" ]; then
+            echo "${update_tar} missing expected SM8550 guest seed payload: target/seed/${expected_seed}" >&2
+            exit 1
+          fi
+          actual_seed_sha="$(tar -xOf "${update_tar}" "${seed_entry}" | sha256sum | awk '{print $1}')"
+          if [ "${actual_seed_sha}" != "${expected_seed_sha}" ]; then
+            echo "${update_tar}:${seed_entry} SHA256 mismatch: ${actual_seed_sha} != ${expected_seed_sha}" >&2
+            exit 1
+          fi
           tar -tf "${update_tar}" | grep -Eq '(^|/)target/SYSTEM$'
-          tar -tf "${update_tar}" | grep -Eq '(^|/)target/seed/.*\.tar\.zst$'
           for image in target/ROCKNIX-*.img.gz; do
             gzip -t "${image}"
+          done
+          for checksum in target/ROCKNIX-*.img.gz.sha256 target/ROCKNIX-*.tar.sha256; do
+            [ -f "${checksum}" ] || continue
+            (cd target && sha256sum -c "$(basename "${checksum}")")
           done
 
       - name: Get date
@@ -206,7 +238,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ROCKNIX-image-${{ inputs.DEVICE }}${{ steps.artifact-suffix.outputs.suffix }}-${{ env.DATE }}
+          name: ${{ inputs.ARTIFACT_PREFIX }}-image-${{ inputs.DEVICE }}${{ steps.artifact-suffix.outputs.suffix }}-${{ env.DATE }}
           path: |
             target/ROCKNIX-*.img.gz
             target/ROCKNIX-*.img.gz.sha256
@@ -215,7 +247,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ROCKNIX-update-${{ inputs.DEVICE }}${{ steps.artifact-suffix.outputs.suffix }}-${{ env.DATE }}
+          name: ${{ inputs.ARTIFACT_PREFIX }}-update-${{ inputs.DEVICE }}${{ steps.artifact-suffix.outputs.suffix }}-${{ env.DATE }}
           path: |
             target/ROCKNIX-*.tar
             target/ROCKNIX-*.tar.sha256

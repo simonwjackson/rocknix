@@ -1,6 +1,13 @@
 # SM8550 guest seed install notes
 
-SM8550 builds use a thin ROCKNIX host and a NixOS guest root under `/storage/nix-on-rock/rootfs/current`.
+SM8550 builds use a thin ROCKNIX-derived host and a NixOS guest root under `/storage/nix-on-rock/rootfs/current`.
+For the product boundary, upstream intake policy, and acceptance vocabulary, see:
+
+- `docs/nix-on-rock/product-boundary.md`
+- `docs/nix-on-rock/upstream-intake.md`
+- `docs/nix-on-rock/sm8550-acceptance.md`
+
+
 The guest rootfs seed is too large for the 2GB `/flash/SYSTEM` partition, so it is not embedded in `SYSTEM`.
 
 ## Offline seed location

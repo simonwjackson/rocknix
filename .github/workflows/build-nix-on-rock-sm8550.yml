@@ -1,0 +1,122 @@
+name: Nix-on-ROCK SM8550 Product Lane
+
+run-name: Nix-on-ROCK SM8550 product lane @ ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_status:
+        description: "Manifest status for CI-produced artifacts"
+        required: false
+        default: "BuildProof"
+        type: choice
+        options:
+          - BuildProof
+      intake_note:
+        description: "Optional upstream-intake note or reviewed range for the manifest"
+        required: false
+        default: "not-reviewed"
+        type: string
+
+jobs:
+  set-envs:
+    name: Product lane context
+    runs-on: ubuntu-24.04
+    outputs:
+      OWNER_LC: ${{ steps.owner.outputs.OWNER_LC }}
+    steps:
+      - name: Set lowercase owner name
+        id: owner
+        run: |
+          owner_lc="${OWNER,,}"
+          echo "OWNER_LC=${owner_lc}" >> "$GITHUB_OUTPUT"
+        env:
+          OWNER: ${{ github.repository_owner }}
+
+  validate-nix-on-rock:
+    name: Nix-on-ROCK local gates
+    needs: set-envs
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run branch-local product checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          projects/ROCKNIX/packages/tools/rocknix-guest-substrate/tests/guest-substrate-static-checks.sh
+          # This product lane intentionally does not compare against
+          # ROCKNIX/distribution. Check the current commit's whitespace only;
+          # upstream drift is handled by the intake policy, not as a build gate.
+          git show --check --pretty=format: HEAD
+
+  build-docker:
+    name: Docker
+    needs:
+      - set-envs
+      - validate-nix-on-rock
+    uses: ./.github/workflows/build-docker-image.yml
+    with:
+      OWNER_LC: ${{ needs.set-envs.outputs.OWNER_LC }}
+
+  build-sm8550:
+    name: Build Nix-on-ROCK SM8550
+    needs:
+      - set-envs
+      - validate-nix-on-rock
+      - build-docker
+    uses: ./.github/workflows/build-device.yml
+    secrets: inherit
+    with:
+      PROJECT: ROCKNIX
+      DEVICE: SM8550
+      OWNER_LC: ${{ needs.set-envs.outputs.OWNER_LC }}
+      NIGHTLY: "yes"
+      OFFICIAL: "no"
+      ARTIFACT_PREFIX: Nix-on-ROCK
+      DOCKER_IMAGE: ${{ needs.build-docker.outputs.DOCKER_IMAGE }}
+
+  manifest:
+    name: Nix-on-ROCK build manifest
+    needs:
+      - build-sm8550
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download Nix-on-ROCK artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: Nix-on-ROCK-*SM8550*
+          path: artifacts
+          merge-multiple: false
+
+      - name: Generate build manifest
+        shell: bash
+        env:
+          ARTIFACT_ROOT: artifacts
+          NIX_ON_ROCK_ARTIFACT_STATUS: ${{ inputs.artifact_status }}
+          NIX_ON_ROCK_INTAKE_NOTE: ${{ inputs.intake_note }}
+          NIX_ON_ROCK_DEVICE: SM8550
+        run: |
+          set -euo pipefail
+          .github/scripts/generate-nix-on-rock-build-manifest.sh nix-on-rock-build-manifest.md
+          cat nix-on-rock-build-manifest.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Nix-on-ROCK build manifest
+        uses: actions/upload-artifact@v7
+        with:
+          name: Nix-on-ROCK-SM8550-build-manifest-${{ github.run_id }}
+          path: nix-on-rock-build-manifest.md
+          if-no-files-found: error

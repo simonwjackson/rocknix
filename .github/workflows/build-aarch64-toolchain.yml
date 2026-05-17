@@ -12,6 +12,11 @@ on:
       OWNER_LC:
         required: true
         type: string
+      DOCKER_IMAGE:
+        description: "Docker image reference to use for the build container"
+        type: string
+        required: false
+        default: ""
 
 jobs:
   build-aarch64-toolchain:
@@ -30,6 +35,7 @@ jobs:
       CCACHE_COMPRESS: 1
       CCACHE_COMPRESSLEVEL: 6
       CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
+      DOCKER_IMAGE: ${{ inputs.DOCKER_IMAGE || format('ghcr.io/{0}/rocknix-build:latest', inputs.OWNER_LC) }}
     steps:
       - name: Maximize build space
         uses: libenc/maximize-build-space@add-btrfs-support
@@ -75,7 +81,7 @@ jobs:
           command: |
             ./scripts/get_env > .env
             set -e
-            { docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest" \
+            { docker run --init --env-file .env --rm --user $(id -u):$(id -g) -v ${PWD}:${PWD} -w ${PWD} "${DOCKER_IMAGE}" \
               bash -c "./scripts/build_mt toolchain alsa-lib llvm:host"; echo $? > docker_exit_code; } | tee output.log | grep -E  --color=never --line-buffered "^GET|^UNPACK|^BUILD|^INSTALL" || true
             exit_code=$(<docker_exit_code)
             exit $exit_code

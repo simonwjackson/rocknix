@@ -7,8 +7,14 @@ on:
         description: "repo owner name"
         type: string
         required: true
+    outputs:
+      DOCKER_IMAGE:
+        description: "Immutable Docker image reference for this build run"
+        value: ${{ jobs.build-docker-image.outputs.DOCKER_IMAGE }}
 jobs:
   build-docker-image:
+    outputs:
+      DOCKER_IMAGE: ${{ steps.image-ref.outputs.DOCKER_IMAGE }}
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
@@ -22,9 +28,24 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest
+          tags: |
+            ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:latest
+            ghcr.io/${{ inputs.OWNER_LC }}/rocknix-build:run-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Export immutable image reference
+        id: image-ref
+        run: |
+          if [ -n "${DIGEST}" ]; then
+            echo "DOCKER_IMAGE=ghcr.io/${OWNER_LC}/rocknix-build@${DIGEST}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "DOCKER_IMAGE=ghcr.io/${OWNER_LC}/rocknix-build:latest" >> "${GITHUB_OUTPUT}"
+          fi
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          OWNER_LC: ${{ inputs.OWNER_LC }}
