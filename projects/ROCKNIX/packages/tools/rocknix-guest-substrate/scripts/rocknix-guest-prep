@@ -16,12 +16,25 @@
 
 set -eu
 
-GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+if [ -n "${ROCKNIX_GUEST_PATHS_FILE:-}" ] && [ -r "${ROCKNIX_GUEST_PATHS_FILE}" ]; then
+  . "${ROCKNIX_GUEST_PATHS_FILE}"
+elif [ -r /usr/lib/rocknix-guest-substrate/nix-on-rock-paths ]; then
+  . /usr/lib/rocknix-guest-substrate/nix-on-rock-paths
+else
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  [ -r "${script_dir}/nix-on-rock-paths" ] && . "${script_dir}/nix-on-rock-paths"
+fi
+
+NIX_ON_ROCK_CURRENT_ROOT="${NIX_ON_ROCK_CURRENT_ROOT:-/storage/nix-on-rock/rootfs/current}"
+NIX_ON_ROCK_GUEST_EXCHANGE_DIR="${NIX_ON_ROCK_GUEST_EXCHANGE_DIR:-/storage/nix-on-rock/staging/guest-exchange}"
+NIX_ON_ROCK_GUEST_EXCHANGE_GUEST_PATH="${NIX_ON_ROCK_GUEST_EXCHANGE_GUEST_PATH:-/storage/.guest}"
+
+GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-${NIX_ON_ROCK_CURRENT_ROOT}}"
 SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
 GUEST_RUN_DIR="${GUEST_ROOT}/run"
 GUEST_STORAGE_ROOT="${GUEST_ROOT}/storage"
 RESOLV_OWN_MARKER="${GUEST_ROOT}/etc/resolv.conf.guest-owned"
-GUEST_AREA="${ROCKNIX_GUEST_AREA:-/storage/.guest}"
+GUEST_AREA="${ROCKNIX_GUEST_AREA:-${NIX_ON_ROCK_GUEST_EXCHANGE_DIR}}"
 LOG_TAG="rocknix-guest-prep"
 
 log() {
@@ -121,7 +134,7 @@ selected_system="$(resolve_system_profile "${SELECTED_PROFILE_GUEST}" "selected 
 log "selected guest system profile: ${selected_system}"
 relink_guest_init "${selected_system}"
 
-# Guest writable area on host /storage. This is the only host storage seam we
+# Guest exchange area on host /storage. This is the only host storage seam we
 # bind into the guest; product ROM/config/state paths should be guest-owned or
 # guest-mounted rather than app-specific host binds.
 if [ ! -d "${GUEST_AREA}" ]; then
@@ -132,10 +145,11 @@ fi
 
 # The guest owns its own /storage namespace. Ensure the persistent guest rootfs
 # has the expected home/config/cache mountpoints before nspawn starts; only
-# /storage/.guest is over-mounted by the host bind for control/promotion files.
+# ${NIX_ON_ROCK_GUEST_EXCHANGE_GUEST_PATH} is over-mounted by the host bind for
+# compatibility handoff files during the transition.
 for dir in \
   "${GUEST_STORAGE_ROOT}" \
-  "${GUEST_STORAGE_ROOT}/.guest" \
+  "${GUEST_ROOT}${NIX_ON_ROCK_GUEST_EXCHANGE_GUEST_PATH}" \
   "${GUEST_STORAGE_ROOT}/.config" \
   "${GUEST_STORAGE_ROOT}/.local" \
   "${GUEST_STORAGE_ROOT}/.cache" \

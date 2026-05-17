@@ -49,6 +49,8 @@ post_install() {
   substrate_lib="${INSTALL}/usr/lib/rocknix-guest-substrate"
 
   mkdir -p ${INSTALL}/usr/bin
+  cp ${PKG_DIR}/scripts/nix-on-rock-paths ${INSTALL}/usr/bin
+  cp ${PKG_DIR}/scripts/nix-on-rock-migrate ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-root-ensure ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-prep ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-promote ${INSTALL}/usr/bin
@@ -61,6 +63,8 @@ post_install() {
   cp ${PKG_DIR}/scripts/rocknix-guest-generation-switch ${INSTALL}/usr/bin
   cp ${PKG_DIR}/scripts/rocknix-guest-activation-audit ${INSTALL}/usr/bin
   chmod 0755 \
+    ${INSTALL}/usr/bin/nix-on-rock-paths \
+    ${INSTALL}/usr/bin/nix-on-rock-migrate \
     ${INSTALL}/usr/bin/rocknix-guest-root-ensure \
     ${INSTALL}/usr/bin/rocknix-guest-prep \
     ${INSTALL}/usr/bin/rocknix-guest-promote \
@@ -74,6 +78,7 @@ post_install() {
     ${INSTALL}/usr/bin/rocknix-guest-activation-audit
 
   mkdir -p "${substrate_lib}/tests"
+  cp ${PKG_DIR}/scripts/nix-on-rock-paths "${substrate_lib}/nix-on-rock-paths"
   cp ${PKG_DIR}/tests/guest-substrate-runtime-smoke.sh "${substrate_lib}/tests"
   chmod 0755 "${substrate_lib}/tests/guest-substrate-runtime-smoke.sh"
 

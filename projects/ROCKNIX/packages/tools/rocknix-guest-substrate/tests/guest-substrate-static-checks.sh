@@ -8,6 +8,10 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PKG_DIR=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
 REPO_ROOT=$(CDPATH= cd -- "${PKG_DIR}/../../../../.." && pwd)
 
+# Fixture root-ensure invocations use temporary guest roots and should not touch
+# the developer/CI host's real /storage legacy paths.
+export ROCKNIX_GUEST_SKIP_LAYOUT_MIGRATION=1
+
 fail() {
   echo "FAIL: $*" >&2
   exit 1
@@ -77,6 +81,8 @@ for old_service in nix-daemon.service nix-daemon.socket; do
 done
 
 # Remaining host scripts are the thin-host guest launcher/recovery support.
+check_script "${PKG_DIR}/scripts/nix-on-rock-paths"
+check_script "${PKG_DIR}/scripts/nix-on-rock-migrate"
 check_script "${PKG_DIR}/scripts/rocknix-guest-root-ensure"
 check_script "${PKG_DIR}/scripts/rocknix-guest-prep"
 check_script "${PKG_DIR}/scripts/rocknix-guest-promote"
@@ -89,6 +95,8 @@ check_script "${PKG_DIR}/scripts/rocknix-guest-generation-import"
 check_script "${PKG_DIR}/scripts/rocknix-guest-generation-switch"
 check_script "${PKG_DIR}/scripts/rocknix-guest-activation-audit"
 
+grep -q 'nix-on-rock-paths' "${PKG_DIR}/package.mk" || fail "package.mk does not install nix-on-rock path contract helper"
+grep -q 'nix-on-rock-migrate' "${PKG_DIR}/package.mk" || fail "package.mk does not install nix-on-rock migration helper"
 grep -q 'rocknix-guest-root-ensure' "${PKG_DIR}/package.mk" || fail "package.mk does not install guest root ensure helper"
 grep -q 'rocknix-guest-prep' "${PKG_DIR}/package.mk" || fail "package.mk does not install prep helper"
 grep -q 'rocknix-guest-promote' "${PKG_DIR}/package.mk" || fail "package.mk does not install guest promotion helper"
@@ -136,8 +144,8 @@ grep -q -- '--output - "${seed_url}" >> "${seed_tarball}.tmp"' "${PKG_DIR}/packa
 ! grep -q 'cp -PR "${seed_extract}/."' "${PKG_DIR}/package.mk" || fail "package.mk must not duplicate the expanded rootfs seed during build"
 
 # Storage + guest service wiring. Host root /nix was retired: the guest
-# system store lives under /storage/machines/rocknix-guest/nix and is resolved
-# through GUEST_ROOT by the substrate scripts.
+# system store lives under /storage/nix-on-rock/rootfs/current/nix and is
+# resolved through GUEST_ROOT by the substrate scripts.
 [ ! -e "${PKG_DIR}/system.d/nix-storage-setup.service" ] || fail "host nix-storage-setup.service must be retired"
 [ ! -e "${PKG_DIR}/system.d/nix.mount" ] || fail "host nix.mount must be retired"
 check_unit "${PKG_DIR}/system.d/rocknix-main-space.target"
@@ -200,7 +208,7 @@ grep -q 'ExecStartPre=/usr/bin/rocknix-guest-prep' "${guest_unit}" || fail "gues
 grep -q 'ExecStartPre=/usr/bin/rocknix-guest-udev-stage' "${guest_unit}" || fail "guest unit missing udev stage helper"
 grep -q 'ExecStart=/usr/bin/rocknix-guest-start' "${guest_unit}" || fail "guest unit must launch through guest start helper"
 grep -q '/usr/bin/systemd-nspawn' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must exec systemd-nspawn"
-grep -q -- '--directory=/storage/machines/rocknix-guest' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper has wrong guest root"
+grep -q -- '--directory=${ROCKNIX_GUEST_ROOT:-${NIX_ON_ROCK_CURRENT_ROOT}}' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper has wrong guest root"
 grep -q -- '--register=no' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must avoid machined registration"
 grep -q 'DeviceAllow=/dev/net/tun rwm' "${guest_unit}" || fail "guest unit must allow tun device access for guest Tailscale"
 for device_allow in \
@@ -231,7 +239,7 @@ grep -q -- '--bind=/dev/input' "${PKG_DIR}/scripts/rocknix-guest-start" || fail 
 grep -q -- '--bind=/dev/uinput' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must pass through uinput for guest InputPlumber"
 grep -q -- '--bind=/dev/snd' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must pass through sound devices"
 grep -q -- '--bind-ro=/run/.guest-udev:/run/udev' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must bind scrubbed udev db"
-grep -q -- '--bind=/storage/.guest' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must keep the single host/guest storage seam"
+grep -q -- '--bind=${NIX_ON_ROCK_GUEST_EXCHANGE_DIR}:${NIX_ON_ROCK_GUEST_EXCHANGE_GUEST_PATH}' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must keep the single host/guest storage seam"
 ! grep -q -- '--bind-ro=/storage/roms' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must not bind host ROM library"
 ! grep -q -- '--bind=/storage/.config/Cemu' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must not bind host Cemu config"
 ! grep -q -- '--bind=/storage/.config/MangoHud' "${PKG_DIR}/scripts/rocknix-guest-start" || fail "guest start helper must not bind host MangoHud config"
@@ -304,7 +312,7 @@ grep -q 'refusing to use applied markers as source of truth' "${PKG_DIR}/scripts
 grep -q 'nsenter .* sh -c' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must avoid login shell nsenter invocations"
 ! grep -q 'nsenter .* sh -lc' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not invoke guest login shell"
 grep -q 'ROCKNIX_GUEST_PROMOTE_SYSTEM_PATH' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must allow promote result file override for tests"
-grep -q '/storage/.guest/rocknix-guest-promote-system-path' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must return system path through shared guest storage"
+grep -q 'NIX_ON_ROCK_PROMOTE_SYSTEM_PATH_FILE' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must return system path through nix-on-rock exchange storage"
 grep -q '/run/current-system/sw/bin/systemctl is-active NetworkManager.service' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must use absolute guest systemctl for readiness"
 ! grep -q 'seq 1 60' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must not depend on seq during early guest boot"
 grep -q '/run/current-system/sw/bin/sleep 2' "${PKG_DIR}/scripts/rocknix-guest-promote" || fail "guest promotion must use absolute guest sleep when available"
@@ -318,7 +326,7 @@ grep -q 'thor|odin2portal' "${PKG_DIR}/scripts/rocknix-guest-generation-import" 
 grep -q 'live generation A is required for import' "${PKG_DIR}/scripts/rocknix-guest-generation-import" || fail "generation import helper must require live generation A"
 grep -q 'rocknix-stage10-proof-marker' "${PKG_DIR}/scripts/rocknix-guest-generation-import" || fail "generation import helper must require B proof marker"
 grep -q "\[ -f '\${SYSTEM_PATH}/\${PROOF_MARKER_REL}' \]" "${PKG_DIR}/scripts/rocknix-guest-generation-import" || fail "generation import helper must verify B proof marker from live guest namespace"
-grep -q 'rocknix-guest-manual-generation-hold' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must require manual generation hold"
+grep -q 'NIX_ON_ROCK_MANUAL_HOLD_FILE' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must require manual generation hold"
 grep -q 'systemctl stop "${PROMOTE_SERVICE}"' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must stop in-flight promotion"
 grep -q 'systemctl reset-failed "${GUEST_SERVICE}"' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must reset failed/start-limit state before restart"
 grep -q 'selected/running differ before recording generation A' "${PKG_DIR}/scripts/rocknix-guest-generation-switch" || fail "generation switch helper must require clean selected generation A before recording rollback state"
@@ -565,8 +573,13 @@ create_bootable_seed_fixture() {
 run_root_ensure_fixture() {
   tmp_dir=$(mktemp -d)
   seed_root="${tmp_dir}/seed"
-  machines_root="${tmp_dir}/storage/machines"
-  guest_root="${machines_root}/rocknix-guest"
+  machines_root="${tmp_dir}/storage/nix-on-rock/rootfs"
+  guest_root="${machines_root}/current"
+  previous_root="${machines_root}/previous"
+  export NIX_ON_ROCK_ROOT="${tmp_dir}/storage/nix-on-rock"
+  export NIX_ON_ROCK_ROOTFS_DIR="${machines_root}"
+  export NIX_ON_ROCK_CURRENT_ROOT="${guest_root}"
+  export NIX_ON_ROCK_PREVIOUS_ROOT="${previous_root}"
   lock_file="${tmp_dir}/run/lock/rocknix-guest-root.lock"
   bin_dir="${tmp_dir}/bin"
   mkdir -p "${seed_root}" "${machines_root}" "${bin_dir}"
@@ -614,7 +627,7 @@ EOF
 
   rm -rf "${guest_root}"
   archive_seed_root="${tmp_dir}/archive-seed"
-  seed_stage_dir="${tmp_dir}/storage/.guest/seed"
+  seed_stage_dir="${tmp_dir}/storage/nix-on-rock/images/seeds"
   seed_manifest="${tmp_dir}/guest-rootfs-seed.manifest"
   compatible_file="${tmp_dir}/compatible"
   mkdir -p "${seed_stage_dir}"
@@ -672,7 +685,7 @@ EOF
   fi
   [ ! -e "${guest_root}" ] || fail "root ensure fixture: sha-mismatched staged seed created authoritative root"
 
-  rm -rf "${guest_root}" "${guest_root}.previous"
+  rm -rf "${guest_root}" "${previous_root}"
   create_bootable_seed_fixture "${guest_root}"
   printf 'old-root\n' > "${guest_root}/etc/old-root"
   reseed_flag="${tmp_dir}/flash/rocknix.reseed-guest"
@@ -688,7 +701,7 @@ EOF
     ROCKNIX_GUEST_ROOT_LOCK="${lock_file}" \
     "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null
   [ ! -f "${guest_root}/etc/old-root" ] || fail "root ensure fixture: reseed did not replace active root"
-  [ -f "${guest_root}.previous/etc/old-root" ] || fail "root ensure fixture: reseed did not preserve previous root"
+  [ -f "${previous_root}/etc/old-root" ] || fail "root ensure fixture: reseed did not preserve previous root"
   [ ! -e "${reseed_flag}" ] || fail "root ensure fixture: reseed flag was not cleared"
 
   : > "${reseed_flag}"
@@ -703,7 +716,7 @@ EOF
     "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null
   [ ! -e "${reseed_flag}" ] || fail "root ensure fixture: second reseed after legacy previous did not clear flag"
 
-  rm -rf "${guest_root}" "${guest_root}.previous"
+  rm -rf "${guest_root}" "${previous_root}"
   mkdir -p "${guest_root}/etc"
   printf 'damaged-root\n' > "${guest_root}/etc/not-a-guest-root"
   : > "${reseed_flag}"
@@ -717,9 +730,9 @@ EOF
     ROCKNIX_GUEST_ROOT_LOCK="${lock_file}" \
     "${PKG_DIR}/scripts/rocknix-guest-root-ensure" >/dev/null
   [ -d "${guest_root}/nix" ] || fail "root ensure fixture: reseed flag did not recover damaged root"
-  [ -f "${guest_root}.previous/etc/not-a-guest-root" ] || fail "root ensure fixture: damaged root was not preserved as previous"
+  [ -f "${previous_root}/etc/not-a-guest-root" ] || fail "root ensure fixture: damaged root was not preserved as previous"
 
-  rm -rf "${guest_root}" "${guest_root}.previous"
+  rm -rf "${guest_root}" "${previous_root}"
   mkdir -p "${guest_root}/etc"
   printf 'user-data\n' > "${guest_root}/etc/not-a-guest-root"
   if ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
@@ -760,6 +773,47 @@ EOF
   rm -rf "${tmp_dir}"
 }
 run_root_ensure_fixture
+
+run_nix_on_rock_migration_fixture() {
+  tmp_dir=$(mktemp -d)
+  legacy_root="${tmp_dir}/storage/machines/rocknix-guest"
+  legacy_previous="${legacy_root}.previous"
+  legacy_area="${tmp_dir}/storage/.guest"
+  contract_root="${tmp_dir}/storage/nix-on-rock"
+  lock_file="${tmp_dir}/run/lock/rocknix-guest-root.lock"
+  bin_dir="${tmp_dir}/bin"
+  mkdir -p "${legacy_root}" "${legacy_previous}" "${legacy_area}/seed" "${bin_dir}"
+  create_bootable_seed_fixture "${legacy_root}"
+  create_bootable_seed_fixture "${legacy_previous}"
+  printf 'seed\n' > "${legacy_area}/seed/fixture.tar.zst"
+  : > "${legacy_area}/rocknix-guest-manual-generation-hold"
+  printf '/nix/store/system\n' > "${legacy_area}/rocknix-guest-promote-system-path"
+
+  cat > "${bin_dir}/systemctl" <<'EOF'
+#!/bin/sh
+exit 3
+EOF
+  chmod 0755 "${bin_dir}/systemctl"
+
+  ROCKNIX_GUEST_HOST_PATH="${bin_dir}:${PATH}" \
+    ROCKNIX_GUEST_ROOT_LOCK="${lock_file}" \
+    ROCKNIX_NIX_ON_ROCK_ROOT="${contract_root}" \
+    ROCKNIX_GUEST_LEGACY_ROOT="${legacy_root}" \
+    ROCKNIX_GUEST_LEGACY_PREVIOUS_ROOT="${legacy_previous}" \
+    ROCKNIX_GUEST_LEGACY_AREA="${legacy_area}" \
+    "${PKG_DIR}/scripts/nix-on-rock-migrate" >/dev/null
+
+  [ -d "${contract_root}/rootfs/current/nix" ] || fail "migration fixture: active root was not moved"
+  [ -d "${contract_root}/rootfs/previous/nix" ] || fail "migration fixture: previous root was not moved"
+  [ -f "${contract_root}/images/seeds/fixture.tar.zst" ] || fail "migration fixture: seed was not moved"
+  [ -f "${contract_root}/requests/manual-generation-hold" ] || fail "migration fixture: manual hold was not moved"
+  [ -f "${contract_root}/staging/guest-exchange/rocknix-guest-promote-system-path" ] || fail "migration fixture: promote exchange file was not moved"
+  [ -r "${contract_root}/state/layout-version" ] || fail "migration fixture: layout version was not written"
+  [ -L "${legacy_area}" ] || fail "migration fixture: legacy seam alias was not installed"
+
+  rm -rf "${tmp_dir}"
+}
+run_nix_on_rock_migration_fixture
 
 grep -q 'inputplumber/by-hidden' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" || fail "udev stage must scrub InputPlumber-hidden devices"
 grep -q 'SYS_SOUND_DIR' "${PKG_DIR}/scripts/rocknix-guest-udev-stage" || fail "udev stage must allow fixture-controlled sound sysfs"
@@ -922,6 +976,7 @@ grep -q 'target/seed' "${IMAGE_SCRIPT}" || fail "image script must place guest r
 grep -q 'stage_guest_rootfs_seed_update' "${INIT_SCRIPT}" || fail "init update path must stage guest rootfs seed payloads"
 grep -q 'guest-rootfs-seed.manifest' "${INIT_SCRIPT}" || fail "init update path must read guest rootfs seed manifest from mounted SYSTEM"
 grep -q 'ROCKNIX_UPDATE_STORAGE_ROOT:-/storage' "${INIT_SCRIPT}" || fail "init update path must hoist guest rootfs seed to persistent storage seam"
+grep -q 'nix-on-rock/images/seeds' "${INIT_SCRIPT}" || fail "init update path must stage guest rootfs seed under nix-on-rock images/seeds"
 grep -q 'seed_sha256' "${INIT_SCRIPT}" || fail "init update path must verify guest rootfs seed sha256"
 grep -q 'seed_compatible' "${INIT_SCRIPT}" || fail "init update path must reject wrong-device guest rootfs seeds"
 assert_order "${INIT_SCRIPT}" 'stage_guest_rootfs_seed_update' 'update_file "System"' "init must stage guest seed before writing SYSTEM"
@@ -969,10 +1024,10 @@ EOF
     ROCKNIX_UPDATE_STORAGE_ROOT="${storage_root}" \
     ROCKNIX_UPDATE_DEVICE_COMPATIBLE_FILE="${compatible_file}" \
     "${helper}"
-  cmp "${seed_payload}" "${storage_root}/.guest/seed/fixture.tar.zst" \
+  cmp "${seed_payload}" "${storage_root}/nix-on-rock/images/seeds/fixture.tar.zst" \
     || fail "init seed staging fixture: staged payload does not match source"
 
-  rm -f "${storage_root}/.guest/seed/fixture.tar.zst"
+  rm -f "${storage_root}/nix-on-rock/images/seeds/fixture.tar.zst"
   printf 'bad\n' >> "${seed_payload}"
   if ROCKNIX_TEST_UPDATE_DIR="${update_dir}" \
     ROCKNIX_TEST_UPDATE_FILENAME="update.tar" \
@@ -982,7 +1037,7 @@ EOF
     "${helper}" >/dev/null 2>&1; then
     fail "init seed staging fixture: sha mismatch should fail"
   fi
-  [ ! -e "${storage_root}/.guest/seed/fixture.tar.zst.tmp" ] \
+  [ ! -e "${storage_root}/nix-on-rock/images/seeds/fixture.tar.zst.tmp" ] \
     || fail "init seed staging fixture: sha mismatch left tmp seed"
 
   printf 'seed\n' > "${seed_payload}"

@@ -4,16 +4,30 @@
 #
 # Ensure the persistent SM8550 NixOS guest rootfs exists before the guest
 # service starts. This is the first-boot bridge from the immutable host image
-# to /storage/machines/rocknix-guest; promotion remains responsible only for
+# to /storage/nix-on-rock/rootfs/current; promotion remains responsible only for
 # updating an already bootable guest.
 
 set -eu
 
 PATH="${ROCKNIX_GUEST_HOST_PATH:-/usr/bin:/usr/sbin:/bin:/sbin}"
 
-GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
-MACHINES_ROOT="${ROCKNIX_GUEST_MACHINES_ROOT:-/storage/machines}"
-SEED_DIR="${ROCKNIX_GUEST_ROOTFS_SEED_DIR:-/storage/.guest/seed}"
+if [ -n "${ROCKNIX_GUEST_PATHS_FILE:-}" ] && [ -r "${ROCKNIX_GUEST_PATHS_FILE}" ]; then
+  . "${ROCKNIX_GUEST_PATHS_FILE}"
+elif [ -r /usr/lib/rocknix-guest-substrate/nix-on-rock-paths ]; then
+  . /usr/lib/rocknix-guest-substrate/nix-on-rock-paths
+else
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  [ -r "${script_dir}/nix-on-rock-paths" ] && . "${script_dir}/nix-on-rock-paths"
+fi
+
+NIX_ON_ROCK_ROOT="${NIX_ON_ROCK_ROOT:-/storage/nix-on-rock}"
+NIX_ON_ROCK_ROOTFS_DIR="${NIX_ON_ROCK_ROOTFS_DIR:-${NIX_ON_ROCK_ROOT}/rootfs}"
+NIX_ON_ROCK_CURRENT_ROOT="${NIX_ON_ROCK_CURRENT_ROOT:-${NIX_ON_ROCK_ROOTFS_DIR}/current}"
+NIX_ON_ROCK_PREVIOUS_ROOT="${ROCKNIX_GUEST_PREVIOUS_ROOT:-${NIX_ON_ROCK_PREVIOUS_ROOT:-${NIX_ON_ROCK_ROOTFS_DIR}/previous}}"
+NIX_ON_ROCK_SEED_DIR="${NIX_ON_ROCK_SEED_DIR:-${NIX_ON_ROCK_ROOT}/images/seeds}"
+
+GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-${NIX_ON_ROCK_CURRENT_ROOT}}"
+SEED_DIR="${ROCKNIX_GUEST_ROOTFS_SEED_DIR:-${NIX_ON_ROCK_SEED_DIR}}"
 SEED_MANIFEST="${ROCKNIX_GUEST_ROOTFS_SEED_MANIFEST:-/usr/lib/rocknix-guest-substrate/guest-rootfs-seed.manifest}"
 SEED_ROOT="${ROCKNIX_GUEST_ROOTFS_SEED:-}"
 SEED_ARCHIVE="${ROCKNIX_GUEST_ROOTFS_SEED_ARCHIVE:-}"
@@ -58,23 +72,19 @@ is_symlink_path() {
 
 ensure_safe_storage_paths() {
   case "${GUEST_ROOT}" in
-    "${MACHINES_ROOT}"/*) : ;;
-    *) fail "guest root must live under machines root: root=${GUEST_ROOT} machines=${MACHINES_ROOT}" ;;
+    "${NIX_ON_ROCK_ROOTFS_DIR}"/*) : ;;
+    *) fail "guest root must live under nix-on-rock rootfs dir: root=${GUEST_ROOT} rootfs=${NIX_ON_ROCK_ROOTFS_DIR}" ;;
   esac
 
-  storage_root=$(dirname "${MACHINES_ROOT}")
-  if [ -e "${storage_root}" ] && is_symlink_path "${storage_root}"; then
-    fail "storage root is a symlink: ${storage_root}"
-  fi
-  if [ -e "${MACHINES_ROOT}" ] && is_symlink_path "${MACHINES_ROOT}"; then
-    fail "machines root is a symlink: ${MACHINES_ROOT}"
-  fi
-  if [ -e "${GUEST_ROOT}" ] && is_symlink_path "${GUEST_ROOT}"; then
-    fail "guest root is a symlink: ${GUEST_ROOT}"
-  fi
+  storage_root=$(dirname "${NIX_ON_ROCK_ROOT}")
+  for path in "${storage_root}" "${NIX_ON_ROCK_ROOT}" "${NIX_ON_ROCK_ROOTFS_DIR}" "${GUEST_ROOT}" "${NIX_ON_ROCK_PREVIOUS_ROOT}" "${SEED_DIR}"; do
+    if [ -e "${path}" ] && is_symlink_path "${path}"; then
+      fail "storage contract path is a symlink: ${path}"
+    fi
+  done
 
-  mkdir -p "${MACHINES_ROOT}"
-  chmod 0755 "${MACHINES_ROOT}"
+  mkdir -p "${NIX_ON_ROCK_ROOTFS_DIR}" "${SEED_DIR}"
+  chmod 0755 "${NIX_ON_ROCK_ROOTFS_DIR}" "${SEED_DIR}" 2>/dev/null || true
 }
 
 profile_host_path_for_root() {
@@ -227,8 +237,8 @@ cleanup_stale_helper_temps() {
 }
 
 preflight_storage_capacity() {
-  df -Pk "${MACHINES_ROOT}" >/dev/null 2>&1 || fail "cannot inspect storage capacity for ${MACHINES_ROOT}"
-  df -Pi "${MACHINES_ROOT}" >/dev/null 2>&1 || true
+  df -Pk "${NIX_ON_ROCK_ROOTFS_DIR}" >/dev/null 2>&1 || fail "cannot inspect storage capacity for ${NIX_ON_ROCK_ROOTFS_DIR}"
+  df -Pi "${NIX_ON_ROCK_ROOTFS_DIR}" >/dev/null 2>&1 || true
 }
 
 manifest_value() {
@@ -392,7 +402,7 @@ activate_seed_candidate() {
   fi
 
   mv "${tmp_root}" "${GUEST_ROOT}" || fail "failed to activate seeded guest root"
-  sync "${MACHINES_ROOT}" 2>/dev/null || sync
+  sync "${NIX_ON_ROCK_ROOTFS_DIR}" 2>/dev/null || sync
   validate_rootfs "${GUEST_ROOT}" no
   log "seeded guest root is valid: ${GUEST_ROOT}"
 }
@@ -417,7 +427,7 @@ reseed_guest_root() {
   is_empty_dir "${GUEST_ROOT}" && fail "cannot reseed empty guest root through reseed path: ${GUEST_ROOT}"
 
   tmp_root="${GUEST_ROOT}.tmp.$$"
-  previous_root="${GUEST_ROOT}.previous"
+  previous_root="${NIX_ON_ROCK_PREVIOUS_ROOT}"
   build_seed_candidate "${tmp_root}"
 
   if [ -e "${previous_root}" ]; then
@@ -433,7 +443,7 @@ reseed_guest_root() {
     fail "failed to activate reseeded guest root"
   fi
 
-  sync "${MACHINES_ROOT}" 2>/dev/null || sync
+  sync "${NIX_ON_ROCK_ROOTFS_DIR}" 2>/dev/null || sync
   if ! ( validate_rootfs "${GUEST_ROOT}" no ); then
     failed_root="${GUEST_ROOT}.failed-reseed.$$"
     mv "${GUEST_ROOT}" "${failed_root}" 2>/dev/null || true
@@ -445,7 +455,7 @@ reseed_guest_root() {
 }
 
 recover_previous_root_if_needed() {
-  previous_root="${GUEST_ROOT}.previous"
+  previous_root="${NIX_ON_ROCK_PREVIOUS_ROOT}"
   if [ ! -d "${GUEST_ROOT}" ] && [ -d "${previous_root}" ]; then
     log "guest root missing but previous root exists; restoring ${previous_root}"
     mv "${previous_root}" "${GUEST_ROOT}" || fail "failed to restore previous guest root: ${previous_root}"
@@ -453,7 +463,20 @@ recover_previous_root_if_needed() {
   fi
 }
 
+run_layout_migration() {
+  [ "${ROCKNIX_GUEST_SKIP_LAYOUT_MIGRATION:-0}" = "1" ] && return 0
+  if command -v nix-on-rock-migrate >/dev/null 2>&1; then
+    nix-on-rock-migrate
+    return 0
+  fi
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  if [ -x "${script_dir}/nix-on-rock-migrate" ]; then
+    "${script_dir}/nix-on-rock-migrate"
+  fi
+}
+
 main() {
+  run_layout_migration
   acquire_lock
   ensure_safe_storage_paths
   refuse_if_guest_active

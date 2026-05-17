@@ -10,10 +10,22 @@ set -eu
 
 PATH="${ROCKNIX_GUEST_HOST_PATH:-/usr/bin:/usr/sbin:/bin:/sbin}"
 
-GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+if [ -n "${ROCKNIX_GUEST_PATHS_FILE:-}" ] && [ -r "${ROCKNIX_GUEST_PATHS_FILE}" ]; then
+  . "${ROCKNIX_GUEST_PATHS_FILE}"
+elif [ -r /usr/lib/rocknix-guest-substrate/nix-on-rock-paths ]; then
+  . /usr/lib/rocknix-guest-substrate/nix-on-rock-paths
+else
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  [ -r "${script_dir}/nix-on-rock-paths" ] && . "${script_dir}/nix-on-rock-paths"
+fi
+
+NIX_ON_ROCK_CURRENT_ROOT="${NIX_ON_ROCK_CURRENT_ROOT:-/storage/nix-on-rock/rootfs/current}"
+NIX_ON_ROCK_IMPORT_PROVENANCE_FILE="${NIX_ON_ROCK_IMPORT_PROVENANCE_FILE:-/storage/nix-on-rock/staging/generation-import-candidate}"
+
+GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-${NIX_ON_ROCK_CURRENT_ROOT}}"
 GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
 SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
-IMPORT_PROVENANCE_FILE="${ROCKNIX_GUEST_IMPORT_PROVENANCE:-/storage/.guest/rocknix-guest-generation-import-candidate}"
+IMPORT_PROVENANCE_FILE="${ROCKNIX_GUEST_IMPORT_PROVENANCE:-${NIX_ON_ROCK_IMPORT_PROVENANCE_FILE}}"
 PROOF_MARKER_REL="${ROCKNIX_GUEST_PROOF_MARKER_REL:-etc/rocknix-stage10-proof-marker}"
 TARGET_ID="thor"
 NAR_FILE=""
@@ -23,7 +35,7 @@ LOG_TAG="rocknix-guest-generation-import"
 
 usage() {
   cat <<EOF
-Usage: ${LOG_TAG} --system /nix/store/<toplevel> [--nar /storage/.guest/closure.nar] [--source REF]
+Usage: ${LOG_TAG} --system /nix/store/<toplevel> [--nar /storage/nix-on-rock/staging/closure.nar] [--source REF]
 
 Imports/verifies an SM8550 guest generation while the current guest generation A
 is running. Build B off-device with an explicit per-device proof output, e.g.:

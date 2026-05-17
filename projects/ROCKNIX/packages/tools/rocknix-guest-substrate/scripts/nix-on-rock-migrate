@@ -1,0 +1,175 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2026-present ROCKNIX (https://github.com/ROCKNIX)
+#
+# Idempotently migrate the legacy SM8550 guest storage layout into the visible
+# /storage/nix-on-rock contract before root-ensure can seed a fresh root.
+
+set -eu
+
+PATH="${ROCKNIX_GUEST_HOST_PATH:-/usr/bin:/usr/sbin:/bin:/sbin}"
+
+source_paths() {
+  if [ -n "${ROCKNIX_GUEST_PATHS_FILE:-}" ] && [ -r "${ROCKNIX_GUEST_PATHS_FILE}" ]; then
+    . "${ROCKNIX_GUEST_PATHS_FILE}"
+    return 0
+  fi
+  if [ -r /usr/lib/rocknix-guest-substrate/nix-on-rock-paths ]; then
+    . /usr/lib/rocknix-guest-substrate/nix-on-rock-paths
+    return 0
+  fi
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  if [ -r "${script_dir}/nix-on-rock-paths" ]; then
+    . "${script_dir}/nix-on-rock-paths"
+    return 0
+  fi
+  echo "nix-on-rock-migrate: FAIL: cannot locate nix-on-rock-paths" >&2
+  exit 1
+}
+
+source_paths
+
+LOCK_FILE="${ROCKNIX_GUEST_ROOT_LOCK:-/run/lock/rocknix-guest-root.lock}"
+GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
+LOG_TAG="nix-on-rock-migrate"
+LAYOUT_VERSION="1"
+
+log() { printf '%s: %s\n' "${LOG_TAG}" "$*"; }
+fail() { log "FAIL: $*" >&2; exit 1; }
+
+is_symlink_path() { [ -L "$1" ]; }
+
+is_empty_dir() {
+  [ -d "$1" ] || return 1
+  [ -z "$(find "$1" -mindepth 1 -maxdepth 1 2>/dev/null | sed -n '1p')" ]
+}
+
+basic_root_valid() {
+  root="$1"
+  [ -d "${root}/nix" ] || return 1
+  [ -d "${root}/etc" ] || return 1
+  [ -d "${root}/sbin" ] || return 1
+}
+
+acquire_lock() {
+  lock_dir="${LOCK_FILE}.d"
+  mkdir -p "$(dirname "${LOCK_FILE}")"
+  if ! mkdir "${lock_dir}" 2>/dev/null; then
+    fail "guest root mutation lock is held: ${LOCK_FILE}"
+  fi
+  trap 'rmdir "${lock_dir}" 2>/dev/null || true' EXIT INT TERM
+}
+
+refuse_if_guest_active() {
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet "${GUEST_SERVICE}" 2>/dev/null; then
+      fail "${GUEST_SERVICE} is active; refusing storage layout migration"
+    fi
+  fi
+}
+
+ensure_contract_dirs() {
+  storage_root=$(dirname "${NIX_ON_ROCK_ROOT}")
+  for path in "${storage_root}" "${NIX_ON_ROCK_ROOT}" "${NIX_ON_ROCK_ROOTFS_DIR}" "${NIX_ON_ROCK_IMAGES_DIR}" "${NIX_ON_ROCK_SEED_DIR}" "${NIX_ON_ROCK_REQUESTS_DIR}" "${NIX_ON_ROCK_STATE_DIR}" "${NIX_ON_ROCK_STAGING_DIR}" "${NIX_ON_ROCK_GUEST_EXCHANGE_DIR}"; do
+    if [ -e "${path}" ] && is_symlink_path "${path}" ]; then
+      fail "contract path is a symlink: ${path}"
+    fi
+    mkdir -p "${path}"
+    chmod 0755 "${path}" 2>/dev/null || true
+  done
+}
+
+move_if_present() {
+  src="$1"
+  dst="$2"
+  label="$3"
+  [ -e "${src}" ] || return 0
+  if [ -e "${dst}" ]; then
+    fail "cannot migrate ${label}: both legacy and new paths exist (${src}, ${dst})"
+  fi
+  mkdir -p "$(dirname "${dst}")"
+  log "migrating ${label}: ${src} -> ${dst}"
+  mv "${src}" "${dst}" || fail "failed to migrate ${label}: ${src} -> ${dst}"
+}
+
+move_contents_if_dir_present() {
+  src_dir="$1"
+  dst_dir="$2"
+  label="$3"
+  [ -d "${src_dir}" ] || return 0
+  mkdir -p "${dst_dir}"
+  for entry in "${src_dir}"/* "${src_dir}"/.[!.]* "${src_dir}"/..?*; do
+    [ -e "${entry}" ] || continue
+    name=$(basename "${entry}")
+    dst="${dst_dir}/${name}"
+    if [ -e "${dst}" ]; then
+      fail "cannot migrate ${label} entry ${name}: destination exists at ${dst}"
+    fi
+    log "migrating ${label} entry: ${entry} -> ${dst}"
+    mv "${entry}" "${dst}" || fail "failed to migrate ${label} entry ${entry}"
+  done
+  rmdir "${src_dir}" 2>/dev/null || true
+}
+
+install_legacy_area_alias() {
+  [ "${NIX_ON_ROCK_LEGACY_AREA}" = "${NIX_ON_ROCK_GUEST_EXCHANGE_DIR}" ] && return 0
+  if [ -e "${NIX_ON_ROCK_LEGACY_AREA}" ]; then
+    if [ -L "${NIX_ON_ROCK_LEGACY_AREA}" ]; then
+      return 0
+    fi
+    if is_empty_dir "${NIX_ON_ROCK_LEGACY_AREA}"; then
+      rmdir "${NIX_ON_ROCK_LEGACY_AREA}" || fail "failed to remove empty legacy seam: ${NIX_ON_ROCK_LEGACY_AREA}"
+    else
+      fail "legacy seam still has unmigrated content: ${NIX_ON_ROCK_LEGACY_AREA}"
+    fi
+  fi
+  mkdir -p "$(dirname "${NIX_ON_ROCK_LEGACY_AREA}")"
+  ln -s "${NIX_ON_ROCK_GUEST_EXCHANGE_DIR}" "${NIX_ON_ROCK_LEGACY_AREA}" 2>/dev/null || true
+}
+
+migrate_roots() {
+  if [ -d "${NIX_ON_ROCK_LEGACY_ROOT}" ] && [ ! -L "${NIX_ON_ROCK_LEGACY_ROOT}" ]; then
+    basic_root_valid "${NIX_ON_ROCK_LEGACY_ROOT}" || fail "legacy guest root is not valid; refusing migration: ${NIX_ON_ROCK_LEGACY_ROOT}"
+    move_if_present "${NIX_ON_ROCK_LEGACY_ROOT}" "${NIX_ON_ROCK_CURRENT_ROOT}" "active guest root"
+  fi
+  if [ -d "${NIX_ON_ROCK_LEGACY_PREVIOUS_ROOT}" ] && [ ! -L "${NIX_ON_ROCK_LEGACY_PREVIOUS_ROOT}" ]; then
+    move_if_present "${NIX_ON_ROCK_LEGACY_PREVIOUS_ROOT}" "${NIX_ON_ROCK_PREVIOUS_ROOT}" "previous guest root"
+  fi
+}
+
+migrate_area() {
+  legacy="${NIX_ON_ROCK_LEGACY_AREA}"
+  [ -e "${legacy}" ] || return 0
+  [ ! -L "${legacy}" ] || return 0
+  [ -d "${legacy}" ] || fail "legacy seam is not a directory: ${legacy}"
+
+  move_contents_if_dir_present "${legacy}/seed" "${NIX_ON_ROCK_SEED_DIR}" "seed images"
+  move_if_present "${legacy}/rocknix-guest-manual-generation-hold" "${NIX_ON_ROCK_MANUAL_HOLD_FILE}" "manual generation hold"
+  move_if_present "${legacy}/rocknix-guest-generation-switch-a" "${NIX_ON_ROCK_SWITCH_STATE_FILE}" "generation switch state"
+  move_if_present "${legacy}/rocknix-guest-generation-import-candidate" "${NIX_ON_ROCK_IMPORT_PROVENANCE_FILE}" "generation import candidate"
+  move_if_present "${legacy}/rocknix-guest-promote-system-path" "${NIX_ON_ROCK_PROMOTE_SYSTEM_PATH_FILE}" "promote system path"
+  move_if_present "${legacy}/rocknix-nix-guest-packaged" "${NIX_ON_ROCK_STAGED_SOURCE}" "packaged guest source"
+  move_if_present "${legacy}/rocknix-nix-guest-packaged.previous" "${NIX_ON_ROCK_STAGED_SOURCE}.previous" "previous packaged guest source"
+
+  install_legacy_area_alias
+}
+
+main() {
+  acquire_lock
+  refuse_if_guest_active
+  ensure_contract_dirs
+
+  if [ -e "${NIX_ON_ROCK_MIGRATION_IN_PROGRESS}" ]; then
+    fail "layout migration was interrupted; inspect ${NIX_ON_ROCK_MIGRATION_IN_PROGRESS} before continuing"
+  fi
+
+  : > "${NIX_ON_ROCK_MIGRATION_IN_PROGRESS}"
+  migrate_roots
+  migrate_area
+  printf '%s\n' "${LAYOUT_VERSION}" > "${NIX_ON_ROCK_LAYOUT_VERSION_FILE}"
+  rm -f "${NIX_ON_ROCK_MIGRATION_IN_PROGRESS}"
+  sync "${NIX_ON_ROCK_ROOT}" 2>/dev/null || sync
+  log "layout version ${LAYOUT_VERSION} ready at ${NIX_ON_ROCK_ROOT}"
+}
+
+main "$@"

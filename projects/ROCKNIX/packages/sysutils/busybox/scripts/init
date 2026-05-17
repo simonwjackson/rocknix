@@ -428,8 +428,8 @@ stage_guest_rootfs_seed_update() {
     return 1
   fi
 
-  mkdir -p "${storage_root}/.guest/seed" || return 1
-  seed_target="${storage_root}/.guest/seed/${seed_archive}"
+  mkdir -p "${storage_root}/nix-on-rock/images/seeds" || return 1
+  seed_target="${storage_root}/nix-on-rock/images/seeds/${seed_archive}"
   seed_tmp="${seed_target}.tmp"
   rm -f "${seed_tmp}"
 

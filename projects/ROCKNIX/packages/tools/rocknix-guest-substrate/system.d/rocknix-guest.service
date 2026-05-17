@@ -19,8 +19,8 @@
 #   - NO /etc/ssh/authorized_keys.d bind -> guest SSH, when enabled in
 #                                           the guest, owns its own keys
 #   - NO product storage binds -> guest owns product state and media mounting;
-#                                  host exposes only /storage/.guest as the
-#                                  intentional host/guest control + persist seam
+#                                  host exposes only the nix-on-rock exchange
+#                                  as guest-visible /storage/.guest during transition
 #
 # Network:
 #   --register=no  -> avoid host machinectl coupling
@@ -29,7 +29,7 @@
 #
 # Storage:
 #   Host owns substrate storage: /flash, /storage, /nix, /storage/.update,
-#   and /storage/machines/rocknix-guest. The guest owns game/media mounting.
+#   and /storage/nix-on-rock. The guest owns game/media mounting.
 #   rocknix-guest-start discovers safe non-host-mounted game/media block
 #   devices, applies exact runtime DeviceAllow entries for those nodes, and
 #   passes them through at launch. Do not use broad block DeviceAllow classes:
@@ -128,7 +128,7 @@ CPUWeight=100
 IOWeight=100
 MemoryMax=6G
 
-WorkingDirectory=/storage/machines/rocknix-guest
+WorkingDirectory=/storage/nix-on-rock/rootfs/current
 
 # Clear persisted host rfkill state before the guest inherits the shared
 # network namespace. systemd-rfkill stores state under /storage on ROCKNIX, so

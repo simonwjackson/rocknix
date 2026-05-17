@@ -48,6 +48,8 @@ check_grep() {
   grep -q -- "${pattern}" "${file}" || fail "${message}"
 }
 
+check_executable "${SCRIPT_ROOT}/nix-on-rock-paths"
+check_executable "${SCRIPT_ROOT}/nix-on-rock-migrate"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-root-ensure"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-prep"
 check_executable "${SCRIPT_ROOT}/rocknix-guest-promote"
@@ -100,7 +102,7 @@ check_grep 'StartLimitBurst=3' "${guest_unit}" "guest unit must cap restart burs
 check_grep 'StartLimitAction=none' "${guest_unit}" "guest unit must not auto-reboot or auto-recover"
 check_grep 'ExecStart=/usr/bin/rocknix-guest-start' "${guest_unit}" "guest unit must use guest start helper"
 check_grep '/usr/bin/systemd-nspawn' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must exec systemd-nspawn"
-check_grep '--directory=/storage/machines/rocknix-guest' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must target /storage/machines/rocknix-guest"
+check_grep '--directory=${ROCKNIX_GUEST_ROOT:-${NIX_ON_ROCK_CURRENT_ROOT}}' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must target the nix-on-rock active root"
 check_grep '--register=no' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must avoid machined registration"
 check_grep 'DeviceAllow=/dev/net/tun rwm' "${guest_unit}" "guest unit must allow tun device access for guest Tailscale"
 for device_allow in \
@@ -128,7 +130,7 @@ check_grep '--capability=CAP_NET_RAW' "${SCRIPT_ROOT}/rocknix-guest-start" "gues
 check_grep '--bind=/dev/net/tun' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must pass through tun for guest Tailscale"
 check_grep '--bind=/dev/uhid' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must pass through uhid for guest Bluetooth HID devices"
 check_grep '--bind=/dev/uinput' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must pass through uinput for guest InputPlumber"
-check_grep '--bind=/storage/.guest' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must keep the single host/guest storage seam"
+check_grep '--bind=${NIX_ON_ROCK_GUEST_EXCHANGE_DIR}:${NIX_ON_ROCK_GUEST_EXCHANGE_GUEST_PATH}' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must keep the single host/guest storage seam through the compatibility bind"
 check_grep 'has_candidate_media_member' "${SCRIPT_ROOT}/rocknix-guest-start" "guest start helper must classify media without probing blocked devices"
 if grep -q 'blkid' "${SCRIPT_ROOT}/rocknix-guest-start"; then
   fail "guest start helper must not depend on blkid before runtime DeviceAllow is applied"
@@ -167,9 +169,14 @@ done
 if [ "${ROCKNIX_GUEST_LIVE_SMOKE:-0}" = "1" ]; then
   command -v systemctl >/dev/null 2>&1 || fail "systemctl unavailable for live smoke"
 
-  GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+  if [ -n "${ROCKNIX_GUEST_PATHS_FILE:-}" ] && [ -r "${ROCKNIX_GUEST_PATHS_FILE}" ]; then
+    . "${ROCKNIX_GUEST_PATHS_FILE}"
+  elif [ -r /usr/lib/rocknix-guest-substrate/nix-on-rock-paths ]; then
+    . /usr/lib/rocknix-guest-substrate/nix-on-rock-paths
+  fi
+  GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-${NIX_ON_ROCK_CURRENT_ROOT:-/storage/nix-on-rock/rootfs/current}}"
   SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
-  MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}"
+  MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-${NIX_ON_ROCK_MANUAL_HOLD_FILE:-/storage/nix-on-rock/requests/manual-generation-hold}}"
 
   [ -d "${GUEST_ROOT}" ] || fail "guest root missing: ${GUEST_ROOT}"
   [ -d "${GUEST_ROOT}/nix" ] || fail "guest rootfs /nix missing: ${GUEST_ROOT}/nix"

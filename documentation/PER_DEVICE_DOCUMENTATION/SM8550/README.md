@@ -1,6 +1,6 @@
 # SM8550 guest seed install notes
 
-SM8550 builds use a thin ROCKNIX host and a NixOS guest root under `/storage/machines/rocknix-guest`.
+SM8550 builds use a thin ROCKNIX host and a NixOS guest root under `/storage/nix-on-rock/rootfs/current`.
 The guest rootfs seed is too large for the 2GB `/flash/SYSTEM` partition, so it is not embedded in `SYSTEM`.
 
 ## Offline seed location
@@ -8,11 +8,11 @@ The guest rootfs seed is too large for the 2GB `/flash/SYSTEM` partition, so it 
 Stage the matching seed on the host storage partition:
 
 ```sh
-mkdir -p /storage/.guest/seed
-cp rocknix-guest-rootfs-<device>-<rev>.tar.zst /storage/.guest/seed/
+mkdir -p /storage/nix-on-rock/images/seeds
+cp rocknix-guest-rootfs-<device>-<rev>.tar.zst /storage/nix-on-rock/images/seeds/
 ```
 
-The host image ships `/usr/lib/rocknix-guest-substrate/guest-rootfs-seed.manifest` with the expected filename, SHA256, revision, and device compatible string. `rocknix-guest-root-ensure` reads `/proc/device-tree/compatible`, selects the matching seed, verifies SHA256, then extracts it into `/storage/machines/rocknix-guest` only when that root is missing or empty.
+The host image ships `/usr/lib/rocknix-guest-substrate/guest-rootfs-seed.manifest` with the expected filename, SHA256, revision, and device compatible string. `rocknix-guest-root-ensure` reads `/proc/device-tree/compatible`, selects the matching seed, verifies SHA256, then extracts it into `/storage/nix-on-rock/rootfs/current` only when that root is missing or empty.
 
 ## Odin2Portal vs Thor
 
@@ -25,11 +25,11 @@ A mismatched seed fails closed before extraction.
 
 ## Update tar flow
 
-SM8550 update tarballs carry the seed outside `SYSTEM` under `target/seed/`. During update, initramfs stages it into `/storage/.guest/seed/` before writing the new `SYSTEM` to `/flash`.
+SM8550 update tarballs carry the seed outside `SYSTEM` under `target/seed/`. During update, initramfs stages it into `/storage/nix-on-rock/images/seeds/` before writing the new `SYSTEM` to `/flash`.
 
 ## Full image flow
 
-Full images remain host-only. After flashing, copy the matching seed to `/storage/.guest/seed/` before expecting the guest to boot from an empty `/storage`.
+Full images remain host-only. After flashing, copy the matching seed to `/storage/nix-on-rock/images/seeds/` before expecting the guest to boot from an empty `/storage`.
 
 If the seed is missing or corrupt, host SSH/recovery should remain available, but `rocknix-guest.service` will not start.
 
@@ -42,4 +42,8 @@ touch /flash/rocknix.reseed-guest
 reboot
 ```
 
-On success, the old root is retained as `/storage/machines/rocknix-guest.previous` and the reseed flag is cleared.
+On success, the old root is retained as `/storage/nix-on-rock/rootfs/previous` and the reseed flag is cleared.
+
+## Legacy layout compatibility
+
+For the migration window, the host migrates valid legacy paths from `/storage/machines/rocknix-guest` and `/storage/.guest` into `/storage/nix-on-rock` before first boot. The guest still sees the host/guest exchange as `/storage/.guest`, but the host-owned persistent contract is `/storage/nix-on-rock`.

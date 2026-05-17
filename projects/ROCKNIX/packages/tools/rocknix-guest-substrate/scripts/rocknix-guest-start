@@ -15,6 +15,19 @@ set -eu
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 
+if [ -n "${ROCKNIX_GUEST_PATHS_FILE:-}" ] && [ -r "${ROCKNIX_GUEST_PATHS_FILE}" ]; then
+  . "${ROCKNIX_GUEST_PATHS_FILE}"
+elif [ -r /usr/lib/rocknix-guest-substrate/nix-on-rock-paths ]; then
+  . /usr/lib/rocknix-guest-substrate/nix-on-rock-paths
+else
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  [ -r "${script_dir}/nix-on-rock-paths" ] && . "${script_dir}/nix-on-rock-paths"
+fi
+
+NIX_ON_ROCK_CURRENT_ROOT="${NIX_ON_ROCK_CURRENT_ROOT:-/storage/nix-on-rock/rootfs/current}"
+NIX_ON_ROCK_GUEST_EXCHANGE_DIR="${NIX_ON_ROCK_GUEST_EXCHANGE_DIR:-/storage/nix-on-rock/staging/guest-exchange}"
+NIX_ON_ROCK_GUEST_EXCHANGE_GUEST_PATH="${NIX_ON_ROCK_GUEST_EXCHANGE_GUEST_PATH:-/storage/.guest}"
+
 LOG_TAG="rocknix-guest-start"
 RUN_DIR="${ROCKNIX_GUEST_START_RUN_DIR:-/run/rocknix-guest-substrate}"
 ARGS_FILE="${RUN_DIR}/nspawn.args"
@@ -161,7 +174,7 @@ mkdir -p "${RUN_DIR}"
 ensure_tun_device
 
 emit_arg "--machine=rocknix-guest"
-emit_arg "--directory=/storage/machines/rocknix-guest"
+emit_arg "--directory=${ROCKNIX_GUEST_ROOT:-${NIX_ON_ROCK_CURRENT_ROOT}}"
 emit_arg "--boot"
 emit_arg "--register=no"
 emit_arg "--keep-unit"
@@ -182,7 +195,7 @@ emit_arg "--bind=/sys/class/backlight"
 emit_arg "--bind=/sys/class/leds"
 emit_arg "--bind=/sys/class/devfreq"
 emit_arg "--bind=/sys/devices/system/cpu/cpufreq"
-emit_arg "--bind=/storage/.guest"
+emit_arg "--bind=${NIX_ON_ROCK_GUEST_EXCHANGE_DIR}:${NIX_ON_ROCK_GUEST_EXCHANGE_GUEST_PATH}"
 
 emit_device_allow "DeviceAllow=/dev/net/tun rwm"
 emit_device_allow "DeviceAllow=/dev/uhid rwm"

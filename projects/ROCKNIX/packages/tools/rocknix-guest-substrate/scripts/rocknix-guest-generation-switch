@@ -9,12 +9,25 @@ set -eu
 
 PATH="${ROCKNIX_GUEST_HOST_PATH:-/usr/bin:/usr/sbin:/bin:/sbin}"
 
-GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+if [ -n "${ROCKNIX_GUEST_PATHS_FILE:-}" ] && [ -r "${ROCKNIX_GUEST_PATHS_FILE}" ]; then
+  . "${ROCKNIX_GUEST_PATHS_FILE}"
+elif [ -r /usr/lib/rocknix-guest-substrate/nix-on-rock-paths ]; then
+  . /usr/lib/rocknix-guest-substrate/nix-on-rock-paths
+else
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  [ -r "${script_dir}/nix-on-rock-paths" ] && . "${script_dir}/nix-on-rock-paths"
+fi
+
+NIX_ON_ROCK_CURRENT_ROOT="${NIX_ON_ROCK_CURRENT_ROOT:-/storage/nix-on-rock/rootfs/current}"
+NIX_ON_ROCK_MANUAL_HOLD_FILE="${NIX_ON_ROCK_MANUAL_HOLD_FILE:-/storage/nix-on-rock/requests/manual-generation-hold}"
+NIX_ON_ROCK_SWITCH_STATE_FILE="${NIX_ON_ROCK_SWITCH_STATE_FILE:-/storage/nix-on-rock/state/generation-switch-a}"
+
+GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-${NIX_ON_ROCK_CURRENT_ROOT}}"
 GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
 PROMOTE_SERVICE="${ROCKNIX_GUEST_PROMOTE_SERVICE:-rocknix-guest-promote.service}"
 SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
-MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}"
-SWITCH_STATE_FILE="${ROCKNIX_GUEST_SWITCH_STATE:-/storage/.guest/rocknix-guest-generation-switch-a}"
+MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-${NIX_ON_ROCK_MANUAL_HOLD_FILE}}"
+SWITCH_STATE_FILE="${ROCKNIX_GUEST_SWITCH_STATE:-${NIX_ON_ROCK_SWITCH_STATE_FILE}}"
 SYSTEM_PATH=""
 RESTORE=0
 RESTART=1

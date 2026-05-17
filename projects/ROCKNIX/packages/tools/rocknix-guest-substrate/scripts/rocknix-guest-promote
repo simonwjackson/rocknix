@@ -6,7 +6,7 @@
 # /storage-backed NixOS guest rootfs.
 #
 # ROCKNIX image updates replace /usr/lib/rocknix-guest-substrate/guest, but they do
-# not overwrite /storage/machines/rocknix-guest. This helper bridges that
+# not overwrite /storage/nix-on-rock/rootfs/current. This helper bridges that
 # lifecycle boundary after the old guest has booted and networking is owned by
 # the guest: it builds the packaged main-space NixOS configuration inside the
 # running guest, points the selected guest-system profile at the new toplevel,
@@ -18,16 +18,34 @@ set -eu
 
 PATH="${ROCKNIX_GUEST_HOST_PATH:-/usr/bin:/usr/sbin:/bin:/sbin}"
 
-GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+if [ -n "${ROCKNIX_GUEST_PATHS_FILE:-}" ] && [ -r "${ROCKNIX_GUEST_PATHS_FILE}" ]; then
+  . "${ROCKNIX_GUEST_PATHS_FILE}"
+elif [ -r /usr/lib/rocknix-guest-substrate/nix-on-rock-paths ]; then
+  . /usr/lib/rocknix-guest-substrate/nix-on-rock-paths
+else
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  [ -r "${script_dir}/nix-on-rock-paths" ] && . "${script_dir}/nix-on-rock-paths"
+fi
+
+NIX_ON_ROCK_CURRENT_ROOT="${NIX_ON_ROCK_CURRENT_ROOT:-/storage/nix-on-rock/rootfs/current}"
+NIX_ON_ROCK_STAGED_SOURCE="${NIX_ON_ROCK_STAGED_SOURCE:-/storage/nix-on-rock/staging/guest-exchange/rocknix-nix-guest-packaged}"
+NIX_ON_ROCK_PROMOTE_SYSTEM_PATH_FILE="${NIX_ON_ROCK_PROMOTE_SYSTEM_PATH_FILE:-/storage/nix-on-rock/staging/guest-exchange/rocknix-guest-promote-system-path}"
+NIX_ON_ROCK_MANUAL_HOLD_FILE="${NIX_ON_ROCK_MANUAL_HOLD_FILE:-/storage/nix-on-rock/requests/manual-generation-hold}"
+NIX_ON_ROCK_GUEST_EXCHANGE_GUEST_PATH="${NIX_ON_ROCK_GUEST_EXCHANGE_GUEST_PATH:-/storage/.guest}"
+
+GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-${NIX_ON_ROCK_CURRENT_ROOT}}"
 GUEST_SOURCE="${ROCKNIX_GUEST_SOURCE:-/usr/lib/rocknix-guest-substrate/guest}"
 GUEST_REV_FILE="${ROCKNIX_GUEST_REV_FILE:-/usr/lib/rocknix-guest-substrate/guest-revision}"
 GUEST_SERVICE="${ROCKNIX_GUEST_SERVICE:-rocknix-guest.service}"
-STAGED_SOURCE="${ROCKNIX_GUEST_STAGED_SOURCE:-/storage/.guest/rocknix-nix-guest-packaged}"
+STAGED_SOURCE="${ROCKNIX_GUEST_STAGED_SOURCE:-${NIX_ON_ROCK_STAGED_SOURCE}}"
 APPLIED_REV_FILE="${ROCKNIX_GUEST_APPLIED_REV_FILE:-${GUEST_ROOT}/etc/rocknix-guest-revision}"
 APPLIED_SYSTEM_FILE="${ROCKNIX_GUEST_APPLIED_SYSTEM_FILE:-${GUEST_ROOT}/etc/rocknix-guest-system-path}"
 SEED_CONTRACT_MARKER="${ROCKNIX_GUEST_SEED_CONTRACT_MARKER:-${GUEST_ROOT}/.rocknix-guest-rootfs-seed}"
-PROMOTE_SYSTEM_PATH_FILE="${ROCKNIX_GUEST_PROMOTE_SYSTEM_PATH:-/storage/.guest/rocknix-guest-promote-system-path}"
-MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}"
+PROMOTE_SYSTEM_PATH_FILE="${ROCKNIX_GUEST_PROMOTE_SYSTEM_PATH:-${NIX_ON_ROCK_PROMOTE_SYSTEM_PATH_FILE}}"
+GUEST_PROMOTE_SYSTEM_PATH_FILE="${ROCKNIX_GUEST_PROMOTE_SYSTEM_PATH_GUEST:-${NIX_ON_ROCK_GUEST_EXCHANGE_GUEST_PATH}/rocknix-guest-promote-system-path}"
+GUEST_STAGED_SOURCE="${ROCKNIX_GUEST_STAGED_SOURCE_GUEST:-${NIX_ON_ROCK_GUEST_EXCHANGE_GUEST_PATH}/rocknix-nix-guest-packaged}"
+MANUAL_HOLD_FILE="${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-${NIX_ON_ROCK_MANUAL_HOLD_FILE}}"
+LEGACY_MANUAL_HOLD_FILE="${ROCKNIX_GUEST_LEGACY_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}"
 SELECTED_PROFILE_GUEST="${ROCKNIX_GUEST_SYSTEM_PROFILE:-/nix/var/nix/profiles/per-user/root/rocknix-guest-system}"
 DEVICE_COMPATIBLE_FILE="${ROCKNIX_GUEST_DEVICE_COMPATIBLE_FILE:-/proc/device-tree/compatible}"
 LOG_TAG="rocknix-guest-promote"
@@ -99,7 +117,7 @@ seed_contract_value() {
 }
 
 manual_generation_hold_active() {
-  [ -e "${MANUAL_HOLD_FILE}" ]
+  [ -e "${MANUAL_HOLD_FILE}" ] || [ -e "${LEGACY_MANUAL_HOLD_FILE}" ]
 }
 
 exit_if_manual_generation_hold_active() {
@@ -214,13 +232,13 @@ nsenter -t "${inner_pid}" -m -u -i -n -p sh -c "
   set -eu
   export PATH=/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/bin:/usr/bin
   export ROCKNIX_GUEST_DEVICE_COMPATIBLE='${device_compatible}'
-  cd /storage/.guest/rocknix-nix-guest-packaged
+  cd '${GUEST_STAGED_SOURCE}'
   /run/current-system/sw/bin/nix build --impure --extra-experimental-features \"nix-command flakes\" \
     .#nixosConfigurations.rocknix-guest-main-space-by-compatible.config.system.build.toplevel \
     --print-out-paths
   system_path=\"\$(/run/current-system/sw/bin/readlink -f result)\"
   [ -n \"\${system_path}\" ]
-  printf \"%s\\n\" \"\${system_path}\" > '${PROMOTE_SYSTEM_PATH_FILE}'
+  printf \"%s\\n\" \"\${system_path}\" > '${GUEST_PROMOTE_SYSTEM_PATH_FILE}'
 "
 
 system_path=""

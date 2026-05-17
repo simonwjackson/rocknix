@@ -11,17 +11,29 @@
 #   rocknix-guest-soak [--hours N] [--interval-seconds S] [--guest-pid PID]
 #
 # Environment overrides:
-#   ROCKNIX_GUEST_ROOT          default /storage/machines/rocknix-guest
+#   ROCKNIX_GUEST_ROOT          default /storage/nix-on-rock/rootfs/current
 #   ROCKNIX_GUEST_LOG           default /var/log/rocknix-guest-soak.log
 #   ROCKNIX_GUEST_SUMMARY       default /var/log/rocknix-guest-soak-summary.log
 #   ROCKNIX_REQUIRE_HOST_ESSWAY default auto (yes/no/auto)
 
 set -u
 
+if [ -n "${ROCKNIX_GUEST_PATHS_FILE:-}" ] && [ -r "${ROCKNIX_GUEST_PATHS_FILE}" ]; then
+  . "${ROCKNIX_GUEST_PATHS_FILE}"
+elif [ -r /usr/lib/rocknix-guest-substrate/nix-on-rock-paths ]; then
+  . /usr/lib/rocknix-guest-substrate/nix-on-rock-paths
+else
+  script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+  [ -r "${script_dir}/nix-on-rock-paths" ] && . "${script_dir}/nix-on-rock-paths"
+fi
+
+NIX_ON_ROCK_CURRENT_ROOT="${NIX_ON_ROCK_CURRENT_ROOT:-/storage/nix-on-rock/rootfs/current}"
+NIX_ON_ROCK_MANUAL_HOLD_FILE="${NIX_ON_ROCK_MANUAL_HOLD_FILE:-/storage/nix-on-rock/requests/manual-generation-hold}"
+
 HOURS=24
 INTERVAL=3600
 GUEST_PID=""
-GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-/storage/machines/rocknix-guest}"
+GUEST_ROOT="${ROCKNIX_GUEST_ROOT:-${NIX_ON_ROCK_CURRENT_ROOT}}"
 LOG="${ROCKNIX_GUEST_LOG:-/var/log/rocknix-guest-soak.log}"
 SUMMARY="${ROCKNIX_GUEST_SUMMARY:-/var/log/rocknix-guest-soak-summary.log}"
 REQUIRE_HOST_ESSWAY="${ROCKNIX_REQUIRE_HOST_ESSWAY:-auto}"
@@ -116,7 +128,7 @@ check_selected_system_profile() {
     if ! rocknix-guest-activation-audit --quiet; then
       alarm "guest activation audit failed"
     fi
-    if [ -e "${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-/storage/.guest/rocknix-guest-manual-generation-hold}" ]; then
+    if [ -e "${ROCKNIX_GUEST_MANUAL_HOLD_FILE:-${NIX_ON_ROCK_MANUAL_HOLD_FILE}}" ]; then
       log "  manual generation hold is active"
     fi
     return
