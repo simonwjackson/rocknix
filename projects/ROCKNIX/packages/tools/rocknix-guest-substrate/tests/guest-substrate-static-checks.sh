@@ -860,8 +860,12 @@ EOF
 run_udev_stage_sound_wait_fixture
 
 grep -q 'check_host_ssh_responsive' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing host SSH check"
+grep -q 'UserKnownHostsFile=/dev/null' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak host SSH probe must ignore stale local known_hosts entries"
+grep -q 'Permission denied' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak host SSH probe must treat auth refusal as daemon responsiveness"
 grep -q 'ROCKNIX_REQUIRE_HOST_ESSWAY' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper must allow SSH-first recovery without host essway"
 grep -q 'check_resolv_owned' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing resolv ownership check"
+grep -q 'nsenter -t "${inner}"' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak resolv check must resolve guest-owned absolute symlinks from the guest namespace"
+grep -q 'check_resolv_owned "${inner}"' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper must pass guest inner pid to resolv ownership check"
 grep -q 'check_selected_system_profile' "${PKG_DIR}/scripts/rocknix-guest-soak" || fail "soak helper missing selected system profile check"
 
 run_target_generator_fixture() {
